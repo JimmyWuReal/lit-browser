@@ -4,7 +4,8 @@
   "description": "Lit, a minimal Chromium browser",
   "main": "src/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dev": "node --watch-path=src node_modules/electron/cli.js ."
   },
   "license": "MIT",
   "type": "commonjs",

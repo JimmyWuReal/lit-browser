@@ -11,6 +11,8 @@ npm install
 npm start
 ```
 
+For development, `npm run dev` restarts the app whenever a file in `src/` changes (Node's built-in `--watch`, no extra tools).
+
 ## How it works
 
 - `src/main.js` opens the window and renders pages in a Chromium `WebContentsView` under the toolbar. It decides whether input is a URL or a Google search.
