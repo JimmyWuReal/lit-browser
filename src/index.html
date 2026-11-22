@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'">
+  <title>Lit</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap">
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      --dim: #848484;
+      --line: rgba(255, 255, 255, .18);
+      --line-hover: rgba(255, 255, 255, .34);
+      --line-live: rgba(255, 255, 255, .72);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #090909; }
+
+    /* The toolbar is the window's title bar, so it drags the window.
+       Its height matches BAR_HEIGHT in main.js. 88px clears the macOS
+       window buttons. */
+    .bar {
+      height: 52px;
+      display: flex;
+      align-items: center;
+      padding: 0 16px 0 88px;
+      -webkit-app-region: drag;
+    }
+
+    .address { position: relative; flex: 1; -webkit-app-region: no-drag; }
+    .address input {
+      width: 100%;
+      height: 32px;
+      padding: 0 14px 0 36px;
+      border: 0;
+      border-radius: 8px;
+      outline: 0;
+      color: #ededed;
+      background: transparent;
+      font: inherit;
+      font-size: 13px;
+      letter-spacing: -.01em;
+      box-shadow: inset 0 0 0 1px var(--line);
+      transition: box-shadow 200ms ease;
+    }
+    .address input::placeholder { color: var(--dim); }
+    .address input:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .address input:focus { box-shadow: inset 0 0 0 1px var(--line-live); }
+    .address svg {
+      position: absolute;
+      top: 50%;
+      left: 13px;
+      color: var(--dim);
+      transform: translateY(-50%);
+      pointer-events: none;
+      transition: color 200ms ease;
+    }
+    .address:focus-within svg { color: #fff; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <form class="bar" id="bar">
+    <label class="address">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path>
+      </svg>
+      <input id="address" type="text" placeholder="Search or enter address" aria-label="Search or enter address"
+        autocomplete="off" spellcheck="false" autofocus>
+    </label>
+  </form>
+  <script>
+    const bar = document.getElementById('bar')
+    const address = document.getElementById('address')
+    let currentUrl = ''
+
+    bar.addEventListener('submit', (event) => {
+      event.preventDefault()
+      window.lit.navigate(address.value)
+      address.blur()
+    })
+
+    // Escape puts back the current page's address.
+    address.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { address.value = currentUrl; address.select() }
+    })
+    address.addEventListener('focus', () => address.select())
+
+    window.lit.onUrl((url) => {
+      currentUrl = url
+      if (document.activeElement !== address) address.value = url
+    })
+  </script>
+</body>
+</html>

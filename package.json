@@ -1,0 +1,15 @@
+{
+  "name": "lit-broswer",
+  "version": "0.1.0",
+  "description": "Lit, a minimal Chromium browser",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^45.4.1"
+  },
+  "private": true
+}
