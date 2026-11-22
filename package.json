@@ -1,5 +1,5 @@
 {
-  "name": "lit-broswer",
+  "name": "lit-browser",
   "version": "0.1.0",
   "description": "Lit, a minimal Chromium browser",
   "main": "src/main.js",
