@@ -59,12 +59,19 @@
     }
     .address:focus-within svg { color: #fff; }
 
+    /* Home: before the first search the bar fills the window and the
+       address becomes a centered search box (the kit's search field). */
+    .home .bar { height: 100vh; justify-content: center; padding: 0 16px; }
+    .home .address { flex: 0 1 560px; }
+    .home .address input { height: 48px; padding: 0 16px 0 42px; border-radius: 10px; }
+    .home .address svg { left: 16px; width: 15px; height: 15px; }
+
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { transition-duration: .01ms !important; }
     }
   </style>
 </head>
-<body>
+<body class="home">
   <form class="bar" id="bar">
     <label class="address">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -82,6 +89,8 @@
 
     bar.addEventListener('submit', (event) => {
       event.preventDefault()
+      if (!address.value.trim()) return
+      document.body.classList.remove('home')
       window.lit.navigate(address.value)
       address.blur()
     })

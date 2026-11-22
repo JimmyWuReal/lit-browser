@@ -28,7 +28,10 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   })
 
+  // The page stays hidden until the first search, so the window opens on
+  // the centered search box in index.html.
   const page = new WebContentsView()
+  page.setVisible(false)
   win.contentView.addChildView(page)
 
   const layout = () => {
@@ -52,6 +55,7 @@ function createWindow() {
 
   ipcMain.on('navigate', (event, input) => {
     if (event.sender !== win.webContents || !input.trim()) return
+    page.setVisible(true)
     page.webContents.loadURL(toUrl(input)).catch(() => {})
     page.webContents.focus()
   })
@@ -59,5 +63,9 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'index.html'))
 }
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  // The packaged app gets its icon from the bundle; in development, show it in the Dock too.
+  if (!app.isPackaged) app.dock.setIcon(path.join(__dirname, '..', 'build', 'icon.png'))
+  createWindow()
+})
 app.on('window-all-closed', () => app.quit())

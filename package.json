@@ -1,16 +1,32 @@
 {
   "name": "lit-browser",
+  "productName": "Lit",
   "version": "0.1.0",
   "description": "Lit, a minimal Chromium browser",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "node --watch-path=src node_modules/electron/cli.js ."
+    "dev": "node --watch-path=src node_modules/electron/cli.js .",
+    "build": "electron-builder",
+    "app": "sh scripts/install-app.sh"
+  },
+  "build": {
+    "appId": "app.jimmywu.lit",
+    "directories": { "output": "out" },
+    "files": ["src/**/*"],
+    "mac": {
+      "target": "dir",
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity",
+      "identity": "-",
+      "hardenedRuntime": false
+    }
   },
   "license": "MIT",
   "type": "commonjs",
   "devDependencies": {
-    "electron": "^45.4.1"
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0"
   },
   "private": true
 }
