@@ -71,7 +71,9 @@ function recordVisit(url, title) {
 }
 
 // What the History popup draws.
-const historyState = () => ({ entries: visited, enabled: settings.saveHistory })
+// `closedTabs` counts tabs and windows Reopen Closed Tab still has, which
+// Clear History also forgets.
+const historyState = () => ({ entries: visited, enabled: settings.saveHistory, closedTabs: closed.length })
 
 function forgetClosed() {
   closed.length = 0
@@ -94,10 +96,12 @@ function applyDoNotTrack() {
     : null)
 }
 
-// The menu item is grayed out while there is nothing to reopen.
+// After the closed list changes: the menu item is grayed out while there
+// is nothing to reopen, and an open History learns what Clear would forget.
 function refreshReopen() {
   const item = Menu.getApplicationMenu()?.getMenuItemById('reopenTab')
   if (item) item.enabled = closed.length > 0
+  for (const controls of openWindows) controls.historyChanged()
 }
 
 function rememberClosed(entry) {
@@ -210,7 +214,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, firstUrl: '' }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -219,7 +223,13 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     layout()
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
-    page.on('did-stop-loading', () => { tab.loading = false; sync() })
+    page.on('did-stop-loading', () => { tab.loading = false; tab.firstUrl = ''; sync() })
+    // The address a tab's first page is loading, until it commits, fails or
+    // is stopped; a tab closed meanwhile reopens on it. Later navigations
+    // don't count: by then the tab reopens on the page it was showing.
+    page.on('did-start-navigation', ({ url, isMainFrame, isSameDocument }) => {
+      if (isMainFrame && !isSameDocument && !tab.url) tab.firstUrl = url
+    })
     // A new page has no title yet; a reopened one keeps its entry's title,
     // as Chromium does not announce a title it already had.
     page.on('did-navigate', (_event, url) => {
@@ -259,6 +269,12 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
         detail: 'Changes you made may not be saved.',
       })
       if (choice === 0) event.preventDefault()
+      // Staying cancels a close in progress, so a later close the page
+      // makes itself is not taken for one made here.
+      else {
+        delete tab.closedByUser
+        delete tab.closeFocus
+      }
     })
 
     // Links and window.open become tabs right after the opener: Cmd-click
@@ -303,12 +319,14 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // the freshest scroll positions and form values. A page still loading
   // is not part of it: a tab reopens as it was when closed.
   // Until its first page commits (tab.url is set), Chromium's list holds
-  // only its initial blank entry, so it is not read.
+  // only its initial blank entry, so it is not read; the address being
+  // loaded stands in, if any.
   function saveHistory(tab) {
     if (!tab.page.isDestroyed() && tab.url) {
       const entries = tab.page.navigationHistory.getAllEntries()
       if (entries.length) tab.history = { entries, index: tab.page.navigationHistory.getActiveIndex() }
     }
+    if (!tab.history && tab.firstUrl) return { entries: [{ url: tab.firstUrl, title: '' }], index: 0 }
     return tab.history
   }
 

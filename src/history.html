@@ -370,7 +370,7 @@
     function draw(focusUrl = document.activeElement?.closest?.('.row')?.querySelector('.page')?.dataset.url) {
       const top = list.scrollTop
       const found = matches()
-      clear.disabled = state.entries.length === 0
+      clear.disabled = state.entries.length === 0 && !state.closedTabs
       document.getElementById('off-note').hidden = state.enabled
       if (!found.length) {
         const empty = el('div', 'empty-state')
