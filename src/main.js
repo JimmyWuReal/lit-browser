@@ -255,6 +255,7 @@ function createWindow() {
       engineName: engineOf(settings.searchEngine).name,
       askWhereToSave: settings.downloadLocation !== 'downloads',
       keys: { reload: settings['shortcuts.reload'], back: settings['shortcuts.back'], forward: settings['shortcuts.forward'] },
+      inSubframe: Boolean(params.frame && params.frame !== contents.mainFrame),
     })
     popup(items, (command, arg) => {
       if (contents.isDestroyed()) return

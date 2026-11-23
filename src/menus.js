@@ -35,8 +35,9 @@ function quote(text) {
 //   askWhereToSave whether downloads ask where to save (the Downloads setting)
 //   keys           { reload, back, forward }: the current accelerators, shown
 //                  next to those items
+//   inSubframe     whether the right-click was inside an iframe
 function pageMenu(params, context = {}) {
-  const { isPage = true, canGoBack = false, canGoForward = false, engineName = 'Google', askWhereToSave = true, keys = {} } = context
+  const { isPage = true, canGoBack = false, canGoForward = false, engineName = 'Google', askWhereToSave = true, keys = {}, inSubframe = false } = context
   const flags = params.editFlags || {}
   const selection = (params.selectionText || '').trim()
   const groups = []
@@ -63,16 +64,18 @@ function pageMenu(params, context = {}) {
   }
 
   // Images, videos and audio. Only a web address opens in a new tab (a
-  // data: or blob: one belongs to its page); any address can be saved,
-  // since the page itself downloads it, and copied. Copying an image needs
-  // only its drawn pixels.
+  // data: or blob: one belongs to its page). Any image address can be saved,
+  // since the page itself downloads it; videos and audio only when Chromium
+  // says so (not streams). Copying an image needs its drawn pixels, and
+  // Electron only copies from the top frame, so not inside an iframe.
   const media = { image: 'Image', video: 'Video', audio: 'Audio' }[params.mediaType]
   if (isPage && media) {
     const src = params.srcURL || ''
+    const canSave = src && (media === 'Image' || Boolean(params.mediaFlags?.canSave))
     groups.push([
       ...(isWeb(src) ? [{ label: `Open ${media} in New Tab`, command: 'openInNewTab', arg: src }] : []),
-      ...(src ? [{ label: askWhereToSave ? `Save ${media} As…` : `Download ${media}`, command: 'download', arg: src }] : []),
-      ...(media === 'Image' && params.hasImageContents ? [{ label: 'Copy Image', command: 'copyImage' }] : []),
+      ...(canSave ? [{ label: askWhereToSave ? `Save ${media} As…` : `Download ${media}`, command: 'download', arg: src }] : []),
+      ...(media === 'Image' && params.hasImageContents && !inSubframe ? [{ label: 'Copy Image', command: 'copyImage' }] : []),
       ...(src ? [{ label: `Copy ${media} Address`, command: 'copyText', arg: src }] : []),
     ])
   }

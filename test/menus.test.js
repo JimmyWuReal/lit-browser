@@ -47,12 +47,21 @@ test('an image inside a link gets both groups', () => {
 test('only web media opens in a new tab, and images copy by their pixels', () => {
   assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'data:image/png;base64,AA', hasImageContents: true })),
     ['Save Image As…', 'Copy Image', 'Copy Image Address', '—', 'Inspect Element'])
-  assert.deepEqual(labels(pageMenu({ mediaType: 'video', srcURL: 'blob:https://a.b/1' })), ['Save Video As…', 'Copy Video Address', '—', 'Inspect Element'])
+  assert.deepEqual(labels(pageMenu({ mediaType: 'video', srcURL: 'blob:https://a.b/1', mediaFlags: { canSave: true } })),
+    ['Save Video As…', 'Copy Video Address', '—', 'Inspect Element'])
   assert.deepEqual(labels(pageMenu({ mediaType: 'video' })), ['Back', 'Forward', 'Reload', '—', 'Inspect Element'])
   assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'https://example.com/broken.png' })).slice(0, 3),
     ['Open Image in New Tab', 'Save Image As…', 'Copy Image Address'])
-  assert.deepEqual(labels(pageMenu({ mediaType: 'video', srcURL: 'https://example.com/a.mp4' })).slice(0, 3),
+  assert.deepEqual(labels(pageMenu({ mediaType: 'video', srcURL: 'https://example.com/a.mp4', mediaFlags: { canSave: true } })).slice(0, 3),
     ['Open Video in New Tab', 'Save Video As…', 'Copy Video Address'])
+})
+
+test('streams cannot be saved, and iframe images cannot be copied', () => {
+  assert.deepEqual(labels(pageMenu({ mediaType: 'video', srcURL: 'blob:https://a.b/stream', mediaFlags: { canSave: false } })),
+    ['Copy Video Address', '—', 'Inspect Element'])
+  const image = { mediaType: 'image', srcURL: 'https://a.b/c.png', hasImageContents: true }
+  assert.ok(commands(pageMenu(image)).includes('copyImage'))
+  assert.ok(!commands(pageMenu(image, { inSubframe: true })).includes('copyImage'))
 })
 
 test('selected text can be copied and searched with the chosen engine', () => {
