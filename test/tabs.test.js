@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, remember, reopenIndex, onScreen } = require('../src/tabs')
+const { afterClose, step, byNumber, remember, forgetOlder, reopenIndex, onScreen } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -46,4 +46,12 @@ test('a window is on screen while it overlaps a display', () => {
   assert.equal(onScreen({ x: 2000, y: 100, width: 800, height: 600 }, displays), true)
   assert.equal(onScreen({ x: 4000, y: 100, width: 800, height: 600 }, displays), false)
   assert.equal(onScreen({ x: 100, y: 50, width: 800, height: 600 }, []), false)
+})
+
+test('closed entries are forgotten once they are too old', () => {
+  const closed = [{ id: 1, time: 0 }, { id: 2, time: 50 }, { id: 3, time: 90 }]
+  assert.equal(forgetOlder(closed, 100, 60), 110)
+  assert.deepEqual(closed.map((entry) => entry.id), [2, 3])
+  assert.equal(forgetOlder(closed, 200, 60), null)
+  assert.deepEqual(closed, [])
 })

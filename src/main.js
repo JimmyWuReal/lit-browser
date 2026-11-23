@@ -7,7 +7,7 @@ const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, s
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl, searchUrl, engineOf } = require('./url')
-const { afterClose, step, byNumber, remember, reopenIndex, onScreen } = require('./tabs')
+const { afterClose, step, byNumber, remember, forgetOlder, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const shortcuts = require('./shortcuts')
@@ -38,7 +38,8 @@ let nextWindowKey = 1
 // A window: { key, tabs: [history], activeIndex, bounds, maximized,
 // fullScreen }, so tab order, the active tab and its place come back as they were.
 // A history is { entries, index } from navigationHistory, so back and
-// forward come back too. Kept only while Lit runs.
+// forward come back too. Kept in memory only, and forgotten after the
+// time the Forget closed tabs setting gives (and when Lit quits).
 const closed = []
 
 // Settings are read once at launch and saved on every change.
@@ -85,6 +86,19 @@ const historyState = () => ({ entries: visited, enabled: settings.saveHistory, c
 
 function forgetClosed() {
   closed.length = 0
+  pruneClosed()
+}
+
+// How long a closed tab can be reopened, per the Forget closed tabs setting.
+const KEEP_CLOSED = { '10m': 10 * 60 * 1000, '1h': 60 * 60 * 1000, '1d': 24 * 60 * 60 * 1000 }
+let closedTimer = null
+
+// Forgets closes older than the setting allows, then waits for the next
+// one to come due. Run after every change to the list or the setting.
+function pruneClosed() {
+  clearTimeout(closedTimer)
+  const due = forgetOlder(closed, Date.now(), KEEP_CLOSED[settings.closedTabsFor])
+  closedTimer = due === null ? null : setTimeout(pruneClosed, due - Date.now())
   refreshReopen()
 }
 
@@ -114,13 +128,14 @@ function refreshReopen() {
 
 function rememberClosed(entry) {
   if (!settings.saveHistory) return
-  remember(closed, entry)
-  refreshReopen()
+  remember(closed, { ...entry, time: Date.now() })
+  pruneClosed()
 }
 
 // The last closed tab goes back where it was: its own window if still open,
 // else the focused one, else a new window. A closed window reopens whole.
 function reopenClosed(focused) {
+  pruneClosed()
   const entry = closed.pop()
   if (!entry) return
   refreshReopen()
@@ -141,7 +156,7 @@ function applySettings() {
   if (!settings.saveHistory) {
     forgetClosed()
     for (const controls of openWindows) controls.forgetTabHistories()
-  }
+  } else pruneClosed()
   for (const controls of openWindows) controls.settingsChanged()
 }
 

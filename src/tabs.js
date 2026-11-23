@@ -32,6 +32,14 @@ function remember(closed, entry, limit = 25) {
   return closed
 }
 
+// Drops entries closed `keepFor` ms or more before `now` (each has `time`).
+// Returns when the next one expires, or null when none are left.
+function forgetOlder(closed, now, keepFor) {
+  const kept = closed.filter((entry) => now - entry.time < keepFor)
+  closed.splice(0, closed.length, ...kept)
+  return kept.length ? Math.min(...kept.map((entry) => entry.time)) + keepFor : null
+}
+
 // Where a reopened tab goes: back at its old place, or at the end if the
 // window now has fewer tabs.
 const reopenIndex = (index, count) => Math.min(Math.max(index, 0), count)
@@ -43,4 +51,4 @@ const onScreen = (bounds, areas) => areas.some((area) =>
   bounds.x < area.x + area.width && bounds.x + bounds.width > area.x &&
   bounds.y < area.y + area.height && bounds.y + bounds.height > area.y)
 
-module.exports = { afterClose, step, byNumber, remember, reopenIndex, onScreen }
+module.exports = { afterClose, step, byNumber, remember, forgetOlder, reopenIndex, onScreen }

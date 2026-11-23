@@ -91,6 +91,14 @@ const SECTIONS = [
         default: true,
       },
       {
+        key: 'closedTabsFor',
+        label: 'Forget closed tabs after',
+        description: 'Closed tabs are kept in memory only, for Reopen Closed Tab.',
+        type: 'choice',
+        options: [{ value: '10m', label: '10 minutes' }, { value: '1h', label: '1 hour' }, { value: '1d', label: '1 day' }],
+        default: '1h',
+      },
+      {
         key: 'doNotTrack',
         label: 'Ask sites not to track me',
         description: 'Sends Do Not Track and Global Privacy Control with every request.',

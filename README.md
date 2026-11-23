@@ -21,7 +21,7 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 
 Middle-click closes a tab. In the tab strip, arrow keys move between tabs and Delete closes one.
 
-⇧⌘T brings back the last tab you closed (⌘W, its close button, middle-click) as it was then, with its back/forward history, in its old place. A closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers the last 25 closed tabs and windows until it quits; a page closing itself (such as a sign-in popup) is not remembered.
+⇧⌘T brings back the last tab you closed (⌘W, its close button, middle-click) as it was then, with its back/forward history, in its old place. A closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers the last 25 closed tabs and windows, in memory only, for an hour by default (see Settings); a page closing itself (such as a sign-in popup) is not remembered.
 
 ## History
 
@@ -42,7 +42,7 @@ Right-clicking a tab offers Reload, Duplicate (which keeps the tab's back and fo
 - **General:** search engine (Google, DuckDuckGo or Bing).
 - **Tabs:** what new tabs open (the search box, or an address or search), where they go, whether ⌘-clicked links come to the front, and whether closing the last tab closes the window.
 - **Downloads:** ask where to save, or save straight to Downloads.
-- **Privacy:** save history (pages visited and closed tabs; when off, nothing new is saved, closed tabs are forgotten and Reopen Closed Tab does nothing), and send Do Not Track and Global Privacy Control.
+- **Privacy:** save history (pages visited and closed tabs; when off, nothing new is saved, closed tabs are forgotten and Reopen Closed Tab does nothing), how long closed tabs can be reopened (10 minutes, 1 hour or 1 day; they are never written to disk), and send Do Not Track and Global Privacy Control.
 - **Keyboard Shortcuts:** every shortcut in the table above except ⌘1–9 and the ⇧⌘[ / ⇧⌘] alternates, plus Duplicate Tab and Close Tabs to the Right, which have none until you set one. Click a shortcut and press the new keys; Escape cancels and Delete removes it. Lit refuses a shortcut another command already uses.
 
 ## Run
