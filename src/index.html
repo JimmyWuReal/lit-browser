@@ -140,7 +140,9 @@
     .tab.is-active .tab-close,
     .tab:hover .tab-close,
     .tab-close:focus-visible { opacity: 1; }
-    .new-tab { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; }
+    .new-tab,
+    .open-settings { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; }
+    .open-settings { margin-left: auto; }
 
     /* Narrow tabs keep just the icon; the active one keeps its close button. */
     @container (max-width: 72px) {
@@ -211,9 +213,15 @@
     <div class="tabs" id="tabs" role="tablist" aria-label="Tabs">
       <span class="tab-thumb" id="thumb" aria-hidden="true"></span>
     </div>
-    <button class="icon-button new-tab" id="new-tab" type="button" aria-label="New tab" title="New Tab (⌘T)">
+    <button class="icon-button new-tab" id="new-tab" type="button" aria-label="New tab" title="New Tab" data-shortcut="shortcuts.newTab">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+    </button>
+    <button class="icon-button open-settings" id="open-settings" type="button" aria-label="Settings" title="Settings" data-shortcut="shortcuts.settings">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 7h-9"></path><path d="M14 17H5"></path><circle cx="17" cy="17" r="3"></circle><circle cx="7" cy="7" r="3"></circle>
+      </svg>
     </button>
   </div>
   <form class="bar" id="bar">
@@ -233,7 +241,7 @@
         <span class="tab-icon"></span>
         <span class="tab-title"></span>
       </button>
-      <button class="icon-button tab-close" type="button" aria-label="Close tab" title="Close Tab (⌘W)">
+      <button class="icon-button tab-close" type="button" aria-label="Close tab" title="Close Tab" data-shortcut="shortcuts.closeTab">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"
           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
       </button>
@@ -267,6 +275,14 @@
     let shownUrl = ''
     const tabLabel = (tab) => tab.title || (tab.started ? tab.url.replace(/^https?:\/\/(www\.)?/, '') : '') || 'New Tab'
 
+    // Tooltips end with the button's current shortcut, from Settings.
+    let shortcutLabels = {}
+    function labelShortcut(button) {
+      button.dataset.name ??= button.title
+      const shortcut = shortcutLabels[button.dataset.shortcut]
+      button.title = shortcut ? `${button.dataset.name} (${shortcut})` : button.dataset.name
+    }
+
     function createTab(id) {
       const root = tabTemplate.content.firstElementChild.cloneNode(true)
       const select = root.querySelector('.tab-select')
@@ -275,6 +291,7 @@
       close.addEventListener('click', () => window.lit.closeTab(id))
       // Middle click closes, as in other browsers.
       root.addEventListener('auxclick', (event) => { if (event.button === 1) window.lit.closeTab(id) })
+      labelShortcut(close)
       const elements = { root, select, close, icon: root.querySelector('.tab-icon'), title: root.querySelector('.tab-title'), iconKey: null }
       tabElements.set(id, elements)
       return elements
@@ -382,6 +399,7 @@
     })
 
     document.getElementById('new-tab').addEventListener('click', () => window.lit.newTab())
+    document.getElementById('open-settings').addEventListener('click', () => window.lit.openSettings())
 
     bar.addEventListener('submit', (event) => {
       event.preventDefault()
@@ -404,6 +422,10 @@
     address.addEventListener('focus', () => address.select())
 
     window.lit.onTabs(render)
+    window.lit.onShortcuts((labels) => {
+      shortcutLabels = labels
+      document.querySelectorAll('[data-shortcut]').forEach(labelShortcut)
+    })
     window.lit.onFocusAddress(() => { address.focus(); address.select() })
   </script>
 </body>

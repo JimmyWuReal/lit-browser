@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'">
+  <title>Settings</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400&family=Inter:wght@400;500&display=swap">
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      --dim: #848484;
+      --sub: #8c8c8c;
+      --line: rgba(255, 255, 255, .18);
+      --line-hover: rgba(255, 255, 255, .34);
+      --line-live: rgba(255, 255, 255, .72);
+      --settle: cubic-bezier(.22, 1, .36, 1);
+    }
+    * { box-sizing: border-box; }
+    /* The page is a transparent layer over the browser window; only the
+       backdrop and the panel draw anything. */
+    html, body { height: 100%; margin: 0; background: transparent; overflow: hidden; color: #ededed; }
+    body { user-select: none; }
+    button, input { font: inherit; color: inherit; }
+    button:focus-visible { outline: 2px solid rgba(255, 255, 255, .8); outline-offset: 3px; }
+
+    /* The kit's popup: backdrop and panel replay their keyframes on each open. */
+    .backdrop {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+      background: rgba(0, 0, 0, .5);
+      opacity: 0;
+    }
+    .is-open .backdrop { opacity: 1; animation: popup-fade 160ms ease-out; }
+    .panel {
+      position: relative;
+      width: min(720px, 100%);
+      height: min(540px, 100%);
+      display: grid;
+      grid-template-columns: 188px minmax(0, 1fr);
+      border-radius: 16px;
+      background: #1c1c1c;
+      box-shadow: inset 0 0 0 1px var(--line), 0 24px 60px rgba(0, 0, 0, .45);
+      overflow: hidden;
+    }
+    .is-open .panel { animation: popup-in 240ms var(--settle); }
+    .panel:focus { outline: 0; }
+    @keyframes popup-fade { from { opacity: 0; } }
+    @keyframes popup-in { from { opacity: 0; transform: scale(.96); } }
+
+    /* Sections. One thumb slides to the open section, like the tab strip. */
+    .sidebar { display: flex; flex-direction: column; gap: 14px; padding: 20px 12px; }
+    .sidebar h1 { margin: 0 10px; font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
+    .nav { position: relative; display: flex; flex-direction: column; gap: 2px; }
+    .nav-thumb {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: var(--thumb-width);
+      height: var(--thumb-height);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .07);
+      transform: translate(var(--thumb-x), var(--thumb-y));
+      pointer-events: none;
+    }
+    .nav.is-ready .nav-thumb {
+      transition: transform 320ms var(--settle), width 320ms var(--settle), height 320ms var(--settle);
+    }
+    .nav button {
+      position: relative;
+      z-index: 1;
+      height: 32px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #8a8a8a;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      text-align: left;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: color 260ms ease;
+    }
+    .nav button:not(.is-active):hover { color: #e6e6e6; }
+    .nav button.is-active { color: #ededed; }
+
+    .content { min-height: 0; overflow: auto; padding: 20px 24px 28px; }
+    .content h2 { margin: 0 0 22px; font-size: 15px; font-weight: 500; letter-spacing: -.015em; }
+    .rows { display: flex; flex-direction: column; gap: 22px; animation: panel-enter 260ms var(--settle); }
+    @keyframes panel-enter { from { opacity: 0; transform: translateY(4px); } }
+    .shortcuts .rows { gap: 10px; }
+    /* A new section's controls mount at rest, not easing into their values. */
+    .is-mounting * { transition: none !important; }
+
+    /* The kit's quiet icon button, for closing the popup and resetting. */
+    .icon-button {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      flex: 0 0 auto;
+      padding: 0;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #bdbdbd;
+      box-shadow: inset 0 0 0 1px transparent;
+      cursor: pointer;
+      transition: color 180ms ease-out, box-shadow 200ms ease, opacity 160ms ease-out, transform 140ms var(--settle);
+    }
+    .icon-button:hover { color: #fff; box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .icon-button:active { transform: scale(.94); }
+    .close { position: absolute; top: 14px; right: 14px; z-index: 2; }
+
+    /* The kit's control row: label and note on the left, control on the right. */
+    .control-row { display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
+    .control-text { display: flex; flex-direction: column; gap: 5px; flex: 1 1 160px; min-width: 0; }
+    .control-text strong { font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
+    .control-text span { font-size: 11.5px; line-height: 1.5; color: var(--sub); }
+    .control-text .error { color: #ff8a80; }
+    .control-text .error:empty { display: none; }
+    .control { display: flex; align-items: center; gap: 6px; }
+
+    /* The kit's segmented control. */
+    .segmented {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(var(--count), auto);
+      padding: 4px;
+      border-radius: 12px;
+      box-shadow: inset 0 0 0 1px var(--line);
+    }
+    .segmented-thumb {
+      position: absolute;
+      top: 4px;
+      bottom: 4px;
+      left: 0;
+      width: var(--thumb-width);
+      border-radius: 8px;
+      background: #fff;
+      transform: translateX(var(--thumb-x));
+    }
+    .segmented.is-ready .segmented-thumb {
+      transition: transform 320ms var(--settle), width 320ms var(--settle);
+    }
+    .segmented button {
+      position: relative;
+      z-index: 1;
+      height: 30px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #8a8a8a;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: color 260ms ease;
+    }
+    .segmented button:not(.is-active):hover { color: #e6e6e6; }
+    .segmented button.is-active { color: #0a0a0a; }
+
+    /* The kit's toggle. */
+    .toggle {
+      position: relative;
+      flex: 0 0 auto;
+      width: 46px;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      border-radius: 999px;
+      background: #0a0a0a;
+      box-shadow: inset 0 0 0 1px var(--line);
+      cursor: pointer;
+      transition: background-color 260ms ease, box-shadow 260ms ease;
+    }
+    .toggle:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .toggle-knob {
+      position: absolute;
+      top: 5px;
+      left: 5px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #6d6d6d;
+      transform: scale(.92);
+      transition: transform 320ms var(--settle), background-color 260ms ease;
+    }
+    .toggle.is-on { background: #fff; box-shadow: inset 0 0 0 1px #fff; }
+    .toggle.is-on .toggle-knob { transform: translateX(20px) scale(1); background: #0a0a0a; }
+
+    /* The kit's text field, at row height. */
+    .text input {
+      width: 220px;
+      height: 36px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 10px;
+      outline: 0;
+      color: #ededed;
+      background: transparent;
+      font-size: 13px;
+      letter-spacing: -.01em;
+      box-shadow: inset 0 0 0 1px var(--line);
+      transition: box-shadow 200ms ease;
+      user-select: text;
+    }
+    .text input::placeholder { color: var(--dim); }
+    .text input:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .text input:focus { box-shadow: inset 0 0 0 1px var(--line-live); }
+
+    /* A shortcut is an outline button showing its keys; click it, then
+       press the new ones. */
+    .keys {
+      min-width: 96px;
+      height: 32px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: #ededed;
+      font: 400 12px/1 'DM Mono', ui-monospace, monospace;
+      letter-spacing: .04em;
+      box-shadow: inset 0 0 0 1px var(--line);
+      cursor: pointer;
+      transition: box-shadow 200ms ease, color 200ms ease, transform 140ms var(--settle);
+    }
+    .keys:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .keys:active { transform: scale(.97); transition-duration: 55ms; }
+    .keys.is-none { color: var(--dim); }
+    .keys.is-recording { color: var(--dim); box-shadow: inset 0 0 0 1px var(--line-live); }
+    .reset.is-hidden { opacity: 0; pointer-events: none; }
+
+    /* Narrow windows put the sections in a row above the settings. */
+    @media (max-width: 600px) {
+      .panel { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+      .sidebar { padding: 18px 12px 4px; gap: 10px; }
+      .nav { flex-direction: row; overflow: auto hidden; scrollbar-width: none; }
+      .content { padding: 12px 16px 24px; }
+      .text input { width: 100%; }
+      .control-row .text { flex: 1 1 100%; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="backdrop" id="backdrop">
+    <div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
+      <div class="sidebar">
+        <h1 id="settings-title">Settings</h1>
+        <nav class="nav" id="nav" aria-label="Sections">
+          <span class="nav-thumb" id="nav-thumb" aria-hidden="true"></span>
+        </nav>
+      </div>
+      <div class="content" id="content"></div>
+      <button class="icon-button close" id="close" type="button" aria-label="Close settings">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+      </button>
+    </div>
+  </div>
+
+  <template id="reset-icon">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path>
+    </svg>
+  </template>
+
+  <script>
+    // Draws every section and setting from SECTIONS in src/settings.js. A
+    // new setting needs no change here unless it brings a new `type`; then
+    // add a control to `controls` below.
+    const settings = window.lit.settings
+    const backdrop = document.getElementById('backdrop')
+    const nav = document.getElementById('nav')
+    const navThumb = document.getElementById('nav-thumb')
+    const content = document.getElementById('content')
+
+    let state = null
+    let sectionId = null
+    const navButtons = new Map()
+    // The open section's controls, each with how to show the latest state.
+    let rows = []
+
+    const el = (tag, className, text) => {
+      const element = document.createElement(tag)
+      if (className) element.className = className
+      if (text !== undefined) element.textContent = text
+      return element
+    }
+
+    // Main replies with the full state after every change, with `error` if
+    // the change was refused. Only the latest reply redraws, so quick
+    // changes never snap back to an older one.
+    let saves = 0
+    function save(key, value) {
+      const id = ++saves
+      state = { ...state, values: { ...state.values, [key]: value } }
+      redraw()
+      return settings.set(key, value).then((next) => {
+        if (id !== saves) return
+        state = next
+        redraw({ [key]: next.error || '' })
+      })
+    }
+
+    // Shows the current values; `errors` is { key: message } for rows whose
+    // last change was refused.
+    const clearErrors = () => rows.forEach((row) => { row.error.textContent = '' })
+    function redraw(errors = {}) {
+      for (const row of rows) {
+        row.draw()
+        if (row.key in errors) row.error.textContent = errors[row.key]
+      }
+    }
+
+    // Measures the active item of a list so one thumb can slide to it.
+    // The list gets `is-ready` only after the first placement, so the thumb
+    // lands in place instead of sliding in.
+    function placeThumb(list, thumb, active, vertical) {
+      if (!active) return
+      thumb.style.setProperty('--thumb-x', `${active.offsetLeft}px`)
+      thumb.style.setProperty('--thumb-width', `${active.offsetWidth}px`)
+      if (vertical) {
+        thumb.style.setProperty('--thumb-y', `${active.offsetTop}px`)
+        thumb.style.setProperty('--thumb-height', `${active.offsetHeight}px`)
+      }
+      if (!list.classList.contains('is-ready')) {
+        thumb.getBoundingClientRect()
+        requestAnimationFrame(() => list.classList.add('is-ready'))
+      }
+    }
+
+    // Arrow keys move focus and selection together; only the selected item
+    // is tabbable, as with native radios.
+    function arrowKeys(container, items, current, choose) {
+      container.addEventListener('keydown', (event) => {
+        const delta = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key]
+        if (!delta) return
+        event.preventDefault()
+        const next = (current() + delta + items.length) % items.length
+        items[next].focus()
+        choose(next)
+      })
+    }
+
+    const controls = {
+      choice(setting) {
+        const group = el('div', 'segmented')
+        group.setAttribute('role', 'radiogroup')
+        group.setAttribute('aria-label', setting.label)
+        group.style.setProperty('--count', setting.options.length)
+        const thumb = el('span', 'segmented-thumb')
+        thumb.setAttribute('aria-hidden', 'true')
+        group.append(thumb)
+        const index = () => setting.options.findIndex((option) => option.value === state.values[setting.key])
+        const buttons = setting.options.map((option) => {
+          const button = el('button', '', option.label)
+          button.type = 'button'
+          button.setAttribute('role', 'radio')
+          button.addEventListener('click', () => save(setting.key, option.value))
+          group.append(button)
+          return button
+        })
+        arrowKeys(group, buttons, index, (next) => save(setting.key, setting.options[next].value))
+        const place = () => placeThumb(group, thumb, buttons[index()])
+        new ResizeObserver(place).observe(group)
+        return {
+          element: group,
+          draw() {
+            buttons.forEach((button, i) => {
+              const on = i === index()
+              button.classList.toggle('is-active', on)
+              button.setAttribute('aria-checked', String(on))
+              button.tabIndex = on ? 0 : -1
+            })
+            place()
+          },
+        }
+      },
+
+      toggle(setting) {
+        const button = el('button', 'toggle')
+        button.type = 'button'
+        button.setAttribute('role', 'switch')
+        button.setAttribute('aria-label', setting.label)
+        button.append(el('span', 'toggle-knob'))
+        button.addEventListener('click', () => save(setting.key, !state.values[setting.key]))
+        return {
+          element: button,
+          draw() {
+            button.classList.toggle('is-on', state.values[setting.key])
+            button.setAttribute('aria-checked', String(state.values[setting.key]))
+          },
+        }
+      },
+
+      // Saves when the field is left or Enter is pressed.
+      text(setting) {
+        const wrap = el('label', 'text')
+        const input = el('input')
+        input.type = 'text'
+        input.spellcheck = false
+        input.placeholder = setting.placeholder || ''
+        input.setAttribute('aria-label', setting.label)
+        input.addEventListener('change', () => save(setting.key, input.value.trim()))
+        input.addEventListener('keydown', (event) => { if (event.key === 'Enter') input.blur() })
+        wrap.append(input)
+        return {
+          element: wrap,
+          draw() { if (document.activeElement !== input) input.value = state.values[setting.key] },
+        }
+      },
+
+      // Click to record, then press the new shortcut. Escape cancels and
+      // Delete removes it. Main sends the keys, so menu shortcuts do not fire.
+      shortcut(setting) {
+        const wrap = el('div', 'control')
+        const keys = el('button', 'keys')
+        keys.type = 'button'
+        const reset = el('button', 'icon-button reset')
+        reset.type = 'button'
+        reset.setAttribute('aria-label', `Reset ${setting.label} shortcut`)
+        reset.title = 'Reset'
+        reset.append(document.getElementById('reset-icon').content.cloneNode(true))
+        wrap.append(reset, keys)
+
+        let recording = false
+        const draw = () => {
+          const shown = state.labels[setting.key]
+          keys.textContent = recording ? 'Press keys' : shown || 'None'
+          keys.classList.toggle('is-recording', recording)
+          keys.classList.toggle('is-none', !recording && !shown)
+          keys.setAttribute('aria-label', recording
+            ? `${setting.label}: press the new shortcut, Escape to cancel, Delete to remove`
+            : `${setting.label} shortcut: ${shown || 'none'}`)
+          const changed = state.values[setting.key] !== setting.default
+          reset.classList.toggle('is-hidden', !changed)
+          reset.tabIndex = changed ? 0 : -1
+        }
+        const stop = () => {
+          if (!recording) return
+          recording = false
+          recorder = null
+          settings.record(false)
+          draw()
+        }
+        keys.addEventListener('click', () => {
+          if (recording) return stop()
+          recorder?.stop()
+          recording = true
+          recorder = { stop, pressed: (accelerator) => { stop(); save(setting.key, accelerator) } }
+          settings.record(true, layout)
+          draw()
+        })
+        keys.addEventListener('blur', stop)
+        reset.addEventListener('click', () => save(setting.key, setting.default))
+        return { element: wrap, draw }
+      },
+    }
+    // The shortcut control waiting for keys, if any.
+    let recorder = null
+    // The keyboard layout, so main can name keys that ⌥ or ⇧ change.
+    // Read again on each open, in case the layout changed.
+    let layout = {}
+    const readLayout = () => navigator.keyboard?.getLayoutMap()
+      .then((map) => { layout = Object.fromEntries(map) })
+      .catch(() => {})
+    settings.onShortcutPressed(({ cancel, accelerator }) => {
+      if (!recorder) return
+      if (cancel) recorder.stop()
+      else recorder.pressed(accelerator)
+    })
+
+    function row(setting) {
+      const element = el('div', 'control-row')
+      const text = el('div', 'control-text')
+      text.append(el('strong', '', setting.label))
+      if (setting.description) text.append(el('span', '', setting.description))
+      const error = el('span', 'error')
+      error.setAttribute('role', 'alert')
+      text.append(error)
+      const control = controls[setting.type](setting)
+      element.append(text, control.element)
+      return { key: setting.key, error, draw: control.draw, element }
+    }
+
+    // A new panel each time, so it plays the kit's panel keyframe.
+    function showSection(id) {
+      recorder?.stop()
+      sectionId = id
+      const section = state.sections.find((item) => item.id === id)
+      for (const [key, button] of navButtons) {
+        const on = key === id
+        button.classList.toggle('is-active', on)
+        button.setAttribute('aria-current', on ? 'page' : 'false')
+        button.tabIndex = on ? 0 : -1
+      }
+      placeThumb(nav, navThumb, navButtons.get(id), true)
+      rows = section.settings.map(row)
+      const list = el('div', 'rows')
+      list.append(...rows.map((item) => item.element))
+      content.className = `content ${id} is-mounting`
+      content.replaceChildren(el('h2', '', section.title), list)
+      redraw()
+      content.scrollTop = 0
+      content.getBoundingClientRect()
+      content.classList.remove('is-mounting')
+    }
+
+    function build() {
+      const ids = state.sections.map((section) => section.id)
+      const buttons = state.sections.map((section) => {
+        const button = el('button', '', section.title)
+        button.type = 'button'
+        button.addEventListener('click', () => showSection(section.id))
+        navButtons.set(section.id, button)
+        nav.append(button)
+        return button
+      })
+      arrowKeys(nav, buttons, () => ids.indexOf(sectionId), (next) => showSection(ids[next]))
+      new ResizeObserver(() => placeThumb(nav, navThumb, navButtons.get(sectionId), true)).observe(nav)
+      showSection(ids[0])
+    }
+
+    // Each open replays the popup's keyframes and shows the latest values.
+    function open(next) {
+      recorder?.stop()
+      readLayout()
+      clearErrors()
+      state = next
+      if (!sectionId) build()
+      else redraw()
+      document.body.classList.remove('is-open')
+      document.body.getBoundingClientRect()
+      document.body.classList.add('is-open')
+      // The panel takes focus, so Tab starts at the sections without a ring.
+      document.getElementById('panel').focus()
+    }
+
+    const close = () => { recorder?.stop(); settings.close() }
+    document.getElementById('close').addEventListener('click', close)
+    backdrop.addEventListener('mousedown', (event) => { if (event.target === backdrop) close() })
+    // Escape while recording only cancels the recording (main handles it).
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !recorder) close() })
+
+    settings.onOpen(open)
+    // Another window changed a setting.
+    settings.onChanged((next) => { state = next; clearErrors(); redraw() })
+    settings.get().then(open)
+  </script>
+</body>
+</html>
