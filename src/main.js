@@ -2,7 +2,8 @@
 // the window's own page) and one Chromium WebContentsView per tab below it.
 // Only the active tab's view is visible. The Settings and History popups
 // are each one more view, transparent and over everything, shown only
-// while open.
+// while open. Find in page lives in the toolbar; each tab keeps its own
+// search (src/find.js).
 const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, screen, session } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
@@ -12,6 +13,7 @@ const settingsStore = require('./settings')
 const historyStore = require('./history')
 const shortcuts = require('./shortcuts')
 const { uniquePath } = require('./downloads')
+const findState = require('./find')
 const { pageMenu, tabMenu } = require('./menus')
 
 // Keep in sync with .strip and .bar heights in index.html.
@@ -212,7 +214,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     win.setTitle(current?.title || (current?.started ? current.url : '') || 'New Tab')
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started }) => ({ id, title, url, favicon, loading, started })),
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find }) => ({
+        id, title, url, favicon, loading, started,
+        find: find && { text: find.text, active: find.active, matches: find.matches },
+      })),
     })
   }
 
@@ -260,7 +265,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -280,6 +285,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       tab.url = url
       tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
       tab.favicon = null
+      tab.find = findState.reset(tab.find)
       tab.recorded = recordVisit(url, tab.title)
       sync()
     })
@@ -295,6 +301,28 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       sync()
     })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
+    // Escape in the page closes its find field too, as in Safari and
+    // Firefox. The page still gets the key, and an input method's keeps it.
+    page.on('before-input-event', (_event, input) => {
+      if (input.type === 'keyDown' && input.key === 'Escape' && !input.isComposing && tab.find && tab.id === activeId) closeFind()
+    })
+    // A new page (or a reload) gets the open search run again once its
+    // document is ready, without waiting for slow images; did-stop-loading
+    // covers pages restored from the back-forward cache, which skip dom-ready.
+    const rerunFind = () => { if (tab.find?.text && tab.find.requestId === null) search(tab) }
+    page.on('dom-ready', rerunFind)
+    page.on('did-stop-loading', rerunFind)
+    page.on('found-in-page', (_event, result) => {
+      const next = findState.result(tab.find, result)
+      if (next === tab.find) return
+      tab.find = next
+      sync()
+      // A step asked for while the search was starting goes now.
+      if (next.matches !== null && next.queued !== null) {
+        tab.find = { ...next, queued: null }
+        if (tab.id === activeId) findAgain(next.queued)
+      }
+    })
     // Every tab leaves through here: after closeTab's request, or when a
     // page closes itself (window.close() on a popup it opened).
     page.on('destroyed', () => removeTab(tab))
@@ -429,6 +457,66 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     tab.started = true
     show(tab)
     tab.page.loadURL(toUrl(input, settings.searchEngine)).catch(() => {})
+  }
+
+  // Starts a new search for the tab's find text; results come back through
+  // found-in-page. A new search starts from the page's selection, which
+  // closing Find keeps, so reopening carries on from the last match.
+  function search(tab, forward = true) {
+    if (tab.page.isDestroyed()) return
+    tab.find = { ...tab.find, requestId: tab.page.findInPage(tab.find.text, { forward, findNext: true }) }
+  }
+
+  // Find in page. ⌘F opens the active tab's find field in the toolbar (or
+  // selects its text again); a tab on the search box has nothing to search.
+  // Reopening brings back the tab's last search and runs it again, in
+  // `forward`'s direction (⇧⌘G on a closed field searches backward).
+  function openFind(forward = true) {
+    const tab = active()
+    if (!tab?.started || tab.page.isDestroyed()) return
+    closePopup()
+    if (!tab.find) {
+      tab.find = findState.open(null, tab.lastFindText)
+      if (tab.find.text) search(tab, forward)
+    }
+    sync()
+    win.webContents.focus()
+    win.webContents.send('focus-find')
+  }
+
+  // Searches as the field changes; empty text clears the highlights.
+  function findText(text) {
+    const tab = active()
+    if (!tab?.find || tab.page.isDestroyed()) return
+    tab.find = findState.setText(tab.find, text)
+    if (text) search(tab)
+    else tab.page.stopFindInPage('clearSelection')
+    sync()
+  }
+
+  // The next or previous match (Enter, ⇧Enter, ⌘G, ⇧⌘G). Without text yet,
+  // it opens the field instead. After a navigation it starts a new search.
+  function findAgain(forward) {
+    const tab = active()
+    if (!tab?.find?.text) return openFind(forward)
+    if (tab.page.isDestroyed()) return
+    if (tab.find.requestId === null) return search(tab, forward)
+    // Chromium drops a step sent before a new search's first answer, so
+    // it waits for that answer (see found-in-page).
+    if (tab.find.matches === null) { tab.find = { ...tab.find, queued: forward }; return }
+    tab.find = { ...tab.find, requestId: tab.page.findInPage(tab.find.text, { forward, findNext: false }) }
+  }
+
+  // Escape or the close button: the page keeps the selected match, and
+  // focus goes back to the page, like other browsers.
+  function closeFind() {
+    const tab = active()
+    if (!tab?.find) return
+    tab.lastFindText = tab.find.text
+    tab.find = null
+    if (!tab.page.isDestroyed()) tab.page.stopFindInPage('keepSelection')
+    sync()
+    show(tab)
   }
 
   // Pops up a right-click menu of items from src/menus.js; `run` gets
@@ -625,6 +713,11 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     byNumber: (number) => activate(byNumber(ids(), number)),
     // The active page, for reload, back, forward and its developer tools.
     page: () => (active()?.started && !active().page.isDestroyed() ? active().page : null),
+    isActive: (id) => id === activeId,
+    openFind,
+    findText,
+    findAgain,
+    closeFind,
     openPopup,
     closePopup,
     popupOpen: () => popupOpen,
@@ -750,7 +843,32 @@ function buildMenu() {
         { label: 'Close Tabs to the Right', accelerator: key('closeTabsToRight'), click: inFocused((c) => { c.closePopup(); c.closeTabsToRight() }) },
       ],
     },
-    { role: 'editMenu' },
+    {
+      // Electron's Edit menu, spelled out to hold Find.
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'pasteAndMatchStyle' },
+        { role: 'delete' },
+        { role: 'selectAll' },
+        { type: 'separator' },
+        {
+          label: 'Find',
+          submenu: [
+            { label: 'Find…', accelerator: key('find'), click: inFocused((c) => c.openFind(true)) },
+            { label: 'Find Next', accelerator: key('findNext'), click: inFocused((c) => c.findAgain(true)) },
+            { label: 'Find Previous', accelerator: key('findPrevious'), click: inFocused((c) => c.findAgain(false)) },
+          ],
+        },
+        { type: 'separator' },
+        { label: 'Speech', submenu: [{ role: 'startSpeaking' }, { role: 'stopSpeaking' }] },
+      ],
+    },
     {
       label: 'View',
       submenu: [
@@ -799,6 +917,11 @@ ipcMain.on('navigate', fromToolbar((c, input) => typeof input === 'string' && c.
 ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
 ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
+// Find messages name the tab the toolbar showed, so a tab switch the
+// toolbar has not drawn yet never sends them to another tab.
+ipcMain.on('find', fromToolbar((c, tabId, text) => c.isActive(tabId) && typeof text === 'string' && text.length <= findState.MAX_TEXT && c.findText(text)))
+ipcMain.on('find-again', fromToolbar((c, tabId, forward) => c.isActive(tabId) && c.findAgain(forward !== false)))
+ipcMain.on('close-find', fromToolbar((c, tabId) => c.isActive(tabId) && c.closeFind()))
 ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
 
