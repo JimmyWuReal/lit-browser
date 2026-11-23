@@ -284,7 +284,8 @@ function createWindow() {
   function showTabMenu(id) {
     const tab = find(id)
     if (!tab) return
-    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started }), (command) => {
+    const keys = { reload: settings['shortcuts.reload'], closeTab: settings['shortcuts.closeTab'] }
+    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, keys }), (command) => {
       const index = tabs.indexOf(tab)
       if (index === -1) return
       switch (command) {

@@ -19,11 +19,9 @@ test('a web link can be opened, saved and copied', () => {
   assert.ok(items.slice(0, 3).every((item) => item.arg === 'https://example.com/'))
 })
 
-test("a link's own selected text adds no copy or search items", () => {
-  const items = pageMenu({ linkURL: 'https://example.com/', linkText: 'Example ', selectionText: 'Example' })
-  assert.deepEqual(commands(items), ['openInNewTab', 'download', 'copyText', 'inspect'])
-  const more = pageMenu({ linkURL: 'https://example.com/', linkText: 'Example', selectionText: 'see Example' })
-  assert.deepEqual(commands(more), ['openInNewTab', 'download', 'copyText', 'copy', 'search', 'inspect'])
+test('selected link text can still be copied and searched', () => {
+  const items = pageMenu({ linkURL: 'https://example.com/', linkText: 'Example', selectionText: 'Example' })
+  assert.deepEqual(commands(items), ['openInNewTab', 'download', 'copyText', 'copy', 'search', 'inspect'])
 })
 
 test('other links can only be copied', () => {
@@ -38,7 +36,7 @@ test('save labels follow the Downloads setting', () => {
 })
 
 test('an image inside a link gets both groups', () => {
-  const items = pageMenu({ linkURL: 'https://example.com/', mediaType: 'image', srcURL: 'https://example.com/a.png' })
+  const items = pageMenu({ linkURL: 'https://example.com/', mediaType: 'image', srcURL: 'https://example.com/a.png', hasImageContents: true })
   assert.deepEqual(labels(items), [
     'Open Link in New Tab', 'Save Link As…', 'Copy Link Address', '—',
     'Open Image in New Tab', 'Save Image As…', 'Copy Image', 'Copy Image Address', '—',
@@ -46,8 +44,11 @@ test('an image inside a link gets both groups', () => {
   ])
 })
 
-test('media without a web address gets no media items', () => {
-  assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'data:image/png;base64,AA' })), ['Back', 'Forward', 'Reload', '—', 'Inspect Element'])
+test('images copy by their pixels, and open or save by their web address', () => {
+  assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'data:image/png;base64,AA', hasImageContents: true })), ['Copy Image', '—', 'Inspect Element'])
+  assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'blob:x' })), ['Back', 'Forward', 'Reload', '—', 'Inspect Element'])
+  assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'https://example.com/broken.png' })).slice(0, 3),
+    ['Open Image in New Tab', 'Save Image As…', 'Copy Image Address'])
   assert.deepEqual(labels(pageMenu({ mediaType: 'video', srcURL: 'https://example.com/a.mp4' })).slice(0, 3),
     ['Open Video in New Tab', 'Save Video As…', 'Copy Video Address'])
 })
@@ -94,4 +95,7 @@ test('tab menu enables what fits the tab', () => {
   const middle = tabMenu({ index: 1, count: 3, started: true })
   assert.ok(middle.every((item) => item.enabled !== false))
   assert.equal(tabMenu({ index: 2, count: 3, started: true }).at(-1).enabled, false)
+  const keyed = tabMenu({ index: 0, count: 1, started: true, keys: { reload: 'CmdOrCtrl+R', closeTab: 'CmdOrCtrl+W' } })
+  assert.equal(keyed[0].accelerator, 'CmdOrCtrl+R')
+  assert.equal(keyed[3].accelerator, 'CmdOrCtrl+W')
 })

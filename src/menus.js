@@ -38,10 +38,7 @@ function quote(text) {
 function pageMenu(params, context = {}) {
   const { isPage = true, canGoBack = false, canGoForward = false, engineName = 'Google', askWhereToSave = true, keys = {} } = context
   const flags = params.editFlags || {}
-  // On macOS a right-click on a link selects its text; that is not a
-  // selection to copy or search, so only the link's items show.
-  const typed = (params.selectionText || '').trim()
-  const selection = params.linkURL && typed === (params.linkText || '').trim() ? '' : typed
+  const selection = (params.selectionText || '').trim()
   const groups = []
 
   // Spelling suggestions come first, as in other Mac apps.
@@ -65,15 +62,19 @@ function pageMenu(params, context = {}) {
     ])
   }
 
-  // Images, videos and audio with a web address of their own (not data:
-  // or blob: ones, which another tab cannot open).
+  // Images, videos and audio: opening, saving and copying the address need
+  // a web address (not a data: or blob: one, which another tab cannot
+  // open); copying an image needs only its drawn pixels.
   const media = { image: 'Image', video: 'Video', audio: 'Audio' }[params.mediaType]
-  if (isPage && media && isWeb(params.srcURL)) {
+  if (isPage && media) {
+    const web = isWeb(params.srcURL)
     groups.push([
-      { label: `Open ${media} in New Tab`, command: 'openInNewTab', arg: params.srcURL },
-      { label: askWhereToSave ? `Save ${media} As…` : `Download ${media}`, command: 'download', arg: params.srcURL },
-      ...(media === 'Image' ? [{ label: 'Copy Image', command: 'copyImage' }] : []),
-      { label: `Copy ${media} Address`, command: 'copyText', arg: params.srcURL },
+      ...(web ? [
+        { label: `Open ${media} in New Tab`, command: 'openInNewTab', arg: params.srcURL },
+        { label: askWhereToSave ? `Save ${media} As…` : `Download ${media}`, command: 'download', arg: params.srcURL },
+      ] : []),
+      ...(media === 'Image' && params.hasImageContents ? [{ label: 'Copy Image', command: 'copyImage' }] : []),
+      ...(web ? [{ label: `Copy ${media} Address`, command: 'copyText', arg: params.srcURL }] : []),
     ])
   }
 
@@ -99,7 +100,7 @@ function pageMenu(params, context = {}) {
   }
 
   // A right-click on nothing in particular acts on the page itself.
-  if (isPage && !groups.length) {
+  if (isPage && !groups.some((group) => group.length)) {
     groups.push([
       { label: 'Back', command: 'back', enabled: canGoBack, accelerator: keys.back },
       { label: 'Forward', command: 'forward', enabled: canGoForward, accelerator: keys.forward },
@@ -112,15 +113,16 @@ function pageMenu(params, context = {}) {
 }
 
 // The menu for a right-click on a tab, the `index`th of `count`.
-// `started` is false for a tab still showing the search box.
-function tabMenu({ index, count, started }) {
+// `started` is false for a tab still showing the search box. `keys`
+// ({ reload, closeTab }) are the current accelerators, shown as in Chrome.
+function tabMenu({ index, count, started, keys = {} }) {
   return joinGroups([
     [
-      { label: 'Reload', command: 'reload', enabled: Boolean(started) },
+      { label: 'Reload', command: 'reload', enabled: Boolean(started), accelerator: keys.reload },
       { label: 'Duplicate', command: 'duplicate' },
     ],
     [
-      { label: 'Close Tab', command: 'close' },
+      { label: 'Close Tab', command: 'close', accelerator: keys.closeTab },
       { label: 'Close Other Tabs', command: 'closeOthers', enabled: count > 1 },
       { label: 'Close Tabs to the Right', command: 'closeToRight', enabled: index < count - 1 },
     ],
