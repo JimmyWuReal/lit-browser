@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('lit', {
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   openSettings: () => ipcRenderer.send('open-settings'),
+  // The right-click menu for a tab.
+  showTabMenu: (id) => ipcRenderer.send('tab-menu', id),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
   onShortcuts: (callback) => on('shortcuts', callback),
   // For the Settings popup only; main ignores these from anywhere else.

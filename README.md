@@ -18,6 +18,14 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 
 Middle-click closes a tab. In the tab strip, arrow keys move between tabs and Delete closes one.
 
+## Right-click menus
+
+Right-clicking a page shows what fits the spot: a link can be opened in a new tab, saved or copied; an image, video or audio can be opened in a new tab, saved, or have its address copied (an image can also be copied); selected text can be copied or searched with your search engine; a text field gets spelling suggestions and Undo, Cut, Copy, Paste and Select All. Anywhere else the menu has Back, Forward and Reload. Every page menu ends with Inspect Element.
+
+New tabs from the menu follow the Tabs settings like ⌘-clicked links: they open next to their page, in the background unless Lit is set to switch to them. Save follows the Downloads setting. Only web (http and https) links and media can be opened or saved from the menu.
+
+Right-clicking a tab offers Reload, Duplicate, Close Tab, Close Other Tabs and Close Tabs to the Right. The address bar and the text fields in Settings get the editing items.
+
 ## Settings
 
 ⌘, or the button at the right of the tab strip opens Settings as a popup over the window. Changes save right away, to `settings.json` in the app's data folder.
@@ -58,4 +66,5 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 - `src/preload.js` is the bridge between Lit's own pages (the toolbar and the Settings popup) and the main process.
 - `src/settings.js` lists every setting, grouped in sections, with its type and default; it also loads, checks and saves them. `src/settings.html` is the Settings popup, drawn entirely from that list, so a new setting only needs an entry there (plus a control in `settings.html` if it brings a new type). Each window shows the popup in its own transparent view over the tabs. While a shortcut is recorded, main passes the key presses to it instead of the menu.
 - `src/shortcuts.js` turns key presses into Electron accelerators, checks them, and labels them (⇧⌘W). `src/downloads.js` picks a free file name in Downloads.
-- `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab-order rules (which tab to show after closing one, next/previous, ⌘1–9). `url.js`, `tabs.js`, `settings.js`, `shortcuts.js` and `downloads.js` are plain Node, tested in `test/`.
+- `src/menus.js` decides what each right-click menu holds, for a page (from Chromium's context-menu details) and for a tab; main turns those items into native menus and runs what is chosen.
+- `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab-order rules (which tab to show after closing one, next/previous, ⌘1–9). `url.js`, `tabs.js`, `menus.js`, `settings.js`, `shortcuts.js` and `downloads.js` are plain Node, tested in `test/`.
