@@ -1,5 +1,5 @@
-// The only bridge between Lit's own pages (the toolbar and the Settings
-// popup) and the main process.
+// The only bridge between Lit's own pages (the toolbar, and the Settings and
+// History popups) and the main process.
 const { contextBridge, ipcRenderer } = require('electron')
 
 const on = (channel, callback) => ipcRenderer.on(channel, (_event, value) => callback(value))
@@ -10,13 +10,22 @@ contextBridge.exposeInMainWorld('lit', {
   // `focus: false` keeps keyboard focus in the toolbar.
   closeTab: (id, focus = true) => ipcRenderer.send('close-tab', id, focus),
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started, zoom }] },
+  // { activeId, tabs: [{ id, title, url, favicon, loading, started, find, zoom }] },
   // `zoom` being '125%', or '' at the default zoom.
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   openSettings: () => ipcRenderer.send('open-settings'),
   // Puts the active page back at the default zoom.
   resetZoom: () => ipcRenderer.send('reset-zoom'),
+  // Find in page, on the tab the toolbar shows (main ignores a tab that is
+  // no longer active). Its state comes with onTabs as tab.find:
+  // { text, active, matches } or null while closed.
+  find: (tabId, text) => ipcRenderer.send('find', tabId, text),
+  findAgain: (tabId, forward = true) => ipcRenderer.send('find-again', tabId, forward),
+  closeFind: (tabId) => ipcRenderer.send('close-find', tabId),
+  onFocusFind: (callback) => ipcRenderer.on('focus-find', () => callback()),
+  // The right-click menu for a tab.
+  showTabMenu: (id) => ipcRenderer.send('tab-menu', id),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
   onShortcuts: (callback) => on('shortcuts', callback),
   // For the Settings popup only; main ignores these from anywhere else.
@@ -32,5 +41,18 @@ contextBridge.exposeInMainWorld('lit', {
     onShortcutPressed: (callback) => on('shortcut-pressed', callback),
     onOpen: (callback) => on('settings-open', callback),
     onChanged: (callback) => on('settings-changed', callback),
+  },
+  // For the History popup only. State is { entries: [{ url, title, time }],
+  // enabled, closedTabs, error? } (see historyState in main), newest first.
+  history: {
+    get: () => ipcRenderer.invoke('history-get'),
+    // `background` opens it in a new tab behind the current one.
+    open: (url, background = false) => ipcRenderer.send('history-open-page', url, background),
+    // Both answer with the new state, with `error` if nothing changed.
+    remove: (url) => ipcRenderer.invoke('history-remove', url),
+    clear: () => ipcRenderer.invoke('history-clear'),
+    close: () => ipcRenderer.send('history-close'),
+    onOpen: (callback) => on('history-open', callback),
+    onChanged: (callback) => on('history-changed', callback),
   },
 })

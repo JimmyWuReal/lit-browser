@@ -93,6 +93,21 @@ const SECTIONS = [
     title: 'Privacy',
     settings: [
       {
+        key: 'saveHistory',
+        label: 'Save history',
+        description: 'Pages you visit, and closed tabs to reopen. When off, neither is kept.',
+        type: 'toggle',
+        default: true,
+      },
+      {
+        key: 'closedTabsFor',
+        label: 'Forget closed tabs after',
+        description: 'Closed tabs are kept in memory only, for Reopen Closed Tab.',
+        type: 'choice',
+        options: [{ value: '10m', label: '10 minutes' }, { value: '1h', label: '1 hour' }, { value: '1d', label: '1 day' }],
+        default: '1h',
+      },
+      {
         key: 'doNotTrack',
         label: 'Ask sites not to track me',
         description: 'Sends Do Not Track and Global Privacy Control with every request.',
@@ -107,15 +122,23 @@ const SECTIONS = [
     settings: [
       shortcut('newTab', 'New Tab', 'CmdOrCtrl+T'),
       shortcut('newWindow', 'New Window', 'CmdOrCtrl+N'),
+      shortcut('reopenTab', 'Reopen Closed Tab', 'Shift+CmdOrCtrl+T'),
+      shortcut('history', 'Show History', 'CmdOrCtrl+Y'),
       shortcut('openLocation', 'Open Location', 'CmdOrCtrl+L'),
       shortcut('closeTab', 'Close Tab', 'CmdOrCtrl+W'),
       shortcut('closeWindow', 'Close Window', 'Shift+CmdOrCtrl+W'),
+      shortcut('duplicateTab', 'Duplicate Tab', ''),
+      shortcut('closeOtherTabs', 'Close Other Tabs', 'Alt+CmdOrCtrl+W'),
+      shortcut('closeTabsToRight', 'Close Tabs to the Right', ''),
       shortcut('reload', 'Reload', 'CmdOrCtrl+R'),
       shortcut('back', 'Back', 'CmdOrCtrl+['),
       shortcut('forward', 'Forward', 'CmdOrCtrl+]'),
       shortcut('zoomIn', 'Zoom In', 'CmdOrCtrl+='),
       shortcut('zoomOut', 'Zoom Out', 'CmdOrCtrl+-'),
       shortcut('resetZoom', 'Reset Zoom', 'CmdOrCtrl+0'),
+      shortcut('find', 'Find', 'CmdOrCtrl+F'),
+      shortcut('findNext', 'Find Next', 'CmdOrCtrl+G'),
+      shortcut('findPrevious', 'Find Previous', 'Shift+CmdOrCtrl+G'),
       shortcut('nextTab', 'Show Next Tab', 'Ctrl+Tab'),
       shortcut('previousTab', 'Show Previous Tab', 'Ctrl+Shift+Tab'),
       shortcut('devTools', 'Developer Tools', 'Alt+CmdOrCtrl+I'),
@@ -156,14 +179,14 @@ function clean(saved = {}) {
     const value = Object.hasOwn(saved, setting.key) ? saved[setting.key] : setting.default
     values[setting.key] = problem(setting, value, {}) ? setting.default : value
   }
-  // Two commands can end up on one shortcut: a saved shortcut that is now
-  // another command's default (a new command's, after an update), or an
-  // edited file. Saved shortcuts win over defaults; between two of a kind,
+  // Two commands can end up on one shortcut (an edited file, or a saved
+  // shortcut that is now another command's default). A shortcut someone
+  // chose beats a default, so a new command never takes theirs; otherwise
   // the later command gets none.
-  const isSaved = (setting) => Object.hasOwn(saved, setting.key) && values[setting.key] === saved[setting.key]
-  const commands = SETTINGS.filter((setting) => setting.type === 'shortcut')
   const used = new Set()
-  for (const setting of [...commands.filter(isSaved), ...commands.filter((setting) => !isSaved(setting))]) {
+  const chosen = (setting) => Object.hasOwn(saved, setting.key) && saved[setting.key] === values[setting.key]
+  const shortcutSettings = SETTINGS.filter((setting) => setting.type === 'shortcut')
+  for (const setting of [...shortcutSettings.filter(chosen), ...shortcutSettings.filter((setting) => !chosen(setting))]) {
     if (!values[setting.key]) continue
     if (used.has(values[setting.key])) values[setting.key] = ''
     used.add(values[setting.key])
@@ -190,8 +213,8 @@ function update(values, key, value) {
   return { values: { ...values, [key]: value } }
 }
 
-// Writes a sibling file and renames it over the old one, so an interrupted
-// write never leaves a half-written settings file.
+// Writes JSON to a sibling file and renames it over the old one, so an
+// interrupted write never leaves a half-written file. History uses it too.
 function save(file, values) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const temporary = `${file}.tmp`

@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { toUrl } = require('../src/url')
+const { toUrl, searchUrl } = require('../src/url')
 
 test('keeps full URLs', () => {
   assert.equal(toUrl(' https://example.com/a '), 'https://example.com/a')
@@ -22,4 +22,11 @@ test('searches with the chosen engine, falling back to Google', () => {
   assert.equal(toUrl('lit browser', 'bing'), 'https://www.bing.com/search?q=lit%20browser')
   assert.equal(toUrl('lit browser', 'unknown'), 'https://www.google.com/search?q=lit%20browser')
   assert.equal(toUrl('lit browser', 'constructor'), 'https://www.google.com/search?q=lit%20browser')
+})
+
+test('searchUrl searches even for text that looks like an address', () => {
+  assert.equal(searchUrl(' example.com ', 'bing'), 'https://www.bing.com/search?q=example.com')
+  assert.equal(searchUrl('a b', 'nope'), 'https://www.google.com/search?q=a%20b')
+  // Half of an emoji's surrogate pair becomes U+FFFD instead of throwing.
+  assert.equal(searchUrl('hi \uD83D'), 'https://www.google.com/search?q=hi%20%EF%BF%BD')
 })
