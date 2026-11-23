@@ -30,9 +30,6 @@ const RESERVED = {
   'CmdOrCtrl+Z': 'Undo', 'Shift+CmdOrCtrl+Z': 'Redo', 'CmdOrCtrl+X': 'Cut', 'CmdOrCtrl+C': 'Copy',
   'CmdOrCtrl+V': 'Paste', 'Alt+Shift+CmdOrCtrl+V': 'Paste and Match Style', 'CmdOrCtrl+A': 'Select All',
   'Shift+CmdOrCtrl+]': 'Show Next Tab', 'Shift+CmdOrCtrl+[': 'Show Previous Tab',
-  // ⌘+, typed with ⇧ on most layouts; the menu's hidden Zoom In answers it
-  // while Zoom In is on ⌘=.
-  'Shift+CmdOrCtrl+=': 'Zoom In',
   ...Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`CmdOrCtrl+${i + 1}`, `Select Tab ${i + 1}`])),
 }
 

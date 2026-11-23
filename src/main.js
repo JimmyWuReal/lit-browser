@@ -55,13 +55,6 @@ function zoomSite(url, factor) {
   for (const controls of openWindows) controls.applyZoom()
 }
 
-// After the default zoom changes, sites zoomed to the new default are
-// forgotten, so they follow the default from then on (and the address bar,
-// which hides at the default, never hides a zoom that can't be reset).
-function forgetDefaultZooms() {
-  const next = new Map([...siteZooms].filter(([, factor]) => !zoom.same(factor, settings.defaultZoom)))
-  if (next.size !== siteZooms.size) saveSiteZooms(next)
-}
 
 // What the Settings popup draws: the values, plus each shortcut as ⌘ symbols.
 function settingsState(error) {
@@ -119,10 +112,13 @@ function createWindow() {
     win.setTitle(current?.title || (current?.started ? current.url : '') || 'New Tab')
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, zoom: factor }) => ({
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, zoom: factor, page }) => ({
         id, title, url, favicon, loading, started,
-        // The address bar shows the zoom only when it is not the default.
-        zoom: started && !zoom.same(factor, settings.defaultZoom) ? zoom.percent(factor) : '',
+        // The address bar shows the zoom, to reset it, when it is not the
+        // default or the site has its own (which can match a later default).
+        zoom: started && (!zoom.same(factor, settings.defaultZoom) || siteZooms.has(zoom.siteOf(page.isDestroyed() ? '' : page.getURL())))
+          ? zoom.percent(factor)
+          : '',
       })),
     })
   }
@@ -215,6 +211,9 @@ function createWindow() {
     }))
 
     if (url) page.loadURL(url).catch(() => {})
+    // A popup can stay on the about:blank its opener writes into, without
+    // ever firing did-navigate, so it gets its zoom here.
+    if (webContents) setZoom(tab, zoomFor(page.getURL() || 'about:blank'))
     if (background) sync()
     else activate(tab.id)
     return tab
@@ -442,8 +441,11 @@ function buildMenu() {
         { label: 'Reset Zoom', accelerator: key('resetZoom'), click: inFocused((c) => c.resetZoom()) },
         { label: 'Zoom In', accelerator: key('zoomIn'), click: inFocused((c) => c.zoomBy(1)) },
         { label: 'Zoom Out', accelerator: key('zoomOut'), click: inFocused((c) => c.zoomBy(-1)) },
-        // ⌘+ as well as ⌘=, as in other browsers, while Zoom In is on ⌘=.
-        ...(key('zoomIn') === 'CmdOrCtrl+=' ? [hidden('Zoom In', 'CmdOrCtrl+Plus', inFocused((c) => c.zoomBy(1)))] : []),
+        // ⌘+ (⇧⌘= on most layouts) as well as ⌘=, as in other browsers,
+        // while Zoom In is on ⌘= and no command has ⇧⌘= itself.
+        ...(key('zoomIn') === 'CmdOrCtrl+=' && !Object.values(settings).includes('Shift+CmdOrCtrl+=')
+          ? [hidden('Zoom In', 'CmdOrCtrl+Plus', inFocused((c) => c.zoomBy(1)))]
+          : []),
         { type: 'separator' },
         { label: 'Developer Tools', accelerator: key('devTools'), click: pageAction((page) => page.toggleDevTools()) },
         { role: 'togglefullscreen' },
@@ -496,9 +498,7 @@ ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
   } catch {
     return settingsState('Couldn’t save settings.')
   }
-  const defaultZoomChanged = values.defaultZoom !== settings.defaultZoom
   settings = values
-  if (defaultZoomChanged) forgetDefaultZooms()
   applySettings()
   return settingsState()
 }))
