@@ -143,15 +143,21 @@ function problem(setting, value, values) {
 // setting and still valid (settings get renamed, options get removed).
 function clean(saved = {}) {
   const values = {}
+  const chosen = new Set()
   for (const setting of SETTINGS) {
     const value = Object.hasOwn(saved, setting.key) ? saved[setting.key] : setting.default
-    values[setting.key] = problem(setting, value, {}) ? setting.default : value
+    const valid = !problem(setting, value, {})
+    values[setting.key] = valid ? value : setting.default
+    if (valid && Object.hasOwn(saved, setting.key)) chosen.add(setting.key)
   }
-  // Two commands can end up on one shortcut (an edited file, or a saved
-  // shortcut that is now another command's default); the later one gets none.
+  // Two commands can end up on one shortcut: a saved shortcut that is now
+  // a new command's default, or an edited file. Shortcuts people chose keep
+  // it over defaults, then the earlier command keeps it; the other gets none.
+  const shortcutSettings = SETTINGS.filter((setting) => setting.type === 'shortcut')
+  const order = [...shortcutSettings.filter((s) => chosen.has(s.key)), ...shortcutSettings.filter((s) => !chosen.has(s.key))]
   const used = new Set()
-  for (const setting of SETTINGS) {
-    if (setting.type !== 'shortcut' || !values[setting.key]) continue
+  for (const setting of order) {
+    if (!values[setting.key]) continue
     if (used.has(values[setting.key])) values[setting.key] = ''
     used.add(values[setting.key])
   }

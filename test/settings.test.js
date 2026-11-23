@@ -30,6 +30,13 @@ test('clean gives a clashing shortcut to the earlier command only', () => {
   assert.equal(values['shortcuts.reload'], '')
 })
 
+test('clean gives a saved shortcut precedence over a new default', () => {
+  // Saved before Find existed: Developer Tools on ⌘F, now Find's default.
+  const values = clean({ 'shortcuts.devTools': 'CmdOrCtrl+F' })
+  assert.equal(values['shortcuts.devTools'], 'CmdOrCtrl+F')
+  assert.equal(values['shortcuts.find'], '')
+})
+
 test('update checks each type', () => {
   assert.equal(update(defaults, 'searchEngine', 'duckduckgo').values.searchEngine, 'duckduckgo')
   assert.ok(update(defaults, 'searchEngine', 'nope').error)

@@ -14,11 +14,12 @@ contextBridge.exposeInMainWorld('lit', {
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   openSettings: () => ipcRenderer.send('open-settings'),
-  // Find in page, on the active tab. Its state comes with onTabs as
-  // tab.find: { text, active, matches } or null while closed.
-  find: (text) => ipcRenderer.send('find', text),
-  findAgain: (forward = true) => ipcRenderer.send('find-again', forward),
-  closeFind: () => ipcRenderer.send('close-find'),
+  // Find in page, on the tab the toolbar shows (main ignores a tab that is
+  // no longer active). Its state comes with onTabs as tab.find:
+  // { text, active, matches } or null while closed.
+  find: (tabId, text) => ipcRenderer.send('find', tabId, text),
+  findAgain: (tabId, forward = true) => ipcRenderer.send('find-again', tabId, forward),
+  closeFind: (tabId) => ipcRenderer.send('close-find', tabId),
   onFocusFind: (callback) => ipcRenderer.on('focus-find', () => callback()),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
   onShortcuts: (callback) => on('shortcuts', callback),

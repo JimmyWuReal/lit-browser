@@ -348,6 +348,7 @@ function createWindow() {
     page: () => (active()?.started && !active().page.isDestroyed() ? active().page : null),
     openSettings,
     closeSettings,
+    isActive: (id) => id === activeId,
     openFind,
     findText,
     findAgain,
@@ -503,9 +504,11 @@ ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
 ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
 ipcMain.on('open-settings', fromToolbar((c) => c.openSettings()))
-ipcMain.on('find', fromToolbar((c, text) => typeof text === 'string' && text.length <= findState.MAX_TEXT && c.findText(text)))
-ipcMain.on('find-again', fromToolbar((c, forward) => c.findAgain(forward !== false)))
-ipcMain.on('close-find', fromToolbar((c) => c.closeFind()))
+// Find messages name the tab the toolbar showed, so a tab switch the
+// toolbar has not drawn yet never sends them to another tab.
+ipcMain.on('find', fromToolbar((c, tabId, text) => c.isActive(tabId) && typeof text === 'string' && text.length <= findState.MAX_TEXT && c.findText(text)))
+ipcMain.on('find-again', fromToolbar((c, tabId, forward) => c.isActive(tabId) && c.findAgain(forward !== false)))
+ipcMain.on('close-find', fromToolbar((c, tabId) => c.isActive(tabId) && c.closeFind()))
 
 // Settings messages, answered only for a Settings popup.
 const fromSettings = (handler) => (event, ...args) => {

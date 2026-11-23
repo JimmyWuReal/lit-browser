@@ -508,16 +508,23 @@
 
     // Searches as you type; Enter and ⇧Enter step through the matches.
     // Escape closes from anywhere in the field, its buttons included.
-    findInput.addEventListener('input', () => window.lit.find(findInput.value))
+    // While an input method (Zhuyin, Pinyin) composes, its half-typed text
+    // is not searched, and the keys that confirm or cancel its candidates
+    // belong to it, not to the find field.
+    const search = () => window.lit.find(state.activeId, findInput.value)
+    findInput.addEventListener('input', (event) => { if (!event.isComposing) search() })
+    findInput.addEventListener('compositionend', search)
     findInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') { event.preventDefault(); window.lit.findAgain(!event.shiftKey) }
+      if (event.isComposing || event.keyCode === 229) return
+      if (event.key === 'Enter') { event.preventDefault(); window.lit.findAgain(state.activeId, !event.shiftKey) }
     })
     findBox.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') { event.preventDefault(); window.lit.closeFind() }
+      if (event.isComposing || event.keyCode === 229) return
+      if (event.key === 'Escape') { event.preventDefault(); window.lit.closeFind(state.activeId) }
     })
-    findPrevious.addEventListener('click', () => window.lit.findAgain(false))
-    findNext.addEventListener('click', () => window.lit.findAgain(true))
-    document.getElementById('find-close').addEventListener('click', () => window.lit.closeFind())
+    findPrevious.addEventListener('click', () => window.lit.findAgain(state.activeId, false))
+    findNext.addEventListener('click', () => window.lit.findAgain(state.activeId, true))
+    document.getElementById('find-close').addEventListener('click', () => window.lit.closeFind(state.activeId))
 
     window.lit.onTabs(render)
     window.lit.onShortcuts((labels) => {
