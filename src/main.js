@@ -146,6 +146,8 @@ function createWindow() {
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => { if (isMainFrame) { tab.url = url; sync() } })
     page.on('page-title-updated', (_event, title) => { tab.title = title; sync() })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
+    // A new page (or a reload) gets the open search run again once it loads.
+    page.on('did-finish-load', () => { if (tab.find?.text && tab.find.requestId === null) search(tab) })
     page.on('found-in-page', (_event, result) => {
       const next = findState.result(tab.find, result)
       if (next !== tab.find) { tab.find = next; sync() }
@@ -235,6 +237,13 @@ function createWindow() {
     tab.page.loadURL(toUrl(input, settings.searchEngine)).catch(() => {})
   }
 
+  // Starts a new search for the tab's find text; results come back through
+  // found-in-page.
+  function search(tab) {
+    if (tab.page.isDestroyed()) return
+    tab.find = { ...tab.find, requestId: tab.page.findInPage(tab.find.text, { findNext: true }) }
+  }
+
   // Find in page. ⌘F opens the active tab's find field in the toolbar (or
   // selects its text again); a tab on the search box has nothing to search.
   // Reopening brings back the tab's last search and runs it again.
@@ -244,7 +253,7 @@ function createWindow() {
     closeSettings()
     if (!tab.find) {
       tab.find = findState.open(null, tab.lastFindText)
-      if (tab.find.text) tab.find.requestId = tab.page.findInPage(tab.find.text, { findNext: true })
+      if (tab.find.text) search(tab)
     }
     sync()
     win.webContents.focus()
@@ -256,7 +265,7 @@ function createWindow() {
     const tab = active()
     if (!tab?.find || tab.page.isDestroyed()) return
     tab.find = findState.setText(tab.find, text)
-    if (text) tab.find.requestId = tab.page.findInPage(text, { findNext: true })
+    if (text) search(tab)
     else tab.page.stopFindInPage('clearSelection')
     sync()
   }
@@ -494,7 +503,7 @@ ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
 ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
 ipcMain.on('open-settings', fromToolbar((c) => c.openSettings()))
-ipcMain.on('find', fromToolbar((c, text) => typeof text === 'string' && c.findText(text.slice(0, 1000))))
+ipcMain.on('find', fromToolbar((c, text) => typeof text === 'string' && text.length <= findState.MAX_TEXT && c.findText(text)))
 ipcMain.on('find-again', fromToolbar((c, forward) => c.findAgain(forward !== false)))
 ipcMain.on('close-find', fromToolbar((c) => c.closeFind()))
 

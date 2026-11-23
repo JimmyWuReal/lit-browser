@@ -7,6 +7,9 @@
 //   requestId  the latest findInPage request, or null when the next search
 //              must start a new one (new text, or a new page)
 
+// The longest text a search takes; the toolbar's field has the same maxlength.
+const MAX_TEXT = 1000
+
 // Opening keeps a field that is already open; a closed one reopens with
 // the tab's last search, as in other browsers.
 const open = (find, lastText = '') => find ?? { text: lastText, active: 0, matches: null, requestId: null }
@@ -29,4 +32,4 @@ function result(find, { requestId, activeMatchOrdinal, matches }) {
   }
 }
 
-module.exports = { open, setText, reset, result }
+module.exports = { MAX_TEXT, open, setText, reset, result }

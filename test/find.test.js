@@ -31,3 +31,8 @@ test('a navigation keeps the text but starts the search over', () => {
   assert.deepEqual(reset({ text: 'light', active: 3, matches: 9, requestId: 8 }), { text: 'light', active: 0, matches: null, requestId: null })
   assert.equal(reset(null), null)
 })
+
+test('the longest search matches the find field', () => {
+  const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/index.html'), 'utf8')
+  assert.match(html, new RegExp(`id="find-input"[^>]*maxlength="${require('../src/find').MAX_TEXT}"`))
+})

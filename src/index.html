@@ -281,8 +281,9 @@
         autocomplete="off" spellcheck="false" autofocus>
     </form>
     <div class="find" id="find" role="search" aria-label="Find in page">
+      <!-- maxlength matches MAX_TEXT in src/find.js. -->
       <input id="find-input" type="text" placeholder="Find in page" aria-label="Find in page"
-        autocomplete="off" spellcheck="false">
+        autocomplete="off" spellcheck="false" maxlength="1000">
       <span class="find-count" id="find-count" aria-live="polite"></span>
       <button class="icon-button" id="find-previous" type="button" aria-label="Previous match" title="Previous Match" data-shortcut="shortcuts.findPrevious">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -506,10 +507,13 @@
     address.addEventListener('focus', () => address.select())
 
     // Searches as you type; Enter and ⇧Enter step through the matches.
+    // Escape closes from anywhere in the field, its buttons included.
     findInput.addEventListener('input', () => window.lit.find(findInput.value))
     findInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') { event.preventDefault(); window.lit.findAgain(!event.shiftKey) }
-      else if (event.key === 'Escape') { event.preventDefault(); window.lit.closeFind() }
+    })
+    findBox.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); window.lit.closeFind() }
     })
     findPrevious.addEventListener('click', () => window.lit.findAgain(false))
     findNext.addEventListener('click', () => window.lit.findAgain(true))
