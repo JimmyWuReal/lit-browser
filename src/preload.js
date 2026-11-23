@@ -10,10 +10,16 @@ contextBridge.exposeInMainWorld('lit', {
   // `focus: false` keeps keyboard focus in the toolbar.
   closeTab: (id, focus = true) => ipcRenderer.send('close-tab', id, focus),
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started }] }
+  // { activeId, tabs: [{ id, title, url, favicon, loading, started, find }] }
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   openSettings: () => ipcRenderer.send('open-settings'),
+  // Find in page, on the active tab. Its state comes with onTabs as
+  // tab.find: { text, active, matches } or null while closed.
+  find: (text) => ipcRenderer.send('find', text),
+  findAgain: (forward = true) => ipcRenderer.send('find-again', forward),
+  closeFind: () => ipcRenderer.send('close-find'),
+  onFocusFind: (callback) => ipcRenderer.on('focus-find', () => callback()),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
   onShortcuts: (callback) => on('shortcuts', callback),
   // For the Settings popup only; main ignores these from anywhere else.

@@ -162,7 +162,7 @@
       padding: 0 12px 4px;
     }
 
-    .address { position: relative; flex: 1; }
+    .address { position: relative; flex: 1; min-width: 0; margin: 0; }
     .address input {
       width: 100%;
       height: 32px;
@@ -199,6 +199,52 @@
     .home .address input { height: 48px; padding: 0 16px 0 42px; border-radius: 10px; }
     .home .address svg { left: 16px; width: 15px; height: 15px; }
 
+    /* Find in page: a field at the end of the address row, shown while the
+       active tab has its find open. It slides in; closing just hides it. */
+    .find {
+      display: none;
+      flex: 0 1 300px;
+      min-width: 220px;
+      height: 32px;
+      margin-left: 8px;
+      align-items: center;
+      gap: 2px;
+      padding-right: 4px;
+      border-radius: 8px;
+      box-shadow: inset 0 0 0 1px var(--line);
+      transition: box-shadow 200ms ease;
+    }
+    .find.is-open { display: flex; animation: find-in 240ms var(--settle); }
+    .find:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .find:focus-within { box-shadow: inset 0 0 0 1px var(--line-live); }
+    .home .find { display: none; }
+    @keyframes find-in { from { opacity: 0; transform: translateX(8px); } }
+    .find input {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      padding: 0 4px 0 12px;
+      border: 0;
+      outline: 0;
+      color: #ededed;
+      background: transparent;
+      font: inherit;
+      font-size: 13px;
+      letter-spacing: -.01em;
+    }
+    .find input::placeholder { color: var(--dim); }
+    .find-count {
+      flex: 0 0 auto;
+      padding: 0 6px;
+      color: var(--dim);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .find-count:empty { display: none; }
+    .find .icon-button { width: 24px; height: 24px; flex: 0 0 auto; border-radius: 6px; }
+    .find .icon-button:disabled { opacity: .4; pointer-events: none; }
+
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
         transition-duration: .01ms !important;
@@ -224,16 +270,34 @@
       </svg>
     </button>
   </div>
-  <form class="bar" id="bar">
-    <label class="address">
+  <!-- Two separate fields, so Enter in each does its own thing. -->
+  <div class="bar">
+    <form class="address" id="address-form">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path>
       </svg>
       <input id="address" type="text" placeholder="Search or enter address" aria-label="Search or enter address"
         autocomplete="off" spellcheck="false" autofocus>
-    </label>
-  </form>
+    </form>
+    <div class="find" id="find" role="search" aria-label="Find in page">
+      <input id="find-input" type="text" placeholder="Find in page" aria-label="Find in page"
+        autocomplete="off" spellcheck="false">
+      <span class="find-count" id="find-count" aria-live="polite"></span>
+      <button class="icon-button" id="find-previous" type="button" aria-label="Previous match" title="Previous Match" data-shortcut="shortcuts.findPrevious">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6"></path></svg>
+      </button>
+      <button class="icon-button" id="find-next" type="button" aria-label="Next match" title="Next Match" data-shortcut="shortcuts.findNext">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+      </button>
+      <button class="icon-button" id="find-close" type="button" aria-label="Close find" title="Close (Esc)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+      </button>
+    </div>
+  </div>
 
   <template id="tab-template">
     <div class="tab">
@@ -255,8 +319,13 @@
   </template>
 
   <script>
-    const bar = document.getElementById('bar')
+    const addressForm = document.getElementById('address-form')
     const address = document.getElementById('address')
+    const findBox = document.getElementById('find')
+    const findInput = document.getElementById('find-input')
+    const findCount = document.getElementById('find-count')
+    const findPrevious = document.getElementById('find-previous')
+    const findNext = document.getElementById('find-next')
     const tabList = document.getElementById('tabs')
     const thumb = document.getElementById('thumb')
     const tabTemplate = document.getElementById('tab-template')
@@ -353,6 +422,21 @@
       if (switched) editing = false
       if (switched || (!editing && url !== shownUrl)) address.value = url
       shownUrl = url
+      drawFind(tab?.find, switched)
+    }
+
+    // The find field shows the active tab's find. Its text comes from main
+    // only on opening or switching tabs; otherwise the field is the source.
+    let findShown = false
+    function drawFind(find, switched) {
+      if (!find && findBox.contains(document.activeElement)) document.activeElement.blur()
+      findBox.classList.toggle('is-open', Boolean(find))
+      if (find && (switched || !findShown)) findInput.value = find.text
+      findShown = Boolean(find)
+      // Blank until the page answers, so a count never belongs to old text.
+      findCount.textContent = !find?.text || find.matches === null ? ''
+        : find.matches ? `${find.active} of ${find.matches}` : 'No matches'
+      findPrevious.disabled = findNext.disabled = !find?.text || find.matches === 0
     }
 
     // Moves the thumb under the active tab. Window resizes jump, so the
@@ -401,7 +485,7 @@
     document.getElementById('new-tab').addEventListener('click', () => window.lit.newTab())
     document.getElementById('open-settings').addEventListener('click', () => window.lit.openSettings())
 
-    bar.addEventListener('submit', (event) => {
+    addressForm.addEventListener('submit', (event) => {
       event.preventDefault()
       if (!address.value.trim()) return
       document.body.classList.remove('home')
@@ -421,12 +505,23 @@
     })
     address.addEventListener('focus', () => address.select())
 
+    // Searches as you type; Enter and ⇧Enter step through the matches.
+    findInput.addEventListener('input', () => window.lit.find(findInput.value))
+    findInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); window.lit.findAgain(!event.shiftKey) }
+      else if (event.key === 'Escape') { event.preventDefault(); window.lit.closeFind() }
+    })
+    findPrevious.addEventListener('click', () => window.lit.findAgain(false))
+    findNext.addEventListener('click', () => window.lit.findAgain(true))
+    document.getElementById('find-close').addEventListener('click', () => window.lit.closeFind())
+
     window.lit.onTabs(render)
     window.lit.onShortcuts((labels) => {
       shortcutLabels = labels
       document.querySelectorAll('[data-shortcut]').forEach(labelShortcut)
     })
     window.lit.onFocusAddress(() => { address.focus(); address.select() })
+    window.lit.onFocusFind(() => { findInput.focus(); findInput.select() })
   </script>
 </body>
 </html>
