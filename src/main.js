@@ -45,7 +45,8 @@ let settingsFile
 let settings = settingsStore.clean()
 
 // Pages visited (src/history.js), newest first. Loaded at launch, and saved
-// a moment after a change, so a burst of navigations writes once.
+// a moment after a visit, so a burst of navigations writes once; removing
+// pages saves right away, so they can't come back after a crash.
 let historyFile
 let visited = []
 let historySave = null
@@ -58,11 +59,14 @@ function saveVisited() {
   } catch {}
 }
 
-function setVisited(next) {
+function setVisited(next, { now = false } = {}) {
   if (next === visited) return
   visited = next
-  clearTimeout(historySave)
-  historySave = setTimeout(saveVisited, 1000)
+  if (now) saveVisited()
+  else {
+    clearTimeout(historySave)
+    historySave = setTimeout(saveVisited, 1000)
+  }
   for (const controls of openWindows) controls.historyChanged()
 }
 
@@ -655,9 +659,9 @@ ipcMain.handle('history-get', fromHistory(() => historyState()))
 ipcMain.on('history-open-page', fromHistory((c, url, background) => {
   if (visited.some((entry) => entry.url === url)) c.openFromHistory(url, background === true)
 }))
-ipcMain.on('history-remove', fromHistory((_c, url) => setVisited(historyStore.remove(visited, url))))
+ipcMain.on('history-remove', fromHistory((_c, url) => setVisited(historyStore.remove(visited, url), { now: true })))
 // Clearing history forgets closed tabs too.
-ipcMain.on('history-clear', fromHistory(() => { setVisited([]); forgetClosed() }))
+ipcMain.on('history-clear', fromHistory(() => { setVisited([], { now: true }); forgetClosed() }))
 ipcMain.on('history-close', fromHistory((c) => c.closePopup()))
 
 app.whenReady().then(() => {
