@@ -56,6 +56,10 @@ test('only web media opens in a new tab, and images copy by their pixels', () =>
     ['Open Video in New Tab', 'Save Video As…', 'Copy Video Address'])
 })
 
+test('file: media cannot be saved or opened', () => {
+  assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'file:///etc/a.png' })), ['Copy Image Address', '—', 'Inspect Element'])
+})
+
 test('streams cannot be saved, and iframe images cannot be copied', () => {
   assert.deepEqual(labels(pageMenu({ mediaType: 'video', srcURL: 'blob:https://a.b/stream', mediaFlags: { canSave: false } })),
     ['Copy Video Address', '—', 'Inspect Element'])

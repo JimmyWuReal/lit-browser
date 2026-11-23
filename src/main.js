@@ -123,7 +123,8 @@ function createWindow() {
 
   // `webContents` is passed when a page opens the tab itself, so the new
   // page keeps its link back to the opener (sign-in popups need it).
-  // `history` ({ entries, index }) restores another tab's back/forward list.
+  // `history` ({ entries, index }) restores another tab's back/forward list;
+  // `url` is then loaded only if that fails.
   function addTab({ url, webContents, history, background = false, index = tabs.length } = {}) {
     const view = new WebContentsView(webContents ? { webContents } : {})
     // `page` keeps the WebContents itself: once it is destroyed (a popup
@@ -139,6 +140,8 @@ function createWindow() {
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
     page.on('did-stop-loading', () => { tab.loading = false; sync() })
+    // The address being opened, before it commits (for duplicating a tab).
+    page.on('did-start-navigation', ({ url, isMainFrame }) => { if (isMainFrame) tab.pendingUrl = url })
     page.on('did-navigate', (_event, url) => { tab.url = url; tab.title = ''; tab.favicon = null; sync() })
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => { if (isMainFrame) { tab.url = url; sync() } })
     page.on('page-title-updated', (_event, title) => { tab.title = title; sync() })
@@ -177,7 +180,7 @@ function createWindow() {
 
     page.on('context-menu', (_event, params) => showPageMenu(page, params))
 
-    if (history) page.navigationHistory.restore(history).catch(() => {})
+    if (history) page.navigationHistory.restore(history).catch(() => { if (url && !page.isDestroyed()) page.loadURL(url).catch(() => {}) })
     else if (url) page.loadURL(url).catch(() => {})
     if (background) sync()
     else activate(tab.id)
@@ -284,16 +287,18 @@ function createWindow() {
 
   // A copy of the tab right after it, with its back/forward history. A
   // tab whose first page has not committed yet has no history, so its copy
-  // loads the address being opened; a tab on the search box copies as blank.
+  // loads the address being opened, as does a copy whose history fails to
+  // restore. A tab on the search box copies as blank.
   function duplicateTab(id) {
     const tab = find(id)
     if (!tab) return
     const index = tabs.indexOf(tab) + 1
-    if (tab.page.isDestroyed()) return addTab({ index })
-    const history = tab.page.navigationHistory
-    const entries = history.getAllEntries()
-    if (entries.length) return addTab({ history: { entries, index: history.getActiveIndex() }, index })
-    addTab({ url: tab.page.getURL() || tab.url || undefined, index })
+    const destroyed = tab.page.isDestroyed()
+    const url = (!destroyed && tab.page.getURL()) || tab.url || tab.pendingUrl || undefined
+    const history = destroyed ? null : tab.page.navigationHistory
+    const entries = history ? history.getAllEntries() : []
+    if (entries.length) return addTab({ history: { entries, index: history.getActiveIndex() }, url, index })
+    addTab({ url, index })
   }
 
   // The kept tab comes to the front first, so closing the others never

@@ -20,6 +20,9 @@ function joinGroups(groups) {
 }
 
 const isWeb = (url) => /^https?:\/\//i.test(url || '')
+// Media a page can save: web addresses, and its own data: and blob: ones.
+// Never file: ones, which a web page must not reach.
+const isSavable = (url) => isWeb(url) || /^(data|blob):/i.test(url || '')
 
 function quote(text) {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -64,14 +67,14 @@ function pageMenu(params, context = {}) {
   }
 
   // Images, videos and audio. Only a web address opens in a new tab (a
-  // data: or blob: one belongs to its page). Any image address can be saved,
-  // since the page itself downloads it; videos and audio only when Chromium
-  // says so (not streams). Copying an image needs its drawn pixels, and
+  // data: or blob: one belongs to its page). Images save from any of
+  // isSavable's addresses, since the page itself downloads them; videos and
+  // audio only when Chromium also says so (not streams). Copying an image needs its drawn pixels, and
   // Electron only copies from the top frame, so not inside an iframe.
   const media = { image: 'Image', video: 'Video', audio: 'Audio' }[params.mediaType]
   if (isPage && media) {
     const src = params.srcURL || ''
-    const canSave = src && (media === 'Image' || Boolean(params.mediaFlags?.canSave))
+    const canSave = isSavable(src) && (media === 'Image' || Boolean(params.mediaFlags?.canSave))
     groups.push([
       ...(isWeb(src) ? [{ label: `Open ${media} in New Tab`, command: 'openInNewTab', arg: src }] : []),
       ...(canSave ? [{ label: askWhereToSave ? `Save ${media} As…` : `Download ${media}`, command: 'download', arg: src }] : []),
