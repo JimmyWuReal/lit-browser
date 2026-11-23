@@ -151,11 +151,22 @@ function createWindow() {
     page.on('before-input-event', (_event, input) => {
       if (input.type === 'keyDown' && input.key === 'Escape' && !input.isComposing && tab.find && tab.id === activeId) closeFind()
     })
-    // A new page (or a reload) gets the open search run again once it loads.
-    page.on('did-finish-load', () => { if (tab.find?.text && tab.find.requestId === null) search(tab) })
+    // A new page (or a reload) gets the open search run again once its
+    // document is ready, without waiting for slow images; did-stop-loading
+    // covers pages restored from the back-forward cache, which skip dom-ready.
+    const rerunFind = () => { if (tab.find?.text && tab.find.requestId === null) search(tab) }
+    page.on('dom-ready', rerunFind)
+    page.on('did-stop-loading', rerunFind)
     page.on('found-in-page', (_event, result) => {
       const next = findState.result(tab.find, result)
-      if (next !== tab.find) { tab.find = next; sync() }
+      if (next === tab.find) return
+      tab.find = next
+      sync()
+      // A step asked for while the search was starting goes now.
+      if (next.matches !== null && next.queued !== null) {
+        tab.find = { ...next, queued: null }
+        if (tab.id === activeId) findAgain(next.queued)
+      }
     })
     // Every tab leaves through here: after closeTab's request, or when a
     // page closes itself (window.close() on a popup it opened).
@@ -283,8 +294,11 @@ function createWindow() {
     const tab = active()
     if (!tab?.find?.text) return openFind(forward)
     if (tab.page.isDestroyed()) return
-    const findNext = tab.find.requestId === null
-    tab.find = { ...tab.find, requestId: tab.page.findInPage(tab.find.text, { forward, findNext }) }
+    if (tab.find.requestId === null) return search(tab, forward)
+    // Chromium drops a step sent before a new search's first answer, so
+    // it waits for that answer (see found-in-page).
+    if (tab.find.matches === null) { tab.find = { ...tab.find, queued: forward }; return }
+    tab.find = { ...tab.find, requestId: tab.page.findInPage(tab.find.text, { forward, findNext: false }) }
   }
 
   // Escape or the close button: the page keeps the selected match, and

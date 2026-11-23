@@ -3,15 +3,15 @@ const assert = require('node:assert/strict')
 const { open, setText, reset, result } = require('../src/find')
 
 test('open starts empty, or with the last search, and keeps an open field', () => {
-  assert.deepEqual(open(null), { text: '', active: 0, matches: null, requestId: null })
+  assert.deepEqual(open(null), { text: '', active: 0, matches: null, requestId: null, queued: null })
   assert.equal(open(null, 'light').text, 'light')
   const find = { text: 'keeper', active: 2, matches: 3, requestId: 7 }
   assert.equal(open(find, 'light'), find)
 })
 
 test('new text clears the counts until the page answers', () => {
-  const find = setText({ text: 'li', active: 2, matches: 9, requestId: 4 }, 'lig')
-  assert.deepEqual(find, { text: 'lig', active: 0, matches: null, requestId: null })
+  const find = setText({ text: 'li', active: 2, matches: 9, requestId: 4, queued: false }, 'lig')
+  assert.deepEqual(find, { text: 'lig', active: 0, matches: null, requestId: null, queued: null })
 })
 
 test('a result for the latest request updates the counts', () => {
@@ -28,7 +28,7 @@ test('results for older requests, or a closed field, change nothing', () => {
 })
 
 test('a navigation keeps the text but starts the search over', () => {
-  assert.deepEqual(reset({ text: 'light', active: 3, matches: 9, requestId: 8 }), { text: 'light', active: 0, matches: null, requestId: null })
+  assert.deepEqual(reset({ text: 'light', active: 3, matches: 9, requestId: 8, queued: true }), { text: 'light', active: 0, matches: null, requestId: null, queued: null })
   assert.equal(reset(null), null)
 })
 
