@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, remember, reopenIndex } = require('../src/tabs')
+const { afterClose, step, byNumber, remember, reopenIndex, onScreen } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -38,4 +38,12 @@ test('a reopened tab goes back to its place, or the end', () => {
   assert.equal(reopenIndex(1, 3), 1)
   assert.equal(reopenIndex(5, 2), 2)
   assert.equal(reopenIndex(-1, 2), 0)
+})
+
+test('a window is on screen while it overlaps a display', () => {
+  const displays = [{ x: 0, y: 0, width: 1440, height: 900 }, { x: 1440, y: 0, width: 1920, height: 1080 }]
+  assert.equal(onScreen({ x: 100, y: 50, width: 800, height: 600 }, displays), true)
+  assert.equal(onScreen({ x: 2000, y: 100, width: 800, height: 600 }, displays), true)
+  assert.equal(onScreen({ x: 4000, y: 100, width: 800, height: 600 }, displays), false)
+  assert.equal(onScreen({ x: 100, y: 50, width: 800, height: 600 }, []), false)
 })

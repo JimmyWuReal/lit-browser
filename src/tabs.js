@@ -1,4 +1,4 @@
-// Pure tab-order rules, kept apart from Electron so they can be tested.
+// Pure tab and window rules, kept apart from Electron so they can be tested.
 
 // The tab to show after closing `closingId`: the active tab stays active
 // unless it is the one closing; then its right neighbor wins, else its left
@@ -36,4 +36,11 @@ function remember(closed, entry, limit = 25) {
 // window now has fewer tabs.
 const reopenIndex = (index, count) => Math.min(Math.max(index, 0), count)
 
-module.exports = { afterClose, step, byNumber, remember, reopenIndex }
+// Whether a window at `bounds` would show on any of the displays' work
+// areas (all { x, y, width, height }), so a reopened window never lands
+// off screen after a display is unplugged.
+const onScreen = (bounds, areas) => areas.some((area) =>
+  bounds.x < area.x + area.width && bounds.x + bounds.width > area.x &&
+  bounds.y < area.y + area.height && bounds.y + bounds.height > area.y)
+
+module.exports = { afterClose, step, byNumber, remember, reopenIndex, onScreen }

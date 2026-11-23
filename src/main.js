@@ -3,11 +3,11 @@
 // Only the active tab's view is visible. The Settings and History popups
 // are each one more view, transparent and over everything, shown only
 // while open.
-const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, session } = require('electron')
+const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, screen, session } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl } = require('./url')
-const { afterClose, step, byNumber, remember, reopenIndex } = require('./tabs')
+const { afterClose, step, byNumber, remember, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const shortcuts = require('./shortcuts')
@@ -34,8 +34,8 @@ let nextWindowKey = 1
 // not a page closing itself; a blank tab has a null history and comes
 // back blank. Nothing is kept while Save history is off.
 // A tab: { windowKey, index, history }, back in its window if that is open.
-// A window: { key, tabs: [history], activeIndex, size }, so tab order and
-// the active tab come back as they were.
+// A window: { key, tabs: [history], activeIndex, bounds, maximized,
+// fullScreen }, so tab order, the active tab and its place come back as they were.
 // A history is { entries, index } from navigationHistory, so back and
 // forward come back too. Kept only while Lit runs.
 const closed = []
@@ -134,15 +134,22 @@ function reopenClosed(focused) {
 function applySettings() {
   Menu.setApplicationMenu(buildMenu())
   applyDoNotTrack()
-  if (!settings.saveHistory) forgetClosed()
+  if (!settings.saveHistory) {
+    forgetClosed()
+    for (const controls of openWindows) controls.forgetTabHistories()
+  }
   for (const controls of openWindows) controls.settingsChanged()
 }
 
-// `key`, `tabs`, `activeIndex` and `size` reopen a closed window (see `closed`).
-function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex = 0, size } = {}) {
+// `key`, `tabs`, `activeIndex`, `bounds`, `maximized` and `fullScreen` reopen
+// a closed window (see `closed`). Its old position is used only while it is
+// still on a connected display; otherwise only its size.
+function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex = 0, bounds, maximized, fullScreen } = {}) {
+  const place = bounds && onScreen(bounds, screen.getAllDisplays().map((display) => display.workArea))
+    ? bounds
+    : { width: bounds?.width || 1200, height: bounds?.height || 800 }
   const win = new BrowserWindow({
-    width: size?.width || 1200,
-    height: size?.height || 800,
+    ...place,
     minWidth: 480,
     minHeight: 320,
     backgroundColor: '#090909',
@@ -278,6 +285,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       else {
         delete tab.closedByUser
         delete tab.closeFocus
+        delete tab.closeSnapshot
       }
     })
 
@@ -326,6 +334,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // only its initial blank entry, so it is not read; the address being
   // loaded stands in, if any.
   function saveHistory(tab) {
+    // While Save history is off, nothing is kept to reopen.
+    if (!settings.saveHistory) return (tab.history = null)
     if (!tab.page.isDestroyed() && tab.url) {
       const entries = tab.page.navigationHistory.getAllEntries()
       if (entries.length) tab.history = { entries, index: tab.page.navigationHistory.getActiveIndex() }
@@ -336,8 +346,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
 
   // What Reopen Closed Tab needs to bring this window back.
   function closedWindow(histories, activeIndex) {
-    const { width, height } = win.getNormalBounds()
-    return { key, tabs: histories, activeIndex, size: { width, height } }
+    return { key, tabs: histories, activeIndex, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen() }
   }
 
   // A tab's first load turns it from the search box into its page.
@@ -354,7 +363,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (!tab) return
     tab.closeFocus = focus
     tab.closedByUser = true
-    saveHistory(tab)
+    // Kept from now: closing stops a first load, which forgets its address.
+    tab.closeSnapshot = saveHistory(tab)
     if (tab.page.isDestroyed()) removeTab(tab)
     else tab.page.close({ waitForBeforeUnload: true })
   }
@@ -364,7 +374,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     const nextId = afterClose(ids(), activeId, tab.id)
     const focus = tab.closeFocus ?? true
     const index = tabs.indexOf(tab)
-    const history = tab.started ? saveHistory(tab) : null
+    const history = tab.started ? saveHistory(tab) || tab.closeSnapshot || null : null
     tabs.splice(index, 1)
     if (win.isDestroyed()) return
     win.contentView.removeChildView(tab.view)
@@ -483,6 +493,13 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       popups.settings?.webContents.send('settings-changed', settingsState())
       controls.historyChanged()
     },
+    // Save history was turned off: drop what each tab kept to reopen.
+    forgetTabHistories() {
+      for (const tab of tabs) {
+        tab.history = null
+        delete tab.closeSnapshot
+      }
+    },
     historyChanged() {
       if (popupOpen === 'history') popups.history.webContents.send('history-changed', historyState())
     },
@@ -512,6 +529,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   })
 
   win.loadFile(path.join(__dirname, 'index.html'))
+  if (maximized) win.maximize()
+  if (fullScreen) win.setFullScreen(true)
   if (restored.length) {
     for (const history of restored) addTab(history ? { history, background: true } : { background: true })
     activate(tabs[Math.min(activeIndex, tabs.length - 1)].id)
