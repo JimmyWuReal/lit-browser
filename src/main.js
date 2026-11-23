@@ -1,10 +1,10 @@
 // Lit's main process. Each window has a toolbar on top (src/index.html,
 // the window's own page) and one Chromium WebContentsView per tab below it.
-// Only the active tab's view is visible. The Settings and History popups
-// are each one more view, transparent and over everything, shown only
-// while open. Find in page lives in the toolbar; each tab keeps its own
+// Only the active tab's view is visible. The Settings, History and
+// Downloads popups are each one more view, transparent and over
+// everything, shown only while open. Find in page lives in the toolbar; each tab keeps its own
 // search (src/find.js).
-const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, screen, session } = require('electron')
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, screen, session, shell } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl, searchUrl, engineOf } = require('./url')
@@ -12,7 +12,7 @@ const { afterClose, step, byNumber, remember, forgetOlder, reopenIndex, onScreen
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const shortcuts = require('./shortcuts')
-const { uniquePath } = require('./downloads')
+const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
 const findState = require('./find')
 const { pageMenu, tabMenu } = require('./menus')
@@ -132,6 +132,77 @@ function forgetClosed() {
   pruneClosed()
 }
 
+// This session's downloads, newest first, in memory only: { id, item,
+// path, state, received, total, speed } (see src/downloads.js). One joins
+// the list once it has somewhere to go, so a save dialog someone cancels
+// never shows. Every window's toolbar shows them, as they share a session.
+const downloads = []
+let nextDownloadId = 1
+// Progress arrives many times a second; windows hear about it at most
+// this often, while a download starting or ending is sent right away.
+const DOWNLOADS_EVERY = 250
+let downloadsTimer = null
+
+function downloadsChanged(now = false) {
+  if (downloadsTimer && !now) return
+  clearTimeout(downloadsTimer)
+  const send = () => {
+    downloadsTimer = null
+    for (const controls of openWindows) controls.downloadsChanged()
+  }
+  if (now) send()
+  else downloadsTimer = setTimeout(send, DOWNLOADS_EVERY)
+}
+
+const downloadsSummary = () => downloadsStore.summary(downloads)
+
+// What the Downloads popup draws. A finished file someone has since moved
+// or deleted says so, and can no longer be shown in Finder.
+function downloadsState() {
+  return {
+    downloads: downloads.map((download) => downloadsStore.row({
+      ...download,
+      missing: download.state === 'completed' && !fs.existsSync(download.path),
+    })),
+  }
+}
+
+// Follows one download from will-download to done. Saving straight to
+// Downloads, when Settings says so; otherwise Electron asks where to save.
+// Paths of unfinished downloads count as taken, so two same-name downloads
+// never share one.
+const downloading = new Set()
+function trackDownload(item) {
+  let file = null
+  if (settings.downloadLocation === 'downloads') {
+    file = downloadsStore.uniquePath(app.getPath('downloads'), item.getFilename(), (candidate) => downloading.has(candidate) || fs.existsSync(candidate))
+    downloading.add(file)
+    item.setSavePath(file)
+  }
+  const download = { id: nextDownloadId++, item, path: '', state: 'progressing', received: 0, total: 0, speed: 0 }
+  const read = (state) => {
+    download.state = state
+    download.path = item.getSavePath()
+    download.received = item.getReceivedBytes()
+    download.total = item.getTotalBytes()
+    download.speed = state === 'progressing' ? item.getCurrentBytesPerSecond() : 0
+    // Listed once it has a place: right away, or after the save dialog.
+    if (!download.path || downloads.includes(download)) return false
+    downloads.unshift(download)
+    return true
+  }
+  item.on('updated', (_event, state) => downloadsChanged(read(state)))
+  item.once('done', (_event, state) => {
+    if (file) downloading.delete(file)
+    read(state === 'interrupted' ? 'failed' : state)
+    // Done with Electron's item; the list keeps what it last said.
+    download.item = null
+    if (state === 'completed') app.dock?.downloadFinished(download.path)
+    downloadsChanged(true)
+  })
+  if (read('progressing')) downloadsChanged(true)
+}
+
 // How long a closed tab can be reopened, per the Forget closed tabs setting.
 const KEEP_CLOSED = { '10m': 10 * 60 * 1000, '1h': 60 * 60 * 1000, '1d': 24 * 60 * 60 * 1000 }
 let closedTimer = null
@@ -144,6 +215,9 @@ function pruneClosed() {
   closedTimer = due === null ? null : setTimeout(pruneClosed, due - Date.now())
   refreshReopen()
 }
+
+// What a popup draws when it opens.
+const popupState = (name) => ({ settings: settingsState, history: historyState, downloads: downloadsState })[name]()
 
 // What the Settings popup draws: the values, plus each shortcut as ⌘ symbols.
 function settingsState(error) {
@@ -256,6 +330,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
 
   // The toolbar's tooltips show the current shortcuts.
   const sendShortcuts = () => { if (!win.isDestroyed()) win.webContents.send('shortcuts', settingsState().labels) }
+  // The toolbar's downloads indicator.
+  const sendDownloads = () => { if (!win.isDestroyed()) win.webContents.send('downloads', downloadsSummary()) }
 
   function layout() {
     const { width, height } = win.getContentBounds()
@@ -679,8 +755,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     })
   }
 
-  // The Settings and History popups (src/settings.html, src/history.html):
-  // each is made on first use, then hidden and shown; one is open at a time.
+  // The Settings, History and Downloads popups (src/settings.html,
+  // src/history.html, src/downloads.html): each is made on first use, then hidden and shown; one is open at a time.
   // While a shortcut is being recorded in Settings, key presses go to it
   // instead of the menu, so ⌘T records ⌘T rather than opening a tab.
   function popupView(name) {
@@ -722,7 +798,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     layout()
     view.setVisible(true)
     view.webContents.focus()
-    view.webContents.send(`${name}-open`, name === 'settings' ? settingsState() : historyState())
+    view.webContents.send(`${name}-open`, popupState(name))
   }
 
   // Popups have no exit animation, so they just hide. Focus goes back
@@ -808,6 +884,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     historyChanged() {
       if (popupOpen === 'history') popups.history.webContents.send('history-changed', historyState())
     },
+    downloadsChanged() {
+      sendDownloads()
+      if (popupOpen === 'downloads') popups.downloads.webContents.send('downloads-changed', downloadsState())
+    },
   }
   windowsByToolbar.set(win.webContents, controls)
   openWindows.add(controls)
@@ -824,7 +904,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     closingWindow = histories.length ? closedWindow(histories, Math.max(tabs.indexOf(active()), 0)) : null
   })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
-  win.webContents.on('did-finish-load', () => { sync(); sendShortcuts() })
+  win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendDownloads() })
   win.on('closed', () => {
     openWindows.delete(controls)
     if (closingWindow) rememberClosed(closingWindow)
@@ -975,6 +1055,8 @@ function buildMenu() {
         hidden('Show Previous Tab', 'Shift+CmdOrCtrl+[', inFocused((c) => c.step(-1))),
         ...numbers,
         { type: 'separator' },
+        { label: 'Downloads', accelerator: key('downloads'), click: togglePopup('downloads') },
+        { type: 'separator' },
         { role: 'front' },
       ],
     },
@@ -996,6 +1078,7 @@ ipcMain.on('find', fromToolbar((c, tabId, text) => c.isActive(tabId) && typeof t
 ipcMain.on('find-again', fromToolbar((c, tabId, forward) => c.isActive(tabId) && c.findAgain(forward !== false)))
 ipcMain.on('close-find', fromToolbar((c, tabId) => c.isActive(tabId) && c.closeFind()))
 ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
+ipcMain.on('open-downloads', fromToolbar((c) => c.openPopup('downloads')))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
 
@@ -1006,6 +1089,7 @@ const fromPopup = (name, handler) => (event, ...args) => {
 }
 const fromSettings = (handler) => fromPopup('settings', handler)
 const fromHistory = (handler) => fromPopup('history', handler)
+const fromDownloads = (handler) => fromPopup('downloads', handler)
 ipcMain.handle('settings-get', fromSettings(() => settingsState()))
 ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
   const { values, error } = settingsStore.update(settings, key, value)
@@ -1041,6 +1125,25 @@ ipcMain.handle('history-clear', fromHistory(() => {
 }))
 ipcMain.on('history-close', fromHistory((c) => c.closePopup()))
 
+const downloadById = (id) => downloads.find((download) => download.id === id)
+ipcMain.handle('downloads-get', fromDownloads(() => downloadsState()))
+// Only a download still on its way can be cancelled; done fires next.
+ipcMain.on('downloads-cancel', fromDownloads((_c, id) => downloadById(id)?.item?.cancel()))
+ipcMain.on('downloads-show', fromDownloads((_c, id) => {
+  const download = downloadById(id)
+  if (download?.state === 'completed') shell.showItemInFolder(download.path)
+}))
+// Clear keeps downloads still on their way. Clearing them all takes the
+// toolbar button away, and the popup hanging from it closes too.
+ipcMain.on('downloads-clear', fromDownloads((c) => {
+  const active = downloads.filter(downloadsStore.isActive)
+  if (active.length === downloads.length) return
+  downloads.splice(0, downloads.length, ...active)
+  downloadsChanged(true)
+  if (!downloads.length) c.closePopup()
+}))
+ipcMain.on('downloads-close', fromDownloads((c) => c.closePopup()))
+
 app.whenReady().then(() => {
   settingsFile = path.join(app.getPath('userData'), 'settings.json')
   settings = settingsStore.load(settingsFile)
@@ -1049,17 +1152,7 @@ app.whenReady().then(() => {
   historyFile = path.join(app.getPath('userData'), 'history.json')
   visited = historyStore.load(historyFile)
   applyDoNotTrack()
-  // Saving straight to Downloads, when Settings says so; otherwise
-  // Electron asks where to save. Paths of unfinished downloads count as
-  // taken, so two same-name downloads never share one.
-  const downloading = new Set()
-  session.defaultSession.on('will-download', (_event, item) => {
-    if (settings.downloadLocation !== 'downloads') return
-    const file = uniquePath(app.getPath('downloads'), item.getFilename(), (candidate) => downloading.has(candidate) || fs.existsSync(candidate))
-    downloading.add(file)
-    item.setSavePath(file)
-    item.once('done', () => downloading.delete(file))
-  })
+  session.defaultSession.on('will-download', (_event, item) => trackDownload(item))
   // The packaged app gets its icon from the bundle; in development, show it in the Dock too.
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '..', 'build', 'icon.png'))
   Menu.setApplicationMenu(buildMenu())
