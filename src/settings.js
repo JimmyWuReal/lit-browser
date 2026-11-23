@@ -58,9 +58,13 @@ function update(values, key, value) {
   return { ...values, [key]: value }
 }
 
+// Writes a sibling file and renames it over the old one, so an interrupted
+// write never leaves a half-written settings file.
 function save(file, values) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, `${JSON.stringify(values, null, 2)}\n`)
+  const temporary = `${file}.tmp`
+  fs.writeFileSync(temporary, `${JSON.stringify(values, null, 2)}\n`)
+  fs.renameSync(temporary, file)
 }
 
 module.exports = { SECTIONS, clean, load, update, save }

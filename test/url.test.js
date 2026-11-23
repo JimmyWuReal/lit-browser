@@ -21,4 +21,5 @@ test('searches with the chosen engine, falling back to Google', () => {
   assert.equal(toUrl('lit browser', 'duckduckgo'), 'https://duckduckgo.com/?q=lit%20browser')
   assert.equal(toUrl('lit browser', 'bing'), 'https://www.bing.com/search?q=lit%20browser')
   assert.equal(toUrl('lit browser', 'unknown'), 'https://www.google.com/search?q=lit%20browser')
+  assert.equal(toUrl('lit browser', 'constructor'), 'https://www.google.com/search?q=lit%20browser')
 })

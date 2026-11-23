@@ -12,7 +12,7 @@ function toUrl(input, engine = 'google') {
   if (/^(https?|file|about|data|chrome):/i.test(text)) return text
   if (/^(localhost|(\d{1,3}\.){3}\d{1,3})(:\d+)?(\/|$)/i.test(text)) return `http://${text}`
   if (!/\s/.test(text) && /^[^/]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(text)) return `https://${text}`
-  const search = (SEARCH_ENGINES[engine] || SEARCH_ENGINES.google).url
+  const search = (Object.hasOwn(SEARCH_ENGINES, engine) ? SEARCH_ENGINES[engine] : SEARCH_ENGINES.google).url
   return `${search}${encodeURIComponent(text)}`
 }
 

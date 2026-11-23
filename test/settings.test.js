@@ -30,6 +30,7 @@ test('save and load round-trip, and a bad file loads defaults', () => {
   assert.deepEqual(load(file), clean())
   save(file, { searchEngine: 'bing' })
   assert.deepEqual(load(file), { searchEngine: 'bing' })
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), ['settings.json'])
   fs.writeFileSync(file, '{ not json')
   assert.deepEqual(load(file), clean())
   fs.rmSync(dir, { recursive: true })

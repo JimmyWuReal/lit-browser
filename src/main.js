@@ -320,10 +320,12 @@ const fromSettings = (handler) => (event, ...args) => {
 }
 ipcMain.handle('settings-get', fromSettings(() => ({ sections: settingsStore.SECTIONS, values: settings })))
 ipcMain.handle('settings-set', fromSettings((key, value) => {
+  // Saved first, so a failed write leaves the old settings in use, and the
+  // window hears about it from the rejected call.
   const next = settingsStore.update(settings, key, value)
   if (next !== settings) {
+    settingsStore.save(settingsFile, next)
     settings = next
-    settingsStore.save(settingsFile, settings)
   }
   return settings
 }))

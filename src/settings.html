@@ -93,6 +93,9 @@
     .segmented button:not(.is-active):hover { color: #e6e6e6; }
     .segmented button.is-active { color: #0a0a0a; }
 
+    .error { margin: 20px 0 0; font-size: 11.5px; color: #ff8a80; }
+    .error:empty { display: none; }
+
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
         transition-duration: .01ms !important;
@@ -104,25 +107,34 @@
 </head>
 <body>
   <div class="title">Settings</div>
-  <main id="sections"></main>
+  <main>
+    <div id="sections"></div>
+    <p class="error" id="error" role="alert"></p>
+  </main>
 
   <script>
     // Draws every section and setting from src/settings.js. A new setting
     // needs no change here unless it brings a new `type`.
     const root = document.getElementById('sections')
+    const error = document.getElementById('error')
+    // `values` is what the window shows; `saved` is what main last confirmed.
     let values = {}
+    let saved = {}
 
-    // Shows the choice at once, then whatever main saved. Only the latest
-    // reply counts, so quick changes never snap back to an older one.
+    // Shows the choice at once, then whatever main saved, or the last saved
+    // values if saving failed. Only the latest reply redraws, so quick
+    // changes never snap back to an older one.
     let saves = 0
     function save(key, value) {
       if (values[key] === value) return
       const id = ++saves
       values = { ...values, [key]: value }
+      error.textContent = ''
       redraw()
-      window.lit.settings.set(key, value).then((saved) => {
-        if (id === saves) { values = saved; redraw() }
-      })
+      window.lit.settings.set(key, value).then(
+        (next) => { saved = next; if (id === saves) { values = next; redraw() } },
+        () => { if (id === saves) { values = saved; error.textContent = 'Couldn’t save settings.'; redraw() } },
+      )
     }
 
     // Each control registers how to show the current value.
@@ -210,7 +222,7 @@
     }
 
     window.lit.settings.get().then((state) => {
-      values = state.values
+      values = saved = state.values
       for (const section of state.sections) {
         const element = document.createElement('section')
         const title = document.createElement('h2')
