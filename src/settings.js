@@ -124,6 +124,7 @@ const SECTIONS = [
       shortcut('newWindow', 'New Window', 'CmdOrCtrl+N'),
       shortcut('reopenTab', 'Reopen Closed Tab', 'Shift+CmdOrCtrl+T'),
       shortcut('history', 'Show History', 'CmdOrCtrl+Y'),
+      shortcut('downloads', 'Show Downloads', 'Alt+CmdOrCtrl+L'),
       shortcut('openLocation', 'Open Location', 'CmdOrCtrl+L'),
       shortcut('closeTab', 'Close Tab', 'CmdOrCtrl+W'),
       shortcut('closeWindow', 'Close Window', 'Shift+CmdOrCtrl+W'),

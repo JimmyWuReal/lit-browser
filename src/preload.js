@@ -1,5 +1,5 @@
-// The only bridge between Lit's own pages (the toolbar, and the Settings and
-// History popups) and the main process.
+// The only bridge between Lit's own pages (the toolbar, and the Settings,
+// History and Downloads popups) and the main process.
 const { contextBridge, ipcRenderer } = require('electron')
 
 const on = (channel, callback) => ipcRenderer.on(channel, (_event, value) => callback(value))
@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('lit', {
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   openSettings: () => ipcRenderer.send('open-settings'),
+  openDownloads: () => ipcRenderer.send('open-downloads'),
+  // The downloads indicator: { count, active, progress }, `progress` being
+  // 0–1, or null while none is running or one has no known size.
+  onDownloads: (callback) => on('downloads', callback),
   // Puts the active page back at the default zoom.
   resetZoom: () => ipcRenderer.send('reset-zoom'),
   // Find in page, on the tab the toolbar shows (main ignores a tab that is
@@ -54,5 +58,17 @@ contextBridge.exposeInMainWorld('lit', {
     close: () => ipcRenderer.send('history-close'),
     onOpen: (callback) => on('history-open', callback),
     onChanged: (callback) => on('history-changed', callback),
+  },
+  // For the Downloads popup only. State is { downloads: [{ id, name, state,
+  // progress, status }] }, newest first (see row in src/downloads.js).
+  downloads: {
+    get: () => ipcRenderer.invoke('downloads-get'),
+    cancel: (id) => ipcRenderer.send('downloads-cancel', id),
+    showInFinder: (id) => ipcRenderer.send('downloads-show', id),
+    // Removes every download that is no longer on its way.
+    clear: () => ipcRenderer.send('downloads-clear'),
+    close: () => ipcRenderer.send('downloads-close'),
+    onOpen: (callback) => on('downloads-open', callback),
+    onChanged: (callback) => on('downloads-changed', callback),
   },
 })

@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'">
+  <title>Downloads</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap">
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      --sub: #8c8c8c;
+      --line: rgba(255, 255, 255, .18);
+      --line-hover: rgba(255, 255, 255, .34);
+      --rail: rgba(255, 255, 255, .12);
+      --settle: cubic-bezier(.22, 1, .36, 1);
+    }
+    * { box-sizing: border-box; }
+    /* The page is a transparent layer over the whole window, so a click
+       anywhere outside the panel closes it, as a menu would. */
+    html, body { height: 100%; margin: 0; background: transparent; overflow: hidden; color: #ededed; }
+    body { user-select: none; }
+    button { font: inherit; color: inherit; }
+    button:focus-visible { outline: 2px solid rgba(255, 255, 255, .8); outline-offset: 3px; }
+
+    /* A raised panel hanging from the indicator at the right of the tab
+       strip (38px tall, 10px side padding, as in index.html). It opens
+       like the kit's select menu; popups hide without an exit animation. */
+    .backdrop { position: fixed; inset: 0; }
+    .panel {
+      position: absolute;
+      top: 40px;
+      right: 10px;
+      width: min(380px, calc(100% - 20px));
+      max-height: calc(100% - 52px);
+      display: flex;
+      flex-direction: column;
+      border-radius: 12px;
+      background: #1c1c1c;
+      box-shadow: inset 0 0 0 1px var(--line), 0 16px 40px rgba(0, 0, 0, .4);
+      transform-origin: top right;
+      overflow: hidden;
+    }
+    .is-open .panel { animation: menu-fade 160ms ease-out, menu-in 240ms var(--settle); }
+    .panel:focus { outline: 0; }
+    @keyframes menu-fade { from { opacity: 0; } }
+    @keyframes menu-in { from { transform: translateY(-4px) scale(.98); } }
+
+    .head { display: flex; align-items: center; gap: 8px; padding: 12px 12px 4px 16px; }
+    .head h1 { flex: 1; margin: 0; font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
+
+    /* The kit's outline button, small. */
+    .outline-button {
+      height: 28px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 8px;
+      color: #fff;
+      background: transparent;
+      box-shadow: inset 0 0 0 1px var(--line);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      transition: box-shadow 200ms ease, transform 140ms var(--settle), opacity 160ms ease-out;
+    }
+    .outline-button:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .outline-button:active:not(:disabled) { transform: scale(.97); transition-duration: 55ms; }
+    .outline-button:disabled { opacity: .4; cursor: default; }
+
+    /* The kit's quiet icon button, as for actions repeated down a list. */
+    .icon-button {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      flex: 0 0 auto;
+      padding: 0;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #bdbdbd;
+      box-shadow: inset 0 0 0 1px transparent;
+      cursor: pointer;
+      transition: color 180ms ease-out, box-shadow 200ms ease, opacity 160ms ease-out, transform 140ms var(--settle);
+    }
+    .icon-button:hover { color: #fff; box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .icon-button:active { transform: scale(.94); }
+    .icon-button[hidden] { display: none; }
+
+    .list { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 4px 8px 8px 16px; list-style: none; }
+    .download { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+    .download-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .download strong {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 400;
+      letter-spacing: -.01em;
+      color: #d6d6d6;
+      transition: color 200ms ease;
+    }
+    .download.is-stopped strong { color: var(--sub); }
+    .download small { font-size: 11.5px; color: var(--sub); font-variant-numeric: tabular-nums; }
+
+    /* The kit's progress bar; its fill eases to each new value. */
+    .progress-track { height: 4px; overflow: hidden; border-radius: 999px; background: var(--rail); }
+    .progress-track[hidden] { display: none; }
+    .progress-fill {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: #fff;
+      transform: scaleX(var(--value, 0));
+      transform-origin: left;
+      transition: transform 320ms var(--settle);
+    }
+
+    /* The kit's empty state, small. */
+    .empty-state { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 32px 24px 36px; text-align: center; }
+    .empty-state strong { font-size: 13px; font-weight: 500; color: #fff; }
+    .empty-state p { max-width: 36ch; margin: 0; font-size: 12px; line-height: 1.7; color: var(--sub); }
+    .empty-state[hidden] { display: none; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="backdrop" id="backdrop">
+    <div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="downloads-title" tabindex="-1">
+      <div class="head">
+        <h1 id="downloads-title">Downloads</h1>
+        <button class="outline-button" id="clear" type="button" title="Remove finished downloads from the list">Clear</button>
+      </div>
+      <ul class="list" id="list"></ul>
+      <div class="empty-state" id="empty" hidden>
+        <strong>No downloads</strong>
+        <p>Files you download show up here.</p>
+      </div>
+    </div>
+  </div>
+
+  <template id="row-template">
+    <li class="download">
+      <div class="download-text">
+        <strong></strong>
+        <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+          <span class="progress-fill"></span>
+        </div>
+        <small></small>
+      </div>
+      <button class="icon-button cancel" type="button" title="Cancel">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+      </button>
+      <button class="icon-button show" type="button" title="Show in Finder">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
+        </svg>
+      </button>
+    </li>
+  </template>
+
+  <script>
+    // Draws this session's downloads, newest first, as main sends them
+    // (row in src/downloads.js). Rows are kept by id and updated in place,
+    // so progress bars ease from one value to the next.
+    const downloads = window.lit.downloads
+    const backdrop = document.getElementById('backdrop')
+    const panel = document.getElementById('panel')
+    const list = document.getElementById('list')
+    const empty = document.getElementById('empty')
+    const clear = document.getElementById('clear')
+    const template = document.getElementById('row-template')
+    const rows = new Map()
+
+    function createRow(id) {
+      const root = template.content.firstElementChild.cloneNode(true)
+      const elements = {
+        root,
+        name: root.querySelector('strong'),
+        track: root.querySelector('.progress-track'),
+        fill: root.querySelector('.progress-fill'),
+        status: root.querySelector('small'),
+        cancel: root.querySelector('.cancel'),
+        show: root.querySelector('.show'),
+      }
+      elements.cancel.addEventListener('click', () => downloads.cancel(id))
+      elements.show.addEventListener('click', () => downloads.showInFinder(id))
+      rows.set(id, elements)
+      return elements
+    }
+
+    function draw({ downloads: items }) {
+      const ids = new Set(items.map((item) => item.id))
+      for (const [id, elements] of rows) {
+        if (!ids.has(id)) { elements.root.remove(); rows.delete(id) }
+      }
+      items.forEach((item, index) => {
+        const elements = rows.get(item.id) || createRow(item.id)
+        if (list.children[index] !== elements.root) list.insertBefore(elements.root, list.children[index] || null)
+        elements.root.classList.toggle('is-stopped', item.state === 'stopped')
+        elements.name.textContent = item.name
+        elements.name.title = item.name
+        elements.status.textContent = item.status
+        elements.track.hidden = item.progress === null
+        if (item.progress !== null) {
+          const percent = Math.floor(item.progress * 100)
+          elements.fill.style.setProperty('--value', String(item.progress))
+          elements.track.setAttribute('aria-valuenow', String(percent))
+          elements.track.setAttribute('aria-label', `Downloading ${item.name}`)
+        }
+        // A button that is about to vanish hands focus to the panel, so
+        // the keyboard is never left on nothing.
+        const keepFocus = (button, on) => {
+          if (!on && button === document.activeElement) panel.focus()
+          button.hidden = !on
+        }
+        keepFocus(elements.cancel, item.state === 'active')
+        keepFocus(elements.show, item.state === 'done')
+        elements.cancel.setAttribute('aria-label', `Cancel ${item.name}`)
+        elements.show.setAttribute('aria-label', `Show ${item.name} in Finder`)
+      })
+      empty.hidden = items.length > 0
+      list.hidden = items.length === 0
+      clear.disabled = !items.some((item) => item.state !== 'active')
+      if (clear.disabled && clear === document.activeElement) panel.focus()
+    }
+
+    // Each open replays the panel's keyframes and focuses it, so Tab
+    // starts at its first control.
+    function open(state) {
+      draw(state)
+      list.scrollTop = 0
+      document.body.classList.remove('is-open')
+      document.body.getBoundingClientRect()
+      document.body.classList.add('is-open')
+      panel.focus()
+    }
+
+    const close = () => downloads.close()
+    clear.addEventListener('click', () => downloads.clear())
+    backdrop.addEventListener('mousedown', (event) => { if (event.target === backdrop) close() })
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); close() }
+    })
+
+    downloads.onOpen(open)
+    downloads.onChanged(draw)
+    // The first open is sent before this page has loaded, so it asks.
+    downloads.get().then(open)
+  </script>
+</body>
+</html>
