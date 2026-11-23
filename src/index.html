@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- img-src allows the pages' favicons, which load from anywhere. -->
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'">
+    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src https: http: data:; script-src 'self' 'unsafe-inline'">
   <title>Lit</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap">
   <style>
@@ -14,22 +15,152 @@
       --line: rgba(255, 255, 255, .18);
       --line-hover: rgba(255, 255, 255, .34);
       --line-live: rgba(255, 255, 255, .72);
+      --settle: cubic-bezier(.22, 1, .36, 1);
     }
     * { box-sizing: border-box; }
-    body { margin: 0; background: #090909; }
+    body { margin: 0; background: #090909; overflow: hidden; user-select: none; }
+    button { font: inherit; color: inherit; }
+    button:focus-visible { outline: 2px solid rgba(255, 255, 255, .8); outline-offset: -2px; }
 
-    /* The toolbar is the window's title bar, so it drags the window.
-       Its height matches BAR_HEIGHT in main.js. 88px clears the macOS
+    /* The tab strip is the window's title bar, so it drags the window.
+       Its height matches STRIP_HEIGHT in main.js; 80px clears the macOS
        window buttons. */
-    .bar {
-      height: 52px;
+    .strip {
+      height: 38px;
       display: flex;
       align-items: center;
-      padding: 0 16px 0 88px;
+      gap: 4px;
+      padding: 0 10px 0 80px;
       -webkit-app-region: drag;
     }
+    /* Tabs shrink to their icons, then scroll sideways (without a bar). */
+    .tabs {
+      position: relative;
+      display: flex;
+      gap: 2px;
+      min-width: 0;
+      flex: 0 1 auto;
+      overflow: auto hidden;
+      scrollbar-width: none;
+    }
 
-    .address { position: relative; flex: 1; -webkit-app-region: no-drag; }
+    /* One thumb slides to the active tab instead of each tab fading its own fill. */
+    .tab-thumb {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: var(--thumb-width, 0);
+      border-radius: 8px;
+      background: #1a1a1a;
+      transform: translateX(var(--thumb-x, 0));
+      pointer-events: none;
+    }
+    .tabs.is-ready .tab-thumb {
+      transition: transform 320ms var(--settle), width 320ms var(--settle);
+    }
+
+    .tab {
+      position: relative;
+      z-index: 1;
+      /* An explicit width, because size containment ignores the content's. */
+      width: 200px;
+      flex: 0 1 auto;
+      min-width: 40px;
+      height: 28px;
+      container-type: inline-size;
+      -webkit-app-region: no-drag;
+    }
+    .tab-select {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 28px 0 10px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #8a8a8a;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      text-align: left;
+      transition: color 260ms ease;
+    }
+    .tab:not(.is-active):hover .tab-select { color: #e6e6e6; }
+    .tab.is-active .tab-select { color: #ededed; }
+    .tab-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+    .tab-icon { width: 14px; height: 14px; flex: 0 0 auto; display: grid; place-items: center; }
+    .tab-icon img { width: 14px; height: 14px; border-radius: 3px; }
+    .tab-icon svg { color: var(--dim); }
+    /* The kit's spinner, at favicon size, while the page loads. */
+    .spinner { position: relative; width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--line); }
+    .spinner::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border: 1.5px solid transparent;
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 800ms linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* The kit's quiet icon button, shown on the active or hovered tab. */
+    .icon-button {
+      position: relative;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #bdbdbd;
+      box-shadow: inset 0 0 0 1px transparent;
+      transition:
+        color 180ms ease-out,
+        background-color 200ms ease,
+        box-shadow 200ms ease,
+        opacity 160ms ease-out,
+        transform 140ms var(--settle);
+      -webkit-app-region: no-drag;
+    }
+    .icon-button:hover { color: #fff; box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .icon-button:active { transform: scale(.94); }
+    .tab-close {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 20px;
+      height: 20px;
+      border-radius: 6px;
+      opacity: 0;
+    }
+    .tab.is-active .tab-close,
+    .tab:hover .tab-close,
+    .tab-close:focus-visible { opacity: 1; }
+    .new-tab { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; }
+
+    /* Narrow tabs keep just the icon; the active one keeps its close button. */
+    @container (max-width: 72px) {
+      .tab-select { justify-content: center; padding: 0; }
+      .tab-title { display: none; }
+      .tab:not(.is-active) .tab-close { display: none; }
+      .tab.is-active .tab-icon { display: none; }
+      .tab.is-active .tab-close { left: 50%; right: auto; transform: translateX(-50%); }
+      .tab.is-active .tab-close:active { transform: translateX(-50%) scale(.94); }
+    }
+
+    /* The address row. With the strip, it matches BAR_HEIGHT in main.js. */
+    .bar {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px 4px;
+    }
+
+    .address { position: relative; flex: 1; }
     .address input {
       width: 100%;
       height: 32px;
@@ -59,19 +190,32 @@
     }
     .address:focus-within svg { color: #fff; }
 
-    /* Home: before the first search the bar fills the window and the
-       address becomes a centered search box (the kit's search field). */
-    .home .bar { height: 100vh; justify-content: center; padding: 0 16px; }
+    /* Home: a tab that has not loaded anything shows the address as a
+       centered search box (the kit's search field) filling the window. */
+    .home .bar { height: calc(100vh - 38px); justify-content: center; padding: 0 16px 38px; }
     .home .address { flex: 0 1 560px; }
     .home .address input { height: 48px; padding: 0 16px 0 42px; border-radius: 10px; }
     .home .address svg { left: 16px; width: 15px; height: 15px; }
 
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { transition-duration: .01ms !important; }
+      *, *::before, *::after {
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+      }
     }
   </style>
 </head>
 <body class="home">
+  <div class="strip">
+    <div class="tabs" id="tabs" role="tablist" aria-label="Tabs">
+      <span class="tab-thumb" id="thumb" aria-hidden="true"></span>
+    </div>
+    <button class="icon-button new-tab" id="new-tab" type="button" aria-label="New tab" title="New Tab (⌘T)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+    </button>
+  </div>
   <form class="bar" id="bar">
     <label class="address">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -82,29 +226,185 @@
         autocomplete="off" spellcheck="false" autofocus>
     </label>
   </form>
+
+  <template id="tab-template">
+    <div class="tab">
+      <button class="tab-select" type="button" role="tab">
+        <span class="tab-icon"></span>
+        <span class="tab-title"></span>
+      </button>
+      <button class="icon-button tab-close" type="button" aria-label="Close tab" title="Close Tab (⌘W)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+      </button>
+    </div>
+  </template>
+  <template id="globe-template">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path>
+    </svg>
+  </template>
+
   <script>
     const bar = document.getElementById('bar')
     const address = document.getElementById('address')
-    let currentUrl = ''
+    const tabList = document.getElementById('tabs')
+    const thumb = document.getElementById('thumb')
+    const tabTemplate = document.getElementById('tab-template')
+    const globeTemplate = document.getElementById('globe-template')
+
+    // The main process owns the tabs; this draws its latest state.
+    let state = { activeId: null, tabs: [] }
+    // Tab id -> its elements, kept so favicons and hover states survive updates.
+    const tabElements = new Map()
+
+    const activeTab = () => state.tabs.find((tab) => tab.id === state.activeId)
+    const currentUrl = () => (activeTab()?.started ? activeTab().url : '')
+    // True while the address field holds text the user typed and has not sent.
+    let editing = false
+    // The page address the field last followed.
+    let shownUrl = ''
+    const tabLabel = (tab) => tab.title || (tab.started ? tab.url.replace(/^https?:\/\/(www\.)?/, '') : '') || 'New Tab'
+
+    function createTab(id) {
+      const root = tabTemplate.content.firstElementChild.cloneNode(true)
+      const select = root.querySelector('.tab-select')
+      const close = root.querySelector('.tab-close')
+      select.addEventListener('click', () => window.lit.activateTab(id))
+      close.addEventListener('click', () => window.lit.closeTab(id))
+      // Middle click closes, as in other browsers.
+      root.addEventListener('auxclick', (event) => { if (event.button === 1) window.lit.closeTab(id) })
+      const elements = { root, select, close, icon: root.querySelector('.tab-icon'), title: root.querySelector('.tab-title'), iconKey: null }
+      tabElements.set(id, elements)
+      return elements
+    }
+
+    // A spinner while loading, then the favicon, or a globe without one.
+    function drawIcon(elements, tab) {
+      const key = tab.loading ? 'loading' : tab.favicon || 'globe'
+      if (elements.iconKey === key) return
+      elements.iconKey = key
+      if (tab.loading) {
+        elements.icon.innerHTML = '<span class="spinner"></span>'
+      } else if (tab.favicon) {
+        const img = new Image()
+        img.alt = ''
+        img.src = tab.favicon
+        // A favicon that fails to load falls back to the globe.
+        img.onerror = () => { elements.iconKey = 'globe'; elements.icon.replaceChildren(globeTemplate.content.cloneNode(true)) }
+        elements.icon.replaceChildren(img)
+      } else {
+        elements.icon.replaceChildren(globeTemplate.content.cloneNode(true))
+      }
+    }
+
+    function render(next) {
+      const switched = next.activeId !== state.activeId
+      state = next
+
+      const ids = new Set(state.tabs.map((tab) => tab.id))
+      for (const [id, elements] of tabElements) {
+        if (!ids.has(id)) { elements.root.remove(); tabElements.delete(id) }
+      }
+      state.tabs.forEach((tab, index) => {
+        const elements = tabElements.get(tab.id) || createTab(tab.id)
+        // Child 0 is the thumb, so tab `index` sits at child index + 1.
+        if (tabList.children[index + 1] !== elements.root) tabList.insertBefore(elements.root, tabList.children[index + 1] || null)
+        const isActive = tab.id === state.activeId
+        const label = tabLabel(tab)
+        elements.root.classList.toggle('is-active', isActive)
+        elements.select.setAttribute('aria-selected', String(isActive))
+        elements.select.tabIndex = isActive ? 0 : -1
+        elements.close.tabIndex = isActive ? 0 : -1
+        elements.title.textContent = label
+        elements.select.title = label
+        // Narrow tabs hide their title text, so name the tab directly.
+        elements.select.setAttribute('aria-label', label)
+        drawIcon(elements, tab)
+      })
+      placeThumb()
+      if (refocusTabs) { refocusTabs = false; tabElements.get(state.activeId)?.select.focus() }
+      if (switched) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+
+      const tab = activeTab()
+      document.body.classList.toggle('home', !tab?.started)
+      // Switching tabs shows the new tab's address. Otherwise the field
+      // follows the page's address when it changes, unless the user is
+      // typing; so a sent address stays until the new page commits.
+      const url = currentUrl()
+      if (switched) editing = false
+      if (switched || (!editing && url !== shownUrl)) address.value = url
+      shownUrl = url
+    }
+
+    // Moves the thumb under the active tab. Window resizes jump, so the
+    // thumb does not trail behind the tabs.
+    function placeThumb({ animate = true } = {}) {
+      const elements = tabElements.get(state.activeId)
+      thumb.style.opacity = elements ? '1' : '0'
+      if (!elements) return
+      if (!animate) tabList.classList.remove('is-ready')
+      thumb.style.setProperty('--thumb-x', `${elements.root.offsetLeft}px`)
+      thumb.style.setProperty('--thumb-width', `${elements.root.offsetWidth}px`)
+      // The thumb lands in place first, and only glides after that.
+      if (!tabList.classList.contains('is-ready')) {
+        thumb.getBoundingClientRect()
+        requestAnimationFrame(() => tabList.classList.add('is-ready'))
+      }
+    }
+    window.addEventListener('resize', () => placeThumb({ animate: false }))
+
+    // Arrow keys move between tabs like other tab lists; Delete closes one.
+    // Both start from the focused tab, not the last state from the main
+    // process, so held or quick keys never act on a stale tab.
+    let refocusTabs = false
+    const focusedTabId = () => {
+      for (const [id, elements] of tabElements) if (elements.root.contains(document.activeElement)) return id
+      return state.activeId
+    }
+    tabList.addEventListener('keydown', (event) => {
+      const ids = state.tabs.map((tab) => tab.id)
+      const focusedId = focusedTabId()
+      const index = ids.indexOf(focusedId)
+      const target = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: ids.length - 1 }[event.key]
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault()
+        // Focus moves to whichever tab takes its place once the list updates.
+        refocusTabs = true
+        window.lit.closeTab(focusedId, false)
+      } else if (target !== undefined) {
+        event.preventDefault()
+        const id = ids[(target + ids.length) % ids.length]
+        window.lit.activateTab(id, false)
+        tabElements.get(id)?.select.focus()
+      }
+    })
+
+    document.getElementById('new-tab').addEventListener('click', () => window.lit.newTab())
 
     bar.addEventListener('submit', (event) => {
       event.preventDefault()
       if (!address.value.trim()) return
       document.body.classList.remove('home')
+      // What was typed stays until the page's real address arrives.
+      editing = false
       window.lit.navigate(address.value)
       address.blur()
     })
 
-    // Escape puts back the current page's address.
+    // Escape, or leaving the field unsent, puts back the current address.
+    address.addEventListener('input', () => { editing = true })
     address.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') { address.value = currentUrl; address.select() }
+      if (event.key === 'Escape') { editing = false; address.value = currentUrl(); address.select() }
+    })
+    address.addEventListener('blur', () => {
+      if (editing) { editing = false; address.value = currentUrl() }
     })
     address.addEventListener('focus', () => address.select())
 
-    window.lit.onUrl((url) => {
-      currentUrl = url
-      if (document.activeElement !== address) address.value = url
-    })
+    window.lit.onTabs(render)
+    window.lit.onFocusAddress(() => { address.focus(); address.select() })
   </script>
 </body>
 </html>
