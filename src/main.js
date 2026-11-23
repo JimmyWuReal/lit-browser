@@ -34,25 +34,25 @@ let zoomFile
 let siteZooms = new Map()
 const zoomFor = (url) => siteZooms.get(zoom.siteOf(url)) ?? settings.defaultZoom
 
-function saveSiteZooms(next) {
+// Zooms every tab on `url`'s site, in every window, and remembers it;
+// zooming back to the default forgets the site. A step past the last zoom,
+// or a reset at the default, changes nothing.
+function zoomSite(url, factor) {
+  const site = zoom.siteOf(url)
+  if (!site) return
+  const forget = zoom.same(factor, settings.defaultZoom)
+  const saved = siteZooms.get(site)
+  if (forget ? saved === undefined : saved !== undefined && zoom.same(saved, factor)) return
+  const next = new Map(siteZooms)
+  if (forget) next.delete(site)
+  else next.set(site, factor)
   siteZooms = next
   try {
     zoom.save(zoomFile, siteZooms)
   } catch {
-    // Unsaved, the zooms still hold until Lit quits.
+    // Unsaved, the zoom still holds until Lit quits.
   }
-}
-
-// Zooms every tab on `url`'s site, in every window, and remembers it;
-// zooming back to the default forgets the site.
-function zoomSite(url, factor) {
-  const site = zoom.siteOf(url)
-  if (!site) return
-  const next = new Map(siteZooms)
-  if (zoom.same(factor, settings.defaultZoom)) next.delete(site)
-  else next.set(site, factor)
-  saveSiteZooms(next)
-  for (const controls of openWindows) controls.applyZoom()
+  for (const controls of openWindows) controls.applyZoom(site)
 }
 
 
@@ -163,6 +163,9 @@ function createWindow() {
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
+    // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
+    // by URL, would also zoom Lit's toolbar when a tab shows its file.
+    page.setZoomMode('isolated')
     const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents), zoom: settings.defaultZoom }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
@@ -335,10 +338,11 @@ function createWindow() {
     // Zoom acts on the active tab's page, once it has an address.
     zoomBy: (direction) => { const tab = active(); if (tab?.started) zoomBy(tab, direction) },
     resetZoom: () => { const tab = active(); if (tab?.started) resetZoom(tab) },
-    applyZoom() {
+    // Every tab's zoom again, or only those on `site`.
+    applyZoom(site) {
       for (const tab of tabs) {
         const url = urlOf(tab)
-        if (url) setZoom(tab, zoomFor(url))
+        if (url && (!site || zoom.siteOf(url) === site)) setZoom(tab, zoomFor(url))
       }
       sync()
     },
