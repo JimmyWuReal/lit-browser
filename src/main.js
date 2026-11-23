@@ -27,9 +27,11 @@ let nextTabId = 1
 let nextWindowKey = 1
 
 // Recently closed tabs and windows, newest last, for Reopen Closed Tab.
+// Every close counts, so it always undoes the latest one; a blank tab has
+// a null history and comes back blank.
 // A tab: { windowKey, index, history }, back in its window if that is open.
-// A window: { key, tabs: [history or null], activeIndex, size }, null for a
-// blank tab, so tab order and the active tab come back as they were.
+// A window: { key, tabs: [history], activeIndex, size }, so tab order and
+// the active tab come back as they were.
 // A history is { entries, index } from navigationHistory, so back and
 // forward come back too. Kept only while Lit runs.
 const closed = []
@@ -282,7 +284,6 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     const nextId = afterClose(ids(), activeId, tab.id)
     const focus = tab.closeFocus ?? true
     const index = tabs.indexOf(tab)
-    // Tabs that never loaded anything are not worth reopening.
     const history = tab.started ? saveHistory(tab) : null
     tabs.splice(index, 1)
     if (win.isDestroyed()) return
@@ -291,7 +292,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // unless Settings says to keep it open with a new tab. Then the window
     // is what reopens.
     const closesWindow = nextId === null && settings.closeWindowWithLastTab
-    if (history) rememberClosed(closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
+    rememberClosed(closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
     if (nextId === null) return closesWindow ? win.close() : newTab()
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
@@ -384,7 +385,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // reopened whole. A window closed by its last tab was remembered in removeTab.
   win.on('close', () => {
     const histories = tabs.map((tab) => (tab.started ? saveHistory(tab) : null))
-    if (!histories.some(Boolean)) return
+    if (!histories.length) return
     rememberClosed(closedWindow(histories, Math.max(tabs.indexOf(active()), 0)))
   })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
