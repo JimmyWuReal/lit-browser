@@ -463,7 +463,7 @@
           recorder?.stop()
           recording = true
           recorder = { stop, pressed: (accelerator) => { stop(); save(setting.key, accelerator) } }
-          settings.record(true)
+          settings.record(true, layout)
           draw()
         })
         keys.addEventListener('blur', stop)
@@ -473,6 +473,12 @@
     }
     // The shortcut control waiting for keys, if any.
     let recorder = null
+    // The keyboard layout, so main can name keys that ⌥ or ⇧ change.
+    // Read again on each open, in case the layout changed.
+    let layout = {}
+    const readLayout = () => navigator.keyboard?.getLayoutMap()
+      .then((map) => { layout = Object.fromEntries(map) })
+      .catch(() => {})
     settings.onShortcutPressed(({ cancel, accelerator }) => {
       if (!recorder) return
       if (cancel) recorder.stop()
@@ -531,6 +537,7 @@
     // Each open replays the popup's keyframes and shows the latest values.
     function open(next) {
       recorder?.stop()
+      readLayout()
       state = next
       if (!sectionId) build()
       else redraw()

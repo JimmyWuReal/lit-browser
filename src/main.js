@@ -71,6 +71,8 @@ function createWindow() {
   let settingsView = null
   let settingsOpen = false
   let recording = false
+  // The keyboard layout's code -> character map, sent by the popup.
+  let keyboardLayout = {}
 
   // Everything the toolbar draws. Sent whenever any of it changes.
   function sync() {
@@ -237,7 +239,7 @@ function createWindow() {
         if (input.key === 'Escape') settingsView.webContents.send('shortcut-pressed', { cancel: true })
         else if (plain && (input.code === 'Backspace' || input.code === 'Delete')) settingsView.webContents.send('shortcut-pressed', { accelerator: '' })
         else {
-          const accelerator = shortcuts.fromInput(input)
+          const accelerator = shortcuts.fromInput(input, keyboardLayout)
           if (accelerator) settingsView.webContents.send('shortcut-pressed', { accelerator })
         }
       })
@@ -275,7 +277,10 @@ function createWindow() {
     openSettings,
     closeSettings,
     settingsOpen: () => settingsOpen,
-    setRecording: (on) => { recording = on },
+    setRecording: (on, keys) => {
+      recording = on
+      keyboardLayout = on && keys && typeof keys === 'object' ? keys : {}
+    },
     settingsChanged() {
       sendShortcuts()
       if (settingsView) settingsView.webContents.send('settings-changed', settingsState())
@@ -418,7 +423,7 @@ ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
   applySettings()
   return settingsState()
 }))
-ipcMain.on('settings-record', fromSettings((c, on) => c.setRecording(on === true)))
+ipcMain.on('settings-record', fromSettings((c, on, keys) => c.setRecording(on === true, keys)))
 ipcMain.on('settings-close', fromSettings((c) => c.closeSettings()))
 
 app.whenReady().then(() => {

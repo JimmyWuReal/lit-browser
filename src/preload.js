@@ -24,7 +24,8 @@ contextBridge.exposeInMainWorld('lit', {
     close: () => ipcRenderer.send('settings-close'),
     // While on, key presses come back through onShortcutPressed as
     // { accelerator } ('' clears) or { cancel: true }, not to the menu.
-    record: (on) => ipcRenderer.send('settings-record', on),
+    // `layout` is the keyboard's { code: character } map.
+    record: (on, layout) => ipcRenderer.send('settings-record', on, layout),
     onShortcutPressed: (callback) => on('shortcut-pressed', callback),
     onOpen: (callback) => on('settings-open', callback),
     onChanged: (callback) => on('settings-changed', callback),

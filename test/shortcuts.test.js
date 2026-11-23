@@ -18,8 +18,13 @@ test('records the typed letter, not its position, on other layouts', () => {
   assert.equal(fromInput({ code: 'KeyQ', key: 'A', meta: true, shift: true }), 'Shift+CmdOrCtrl+A')
   // ⇧ changes punctuation, so the position names the key.
   assert.equal(fromInput({ code: 'BracketRight', key: '}', meta: true, shift: true }), 'Shift+CmdOrCtrl+]')
-  // ⌥ changes letters on macOS (⌥O types ø).
+  // ⌥ changes letters on macOS (⌥O types ø); the layout names the key.
   assert.equal(fromInput({ code: 'KeyO', key: 'ø', meta: true, alt: true }), 'Alt+CmdOrCtrl+O')
+  assert.equal(fromInput({ code: 'KeyQ', key: 'æ', meta: true, alt: true }, { KeyQ: 'a' }), 'Alt+CmdOrCtrl+A')
+  // A base character no accelerator can name is kept, so it gets refused.
+  const dollar = fromInput({ code: 'BracketRight', key: '£', meta: true, shift: true }, { BracketRight: '$' })
+  assert.equal(dollar, 'Shift+CmdOrCtrl+$')
+  assert.equal(problem(dollar), 'That key can’t be used in a shortcut.')
 })
 
 test('ignores presses of modifiers alone', () => {
@@ -32,12 +37,14 @@ test('accepts shortcuts with ⌘, ⌃ or ⌥, and F-keys alone', () => {
   assert.equal(problem('F5'), null)
   assert.equal(problem('Shift+T'), 'Add ⌘, ⌃ or ⌥ to the key.')
   assert.equal(problem('CmdOrCtrl+1'), '⌘1 is used by Select Tab 1.')
+  assert.equal(problem('Alt+Shift+CmdOrCtrl+V'), '⌥⇧⌘V is used by Paste and Match Style.')
 })
 
 test('rejects anything not canonical', () => {
-  assert.equal(problem('CmdOrCtrl+Shift+W'), 'Not a shortcut.')
-  assert.equal(problem('CmdOrCtrl+Nope'), 'Not a shortcut.')
-  assert.equal(problem(42), 'Not a shortcut.')
+  const refused = 'That key can’t be used in a shortcut.'
+  assert.equal(problem('CmdOrCtrl+Shift+W'), refused)
+  assert.equal(problem('CmdOrCtrl+Nope'), refused)
+  assert.equal(problem(42), refused)
 })
 
 test('labels shortcuts the way macOS menus do', () => {
