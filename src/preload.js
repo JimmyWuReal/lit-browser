@@ -10,10 +10,13 @@ contextBridge.exposeInMainWorld('lit', {
   // `focus: false` keeps keyboard focus in the toolbar.
   closeTab: (id, focus = true) => ipcRenderer.send('close-tab', id, focus),
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started, find }] }
+  // { activeId, tabs: [{ id, title, url, favicon, loading, started, find, zoom }] },
+  // `zoom` being '125%', or '' at the default zoom.
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   openSettings: () => ipcRenderer.send('open-settings'),
+  // Puts the active page back at the default zoom.
+  resetZoom: () => ipcRenderer.send('reset-zoom'),
   // Find in page, on the tab the toolbar shows (main ignores a tab that is
   // no longer active). Its state comes with onTabs as tab.find:
   // { text, active, matches } or null while closed.

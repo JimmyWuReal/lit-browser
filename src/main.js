@@ -13,6 +13,7 @@ const settingsStore = require('./settings')
 const historyStore = require('./history')
 const shortcuts = require('./shortcuts')
 const { uniquePath } = require('./downloads')
+const zoom = require('./zoom')
 const findState = require('./find')
 const { pageMenu, tabMenu } = require('./menus')
 
@@ -47,6 +48,33 @@ const closed = []
 // Settings are read once at launch and saved on every change.
 let settingsFile
 let settings = settingsStore.clean()
+
+// Each site's zoom, when it differs from the default (see src/zoom.js).
+// Read at launch and saved whenever a site's zoom changes.
+let zoomFile
+let siteZooms = new Map()
+const zoomFor = (url) => siteZooms.get(zoom.siteOf(url)) ?? settings.defaultZoom
+
+// Zooms every tab on `url`'s site, in every window, and remembers it;
+// zooming back to the default forgets the site. A step past the last zoom,
+// or a reset at the default, changes nothing.
+function zoomSite(url, factor) {
+  const site = zoom.siteOf(url)
+  if (!site) return
+  const forget = zoom.same(factor, settings.defaultZoom)
+  const saved = siteZooms.get(site)
+  if (forget ? saved === undefined : saved !== undefined && zoom.same(saved, factor)) return
+  const next = new Map(siteZooms)
+  if (forget) next.delete(site)
+  else next.set(site, factor)
+  siteZooms = next
+  try {
+    zoom.save(zoomFile, siteZooms)
+  } catch {
+    // Unsaved, the zoom still holds until Lit quits.
+  }
+  for (const controls of openWindows) controls.applyZoom(site)
+}
 
 // Pages visited (src/history.js), newest first. Loaded at launch, and saved
 // a moment after a visit, so a burst of navigations writes once; removing
@@ -172,7 +200,7 @@ function applySettings() {
     forgetClosed()
     for (const controls of openWindows) controls.forgetTabHistories()
   } else pruneClosed()
-  for (const controls of openWindows) controls.settingsChanged()
+  for (const controls of openWindows) { controls.applyZoom(); controls.settingsChanged() }
 }
 
 // `key`, `tabs`, `activeIndex`, `bounds`, `maximized` and `fullScreen` reopen
@@ -214,8 +242,13 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     win.setTitle(current?.title || (current?.started ? current.url : '') || 'New Tab')
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, find }) => ({
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page }) => ({
         id, title, url, favicon, loading, started,
+        // The address bar shows the zoom, to reset it, when it is not the
+        // default or the site has its own (which can match a later default).
+        zoom: started && (!zoom.same(factor, settings.defaultZoom) || siteZooms.has(zoom.siteOf(page.isDestroyed() ? '' : page.getURL())))
+          ? zoom.percent(factor)
+          : '',
         find: find && { text: find.text, active: find.active, matches: find.matches },
       })),
     })
@@ -265,7 +298,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null }
+    // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
+    // by URL, would also zoom Lit's toolbar when a tab shows its file.
+    page.setZoomMode('isolated')
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: settings.defaultZoom }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -278,7 +314,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // The address being opened, before it commits: a tab duplicated or
     // closed before its first page commits gets it.
     page.on('did-start-navigation', ({ url, isMainFrame }) => { if (isMainFrame) tab.pendingUrl = url })
-    // A new page has no title yet; a restored one keeps its entry's title,
+    // Each new page opens at its site's zoom. A new page has no title yet; a restored one keeps its entry's title,
     // as Chromium does not announce a title it already had.
     page.on('did-navigate', (_event, url) => {
       const history = page.navigationHistory
@@ -286,6 +322,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
       tab.favicon = null
       tab.find = findState.reset(tab.find)
+      setZoom(tab, zoomFor(url))
       tab.recorded = recordVisit(url, tab.title)
       sync()
     })
@@ -374,6 +411,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       const retry = url || current.url
       page.navigationHistory.restore(history).catch(() => { if (retry && !page.isDestroyed()) page.loadURL(retry).catch(() => {}) })
     } else if (url) page.loadURL(url, referrer ? { httpReferrer: referrer } : {}).catch(() => {})
+    // A popup can stay on the about:blank its opener writes into, without
+    // ever firing did-navigate, so it gets its zoom here.
+    if (webContents) setZoom(tab, zoomFor(page.getURL() || 'about:blank'))
     if (background) sync()
     else activate(tab.id)
     return tab
@@ -450,6 +490,18 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
   }
+
+  // Zoom is per site, so changing it goes through zoomSite, which comes
+  // back here (applyZoom) for every tab on that site.
+  function setZoom(tab, factor) {
+    tab.zoom = factor
+    if (!tab.page.isDestroyed()) tab.page.setZoomFactor(factor)
+  }
+  // The page's own URL, not tab.url: a popup can stay on the about:blank its
+  // opener writes into, which never fires did-navigate.
+  const urlOf = (tab) => (tab.page.isDestroyed() ? '' : tab.page.getURL())
+  const zoomBy = (tab, direction) => { const url = urlOf(tab); if (url) zoomSite(url, zoom.step(tab.zoom, direction)) }
+  const resetZoom = (tab) => { const url = urlOf(tab); if (url) zoomSite(url, settings.defaultZoom) }
 
   function navigate(input) {
     const tab = active()
@@ -713,6 +765,17 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     byNumber: (number) => activate(byNumber(ids(), number)),
     // The active page, for reload, back, forward and its developer tools.
     page: () => (active()?.started && !active().page.isDestroyed() ? active().page : null),
+    // Zoom acts on the active tab's page, once it has an address.
+    zoomBy: (direction) => { const tab = active(); if (tab?.started) zoomBy(tab, direction) },
+    resetZoom: () => { const tab = active(); if (tab?.started) resetZoom(tab) },
+    // Every tab's zoom again, or only those on `site`.
+    applyZoom(site) {
+      for (const tab of tabs) {
+        const url = urlOf(tab)
+        if (url && (!site || zoom.siteOf(url) === site)) setZoom(tab, zoomFor(url))
+      }
+      sync()
+    },
     isActive: (id) => id === activeId,
     openFind,
     findText,
@@ -877,6 +940,16 @@ function buildMenu() {
         { label: 'Back', accelerator: key('back'), click: pageAction((page) => page.navigationHistory.goBack()) },
         { label: 'Forward', accelerator: key('forward'), click: pageAction((page) => page.navigationHistory.goForward()) },
         { type: 'separator' },
+        // Back to the default zoom from Settings, which may not be 100%.
+        { label: 'Reset Zoom', accelerator: key('resetZoom'), click: inFocused((c) => c.resetZoom()) },
+        { label: 'Zoom In', accelerator: key('zoomIn'), click: inFocused((c) => c.zoomBy(1)) },
+        { label: 'Zoom Out', accelerator: key('zoomOut'), click: inFocused((c) => c.zoomBy(-1)) },
+        // ⌘+ (⇧⌘= on most layouts) as well as ⌘=, as in other browsers,
+        // while Zoom In is on ⌘= and no command has ⇧⌘= itself.
+        ...(key('zoomIn') === 'CmdOrCtrl+=' && !Object.values(settings).includes('Shift+CmdOrCtrl+=')
+          ? [hidden('Zoom In', 'CmdOrCtrl+Plus', inFocused((c) => c.zoomBy(1)))]
+          : []),
+        { type: 'separator' },
         { label: 'Developer Tools', accelerator: key('devTools'), click: pageAction((page) => page.toggleDevTools()) },
         { role: 'togglefullscreen' },
       ],
@@ -924,6 +997,7 @@ ipcMain.on('find-again', fromToolbar((c, tabId, forward) => c.isActive(tabId) &&
 ipcMain.on('close-find', fromToolbar((c, tabId) => c.isActive(tabId) && c.closeFind()))
 ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
+ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
 
 // Popup messages, answered only for the popup `name`.
 const fromPopup = (name, handler) => (event, ...args) => {
@@ -970,6 +1044,8 @@ ipcMain.on('history-close', fromHistory((c) => c.closePopup()))
 app.whenReady().then(() => {
   settingsFile = path.join(app.getPath('userData'), 'settings.json')
   settings = settingsStore.load(settingsFile)
+  zoomFile = path.join(app.getPath('userData'), 'zoom.json')
+  siteZooms = zoom.load(zoomFile)
   historyFile = path.join(app.getPath('userData'), 'history.json')
   visited = historyStore.load(historyFile)
   applyDoNotTrack()

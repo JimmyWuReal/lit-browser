@@ -40,6 +40,9 @@ test('accepts shortcuts with ⌘, ⌃ or ⌥, and F-keys alone', () => {
   assert.equal(problem('Shift+T'), 'Add ⌘, ⌃ or ⌥ to the key.')
   assert.equal(problem('CmdOrCtrl+1'), '⌘1 is used by Select Tab 1.')
   assert.equal(problem('Alt+Shift+CmdOrCtrl+V'), '⌥⇧⌘V is used by Paste and Match Style.')
+  // ⌘+ is typed as ⇧⌘= and records as such, free for any command.
+  assert.equal(fromInput({ code: 'Equal', key: '+', shift: true, meta: true }, { Equal: '=' }), 'Shift+CmdOrCtrl+=')
+  assert.equal(problem('Shift+CmdOrCtrl+='), null)
 })
 
 test('rejects anything not canonical', () => {
