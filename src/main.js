@@ -169,7 +169,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, pendingUrl: '' }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -177,6 +177,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (settingsView) win.contentView.addChildView(settingsView)
     layout()
 
+    page.on('did-start-navigation', ({ url, isMainFrame, isSameDocument }) => {
+      if (isMainFrame && !isSameDocument) tab.pendingUrl = url
+    })
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
     page.on('did-stop-loading', () => { tab.loading = false; sync() })
     // A new page has no title yet; a reopened one keeps its entry's title,
@@ -249,10 +252,14 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // Copies the tab's back/forward list onto it, so it can still be reopened
   // after its page is gone (a popup calling window.close()). Read once more
   // at close for the freshest scroll positions and form values.
+  // Until its first page commits (tab.url is set), a tab's list holds only
+  // Chromium's initial blank entry; then the address it was loading stands in.
   function saveHistory(tab) {
-    if (tab.page.isDestroyed()) return tab.history
-    const entries = tab.page.navigationHistory.getAllEntries()
-    if (entries.length) tab.history = { entries, index: tab.page.navigationHistory.getActiveIndex() }
+    if (!tab.page.isDestroyed() && tab.url) {
+      const entries = tab.page.navigationHistory.getAllEntries()
+      if (entries.length) tab.history = { entries, index: tab.page.navigationHistory.getActiveIndex() }
+    }
+    if (!tab.history && tab.pendingUrl) return { entries: [{ url: tab.pendingUrl, title: '' }], index: 0 }
     return tab.history
   }
 
