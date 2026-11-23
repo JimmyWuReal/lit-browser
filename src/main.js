@@ -2,14 +2,15 @@
 // the window's own page) and one Chromium WebContentsView per tab below it.
 // Only the active tab's view is visible. The Settings popup is one more
 // view, transparent and over everything, shown only while open.
-const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, session } = require('electron')
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, session } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
-const { toUrl } = require('./url')
+const { toUrl, searchUrl, engineOf } = require('./url')
 const { afterClose, step, byNumber } = require('./tabs')
 const settingsStore = require('./settings')
 const shortcuts = require('./shortcuts')
 const { uniquePath } = require('./downloads')
+const { pageMenu, tabMenu } = require('./menus')
 
 // Keep in sync with .strip and .bar heights in index.html.
 const STRIP_HEIGHT = 38
@@ -122,12 +123,15 @@ function createWindow() {
 
   // `webContents` is passed when a page opens the tab itself, so the new
   // page keeps its link back to the opener (sign-in popups need it).
-  function addTab({ url, webContents, background = false, index = tabs.length } = {}) {
+  // `history` ({ entries, index }) restores another tab's back/forward list;
+  // `url` is then loaded only if that fails. `referrer` ({ url, policy })
+  // is sent with `url`, as a link opened from a page sends it.
+  function addTab({ url, webContents, history, referrer, background = false, index = tabs.length } = {}) {
     const view = new WebContentsView(webContents ? { webContents } : {})
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents) }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history) }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -137,6 +141,8 @@ function createWindow() {
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
     page.on('did-stop-loading', () => { tab.loading = false; sync() })
+    // The address being opened, before it commits (for duplicating a tab).
+    page.on('did-start-navigation', ({ url, isMainFrame }) => { if (isMainFrame) tab.pendingUrl = url })
     page.on('did-navigate', (_event, url) => { tab.url = url; tab.title = ''; tab.favicon = null; sync() })
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => { if (isMainFrame) { tab.url = url; sync() } })
     page.on('page-title-updated', (_event, title) => { tab.title = title; sync() })
@@ -173,7 +179,10 @@ function createWindow() {
       }).page,
     }))
 
-    if (url) page.loadURL(url).catch(() => {})
+    page.on('context-menu', (_event, params) => showPageMenu(page, params))
+
+    if (history) page.navigationHistory.restore(history).catch(() => { if (url && !page.isDestroyed()) page.loadURL(url).catch(() => {}) })
+    else if (url) page.loadURL(url, referrer ? { httpReferrer: referrer } : {}).catch(() => {})
     if (background) sync()
     else activate(tab.id)
     return tab
@@ -226,6 +235,114 @@ function createWindow() {
     tab.page.loadURL(toUrl(input, settings.searchEngine)).catch(() => {})
   }
 
+  // Pops up a right-click menu of items from src/menus.js; `run` gets
+  // each chosen item's command and arg. Shortcuts are only shown, since the
+  // application menu already answers them.
+  function popup(items, run) {
+    if (!items.length || win.isDestroyed()) return
+    Menu.buildFromTemplate(items.map((item) => (item.type === 'separator' ? item : {
+      label: item.label,
+      enabled: item.enabled ?? true,
+      accelerator: item.accelerator || undefined,
+      registerAccelerator: false,
+      click: () => item.command && run(item.command, item.arg),
+    }))).popup({ window: win })
+  }
+
+  // The right-click menu for a page, or (isPage false) for a text field in
+  // the toolbar or Settings, which only gets the editing items.
+  function showPageMenu(contents, params, isPage = true) {
+    const items = pageMenu(params, {
+      isPage,
+      canGoBack: contents.navigationHistory.canGoBack(),
+      canGoForward: contents.navigationHistory.canGoForward(),
+      engineName: engineOf(settings.searchEngine).name,
+      askWhereToSave: settings.downloadLocation !== 'downloads',
+      keys: { reload: settings['shortcuts.reload'], back: settings['shortcuts.back'], forward: settings['shortcuts.forward'] },
+      inSubframe: Boolean(params.frame && params.frame !== contents.mainFrame),
+    })
+    popup(items, (command, arg) => {
+      if (contents.isDestroyed()) return
+      // New tabs go right after the page's tab (or the active one).
+      const from = tabs.find((tab) => tab.page === contents) || active()
+      const index = from ? tabs.indexOf(from) + 1 : tabs.length
+      switch (command) {
+        // Like ⌘-click: in the background unless Settings says to switch.
+        // The page the link is on is the referrer, under that frame's policy.
+        case 'openInNewTab': return addTab({
+          url: arg,
+          referrer: { url: params.frameURL || params.pageURL, policy: params.referrerPolicy?.policy || 'default' },
+          index,
+          background: !settings.switchToNewTabs,
+        })
+        case 'search': return addTab({ url: searchUrl(arg, settings.searchEngine), index })
+        // Through will-download, so the Downloads setting applies.
+        case 'download': return contents.downloadURL(arg)
+        case 'copyText': return clipboard.writeText(arg)
+        case 'copyImage': return contents.copyImageAt(params.x, params.y)
+        case 'replaceMisspelling': return contents.replaceMisspelling(arg)
+        case 'addToDictionary': return contents.session.addWordToSpellCheckerDictionary(arg)
+        case 'back': return contents.navigationHistory.goBack()
+        case 'forward': return contents.navigationHistory.goForward()
+        case 'reload': return contents.reload()
+        case 'inspect': return contents.inspectElement(params.x, params.y)
+        // undo, redo, cut, copy, paste, selectAll
+        default: return contents[command]()
+      }
+    })
+  }
+
+  // A copy of the tab right after it, with its back/forward history. A
+  // tab whose first page has not committed yet has no history, so its copy
+  // loads the address being opened, as does a copy whose history fails to
+  // restore. A tab on the search box copies as blank.
+  function duplicateTab(id) {
+    const tab = find(id)
+    if (!tab) return
+    const index = tabs.indexOf(tab) + 1
+    const destroyed = tab.page.isDestroyed()
+    const url = (!destroyed && tab.page.getURL()) || tab.url || tab.pendingUrl || undefined
+    const history = destroyed ? null : tab.page.navigationHistory
+    const entries = history ? history.getAllEntries() : []
+    if (entries.length) return addTab({ history: { entries, index: history.getActiveIndex() }, url, index })
+    addTab({ url, index })
+  }
+
+  // The kept tab comes to the front first, so closing the others never
+  // shows one of them on the way.
+  function closeOtherTabs(id) {
+    const tab = find(id)
+    if (!tab) return
+    activate(id)
+    for (const other of tabs.filter((each) => each !== tab)) closeTab(other.id)
+  }
+
+  function closeTabsToRight(id) {
+    const index = tabs.indexOf(find(id))
+    if (index === -1) return
+    if (index < tabs.indexOf(active())) activate(id)
+    for (const other of tabs.slice(index + 1)) closeTab(other.id)
+  }
+
+  // The right-click menu for a tab in the strip. Tabs are looked up again
+  // on click, as they may have changed while the menu was open.
+  function showTabMenu(id) {
+    const tab = find(id)
+    if (!tab) return
+    const keys = Object.fromEntries(['reload', 'duplicateTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
+      .map((command) => [command, settings[`shortcuts.${command}`]]))
+    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, keys }), (command) => {
+      if (!find(id)) return
+      switch (command) {
+        case 'reload': return tab.page.isDestroyed() ? undefined : tab.page.reload()
+        case 'duplicate': return duplicateTab(id)
+        case 'close': return closeTab(id)
+        case 'closeOthers': return closeOtherTabs(id)
+        case 'closeToRight': return closeTabsToRight(id)
+      }
+    })
+  }
+
   // The Settings popup (src/settings.html): made on first use, then hidden
   // and shown. While a shortcut is being recorded, key presses go to it
   // instead of the menu, so ⌘T records ⌘T rather than opening a tab.
@@ -245,6 +362,7 @@ function createWindow() {
           if (accelerator) settingsView.webContents.send('shortcut-pressed', { accelerator })
         }
       })
+      settingsView.webContents.on('context-menu', (_event, params) => showPageMenu(settingsView.webContents, params, false))
       settingsView.webContents.loadFile(path.join(__dirname, 'settings.html'))
     }
     if (!settingsOpen) toolbarHadFocus = win.webContents.isFocused()
@@ -282,6 +400,10 @@ function createWindow() {
     page: () => (active()?.started && !active().page.isDestroyed() ? active().page : null),
     openSettings,
     closeSettings,
+    showTabMenu,
+    duplicateTab: () => duplicateTab(activeId),
+    closeOtherTabs: () => closeOtherTabs(activeId),
+    closeTabsToRight: () => closeTabsToRight(activeId),
     settingsOpen: () => settingsOpen,
     setRecording: (on, keys) => {
       recording = on
@@ -296,6 +418,7 @@ function createWindow() {
   openWindows.add(controls)
 
   win.on('resize', layout)
+  win.webContents.on('context-menu', (_event, params) => showPageMenu(win.webContents, params, false))
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
   win.webContents.on('did-finish-load', () => { sync(); sendShortcuts() })
   win.on('closed', () => {
@@ -359,11 +482,14 @@ function buildMenu() {
         { label: 'New Tab', accelerator: key('newTab'), click: (_item, win) => { const c = controlsOf(win); if (c) c.newTab(); else createWindow() } },
         { label: 'New Window', accelerator: key('newWindow'), click: () => createWindow() },
         { type: 'separator' },
+        { label: 'Duplicate Tab', accelerator: key('duplicateTab'), click: inFocused((c) => { c.closeSettings(); c.duplicateTab() }) },
         { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closeSettings(); c.focusAddress() }) },
         { type: 'separator' },
         // With Settings open, Close Tab closes Settings instead.
         { label: 'Close Tab', accelerator: key('closeTab'), click: inFocused((c) => (c.settingsOpen() ? c.closeSettings() : c.closeTab())) },
         { label: 'Close Window', accelerator: key('closeWindow'), click: inFocused((c) => c.win.close()) },
+        { label: 'Close Other Tabs', accelerator: key('closeOtherTabs'), click: inFocused((c) => { c.closeSettings(); c.closeOtherTabs() }) },
+        { label: 'Close Tabs to the Right', accelerator: key('closeTabsToRight'), click: inFocused((c) => { c.closeSettings(); c.closeTabsToRight() }) },
       ],
     },
     { role: 'editMenu' },
@@ -408,6 +534,7 @@ ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
 ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
 ipcMain.on('open-settings', fromToolbar((c) => c.openSettings()))
+ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
 
 // Settings messages, answered only for a Settings popup.
 const fromSettings = (handler) => (event, ...args) => {
