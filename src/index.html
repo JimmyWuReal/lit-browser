@@ -317,6 +317,7 @@
         drawIcon(elements, tab)
       })
       placeThumb()
+      if (refocusTabs) { refocusTabs = false; tabElements.get(state.activeId)?.select.focus() }
       if (switched) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 
       const tab = activeTab()
@@ -344,13 +345,23 @@
     window.addEventListener('resize', () => placeThumb({ animate: false }))
 
     // Arrow keys move between tabs like other tab lists; Delete closes one.
+    // Both start from the focused tab, not the last state from the main
+    // process, so held or quick keys never act on a stale tab.
+    let refocusTabs = false
+    const focusedTabId = () => {
+      for (const [id, elements] of tabElements) if (elements.root.contains(document.activeElement)) return id
+      return state.activeId
+    }
     tabList.addEventListener('keydown', (event) => {
       const ids = state.tabs.map((tab) => tab.id)
-      const index = ids.indexOf(state.activeId)
+      const focusedId = focusedTabId()
+      const index = ids.indexOf(focusedId)
       const target = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: ids.length - 1 }[event.key]
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault()
-        window.lit.closeTab(state.activeId)
+        // Focus moves to whichever tab takes its place once the list updates.
+        refocusTabs = true
+        window.lit.closeTab(focusedId, false)
       } else if (target !== undefined) {
         event.preventDefault()
         const id = ids[(target + ids.length) % ids.length]

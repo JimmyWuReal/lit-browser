@@ -61,7 +61,7 @@ function createWindow() {
   function show(tab, focus = true) {
     for (const other of tabs) other.view.setVisible(other === tab && tab.started)
     if (!focus) return
-    if (tab.started) tab.view.webContents.focus()
+    if (tab.started) tab.page.focus()
     else focusAddress()
   }
 
@@ -77,13 +77,15 @@ function createWindow() {
   // page keeps its link back to the opener (sign-in popups need it).
   function addTab({ url, webContents, background = false, index = tabs.length } = {}) {
     const view = new WebContentsView(webContents ? { webContents } : {})
-    const tab = { id: nextTabId++, view, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents) }
+    // `page` keeps the WebContents itself: once it is destroyed (a popup
+    // calling window.close()), Electron clears `view.webContents`.
+    const page = view.webContents
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents) }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
     layout()
 
-    const page = view.webContents
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
     page.on('did-stop-loading', () => { tab.loading = false; sync() })
     page.on('did-navigate', (_event, url) => { tab.url = url; tab.title = ''; tab.favicon = null; sync() })
@@ -95,13 +97,16 @@ function createWindow() {
 
     // Links and window.open become tabs right after the opener: Cmd-click
     // opens in the background, everything else comes to the front.
+    // The new tab outlives its opener, so closing the page a link came from
+    // keeps the link's tab.
     page.setWindowOpenHandler(({ disposition }) => ({
       action: 'allow',
+      outlivesOpener: true,
       createWindow: (options) => addTab({
         webContents: options.webContents,
         background: disposition === 'background-tab',
         index: tabs.indexOf(tab) + 1,
-      }).view.webContents,
+      }).page,
     }))
 
     if (url) page.loadURL(url).catch(() => {})
@@ -116,17 +121,17 @@ function createWindow() {
     sync()
   }
 
-  function closeTab(id) {
+  function closeTab(id, focus = true) {
     const tab = find(id)
     if (!tab) return
     const nextId = afterClose(ids(), activeId, id)
     tabs.splice(tabs.indexOf(tab), 1)
     if (!win.isDestroyed()) win.contentView.removeChildView(tab.view)
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
+    if (!tab.page.isDestroyed()) tab.page.close()
     if (win.isDestroyed()) return
     // Closing the last tab closes the window, as in Chrome and Safari.
     if (nextId === null) return win.close()
-    if (nextId !== activeId) activate(nextId)
+    if (nextId !== activeId) activate(nextId, focus)
     else sync()
   }
 
@@ -135,20 +140,20 @@ function createWindow() {
     if (!tab || !input.trim()) return
     tab.started = true
     show(tab)
-    tab.view.webContents.loadURL(toUrl(input)).catch(() => {})
+    tab.page.loadURL(toUrl(input)).catch(() => {})
   }
 
   const controls = {
     win,
     newTab: () => addTab(),
-    closeTab: (id = activeId) => closeTab(id),
+    closeTab: (id = activeId, focus = true) => closeTab(id, focus),
     activate,
     navigate,
     focusAddress,
     step: (delta) => activate(step(ids(), activeId, delta)),
     byNumber: (number) => activate(byNumber(ids(), number)),
     // The active page, for reload, back, forward and its developer tools.
-    page: () => (active()?.started ? active().view.webContents : null),
+    page: () => (active()?.started && !active().page.isDestroyed() ? active().page : null),
   }
   windowsByToolbar.set(win.webContents, controls)
 
@@ -157,7 +162,7 @@ function createWindow() {
   win.webContents.on('did-finish-load', sync)
   win.on('closed', () => {
     for (const tab of tabs.splice(0)) {
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
+      if (!tab.page.isDestroyed()) tab.page.close()
     }
   })
 
@@ -234,7 +239,7 @@ const fromToolbar = (handler) => (event, ...args) => {
 }
 ipcMain.on('navigate', fromToolbar((c, input) => typeof input === 'string' && c.navigate(input)))
 ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
-ipcMain.on('close-tab', fromToolbar((c, id) => c.closeTab(id)))
+ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
 
 app.whenReady().then(() => {
