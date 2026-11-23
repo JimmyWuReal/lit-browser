@@ -526,7 +526,11 @@
     findInput.addEventListener('compositionend', search)
     findInput.addEventListener('keydown', (event) => {
       if (event.isComposing || event.keyCode === 229) return
-      if (event.key === 'Enter') { event.preventDefault(); window.lit.findAgain(state.activeId, !event.shiftKey) }
+      // Only Enter and ⇧Enter; Enter with ⌘, ⌃ or ⌥ may be someone's shortcut.
+      if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault()
+        window.lit.findAgain(state.activeId, !event.shiftKey)
+      }
     })
     findBox.addEventListener('keydown', (event) => {
       if (event.isComposing || event.keyCode === 229) return

@@ -243,22 +243,24 @@ function createWindow() {
   }
 
   // Starts a new search for the tab's find text; results come back through
-  // found-in-page.
-  function search(tab) {
+  // found-in-page. A new search starts from the page's selection, which
+  // closing Find keeps, so reopening carries on from the last match.
+  function search(tab, forward = true) {
     if (tab.page.isDestroyed()) return
-    tab.find = { ...tab.find, requestId: tab.page.findInPage(tab.find.text, { findNext: true }) }
+    tab.find = { ...tab.find, requestId: tab.page.findInPage(tab.find.text, { forward, findNext: true }) }
   }
 
   // Find in page. ⌘F opens the active tab's find field in the toolbar (or
   // selects its text again); a tab on the search box has nothing to search.
-  // Reopening brings back the tab's last search and runs it again.
-  function openFind() {
+  // Reopening brings back the tab's last search and runs it again, in
+  // `forward`'s direction (⇧⌘G on a closed field searches backward).
+  function openFind(forward = true) {
     const tab = active()
     if (!tab?.started || tab.page.isDestroyed()) return
     closeSettings()
     if (!tab.find) {
       tab.find = findState.open(null, tab.lastFindText)
-      if (tab.find.text) search(tab)
+      if (tab.find.text) search(tab, forward)
     }
     sync()
     win.webContents.focus()
@@ -279,7 +281,7 @@ function createWindow() {
   // it opens the field instead. After a navigation it starts a new search.
   function findAgain(forward) {
     const tab = active()
-    if (!tab?.find?.text) return openFind()
+    if (!tab?.find?.text) return openFind(forward)
     if (tab.page.isDestroyed()) return
     const findNext = tab.find.requestId === null
     tab.find = { ...tab.find, requestId: tab.page.findInPage(tab.find.text, { forward, findNext }) }
@@ -459,7 +461,7 @@ function buildMenu() {
         {
           label: 'Find',
           submenu: [
-            { label: 'Find…', accelerator: key('find'), click: inFocused((c) => c.openFind()) },
+            { label: 'Find…', accelerator: key('find'), click: inFocused((c) => c.openFind(true)) },
             { label: 'Find Next', accelerator: key('findNext'), click: inFocused((c) => c.findAgain(true)) },
             { label: 'Find Previous', accelerator: key('findPrevious'), click: inFocused((c) => c.findAgain(false)) },
           ],
