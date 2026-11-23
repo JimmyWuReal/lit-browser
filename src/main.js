@@ -70,8 +70,11 @@ function setVisited(next, { now = false } = {}) {
   for (const controls of openWindows) controls.historyChanged()
 }
 
+// Whether the visit was recorded, so a title arriving later goes only to
+// a visit that was.
 function recordVisit(url, title) {
   if (settings.saveHistory) setVisited(historyStore.visit(visited, { url, title, time: Date.now() }))
+  return settings.saveHistory
 }
 
 // What the History popup draws.
@@ -248,20 +251,18 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       tab.url = url
       tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
       tab.favicon = null
-      saveHistory(tab)
-      recordVisit(url, tab.title)
+      tab.recorded = recordVisit(url, tab.title)
       sync()
     })
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => {
       if (!isMainFrame) return
       tab.url = url
-      saveHistory(tab)
-      recordVisit(url, tab.title)
+      tab.recorded = recordVisit(url, tab.title)
       sync()
     })
     page.on('page-title-updated', (_event, title) => {
       tab.title = title
-      if (settings.saveHistory) setVisited(historyStore.retitle(visited, tab.url, title))
+      if (settings.saveHistory && tab.recorded) setVisited(historyStore.retitle(visited, tab.url, title))
       sync()
     })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
@@ -327,9 +328,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   }
 
   // Copies the tab's back/forward list onto it, as it is now, for Reopen
-  // Closed Tab. Kept on each navigation, and read once more at close for
-  // the freshest scroll positions and form values. A page still loading
-  // is not part of it: a tab reopens as it was when closed.
+  // Closed Tab. Read when the tab or its window closes, so scroll positions
+  // and form values are fresh; a reopened tab starts with the list it was
+  // restored from. A page still loading is not part of it: a tab reopens
+  // as it was when closed.
   // Until its first page commits (tab.url is set), Chromium's list holds
   // only its initial blank entry, so it is not read; the address being
   // loaded stands in, if any.
