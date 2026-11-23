@@ -62,19 +62,18 @@ function pageMenu(params, context = {}) {
     ])
   }
 
-  // Images, videos and audio: opening, saving and copying the address need
-  // a web address (not a data: or blob: one, which another tab cannot
-  // open); copying an image needs only its drawn pixels.
+  // Images, videos and audio. Only a web address opens in a new tab (a
+  // data: or blob: one belongs to its page); any address can be saved,
+  // since the page itself downloads it, and copied. Copying an image needs
+  // only its drawn pixels.
   const media = { image: 'Image', video: 'Video', audio: 'Audio' }[params.mediaType]
   if (isPage && media) {
-    const web = isWeb(params.srcURL)
+    const src = params.srcURL || ''
     groups.push([
-      ...(web ? [
-        { label: `Open ${media} in New Tab`, command: 'openInNewTab', arg: params.srcURL },
-        { label: askWhereToSave ? `Save ${media} As…` : `Download ${media}`, command: 'download', arg: params.srcURL },
-      ] : []),
+      ...(isWeb(src) ? [{ label: `Open ${media} in New Tab`, command: 'openInNewTab', arg: src }] : []),
+      ...(src ? [{ label: askWhereToSave ? `Save ${media} As…` : `Download ${media}`, command: 'download', arg: src }] : []),
       ...(media === 'Image' && params.hasImageContents ? [{ label: 'Copy Image', command: 'copyImage' }] : []),
-      ...(web ? [{ label: `Copy ${media} Address`, command: 'copyText', arg: params.srcURL }] : []),
+      ...(src ? [{ label: `Copy ${media} Address`, command: 'copyText', arg: src }] : []),
     ])
   }
 
@@ -114,17 +113,18 @@ function pageMenu(params, context = {}) {
 
 // The menu for a right-click on a tab, the `index`th of `count`.
 // `started` is false for a tab still showing the search box. `keys`
-// ({ reload, closeTab }) are the current accelerators, shown as in Chrome.
+// ({ reload, duplicateTab, closeTab, closeOtherTabs, closeTabsToRight })
+// are the current accelerators, shown next to their items.
 function tabMenu({ index, count, started, keys = {} }) {
   return joinGroups([
     [
       { label: 'Reload', command: 'reload', enabled: Boolean(started), accelerator: keys.reload },
-      { label: 'Duplicate', command: 'duplicate' },
+      { label: 'Duplicate', command: 'duplicate', accelerator: keys.duplicateTab },
     ],
     [
       { label: 'Close Tab', command: 'close', accelerator: keys.closeTab },
-      { label: 'Close Other Tabs', command: 'closeOthers', enabled: count > 1 },
-      { label: 'Close Tabs to the Right', command: 'closeToRight', enabled: index < count - 1 },
+      { label: 'Close Other Tabs', command: 'closeOthers', enabled: count > 1, accelerator: keys.closeOtherTabs },
+      { label: 'Close Tabs to the Right', command: 'closeToRight', enabled: index < count - 1, accelerator: keys.closeTabsToRight },
     ],
   ])
 }

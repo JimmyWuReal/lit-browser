@@ -123,12 +123,13 @@ function createWindow() {
 
   // `webContents` is passed when a page opens the tab itself, so the new
   // page keeps its link back to the opener (sign-in popups need it).
-  function addTab({ url, webContents, background = false, index = tabs.length } = {}) {
+  // `history` ({ entries, index }) restores another tab's back/forward list.
+  function addTab({ url, webContents, history, background = false, index = tabs.length } = {}) {
     const view = new WebContentsView(webContents ? { webContents } : {})
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents) }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history) }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -176,7 +177,8 @@ function createWindow() {
 
     page.on('context-menu', (_event, params) => showPageMenu(page, params))
 
-    if (url) page.loadURL(url).catch(() => {})
+    if (history) page.navigationHistory.restore(history).catch(() => {})
+    else if (url) page.loadURL(url).catch(() => {})
     if (background) sync()
     else activate(tab.id)
     return tab
@@ -279,28 +281,51 @@ function createWindow() {
     })
   }
 
+  // A copy of the tab right after it, with its back/forward history. A
+  // tab whose first page has not committed yet has no history, so its copy
+  // loads the address being opened; a tab on the search box copies as blank.
+  function duplicateTab(id) {
+    const tab = find(id)
+    if (!tab) return
+    const index = tabs.indexOf(tab) + 1
+    if (tab.page.isDestroyed()) return addTab({ index })
+    const history = tab.page.navigationHistory
+    const entries = history.getAllEntries()
+    if (entries.length) return addTab({ history: { entries, index: history.getActiveIndex() }, index })
+    addTab({ url: tab.page.getURL() || tab.url || undefined, index })
+  }
+
+  // The kept tab comes to the front first, so closing the others never
+  // shows one of them on the way.
+  function closeOtherTabs(id) {
+    const tab = find(id)
+    if (!tab) return
+    activate(id)
+    for (const other of tabs.filter((each) => each !== tab)) closeTab(other.id)
+  }
+
+  function closeTabsToRight(id) {
+    const index = tabs.indexOf(find(id))
+    if (index === -1) return
+    if (index < tabs.indexOf(active())) activate(id)
+    for (const other of tabs.slice(index + 1)) closeTab(other.id)
+  }
+
   // The right-click menu for a tab in the strip. Tabs are looked up again
   // on click, as they may have changed while the menu was open.
   function showTabMenu(id) {
     const tab = find(id)
     if (!tab) return
-    const keys = { reload: settings['shortcuts.reload'], closeTab: settings['shortcuts.closeTab'] }
+    const keys = Object.fromEntries(['reload', 'duplicateTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
+      .map((command) => [command, settings[`shortcuts.${command}`]]))
     popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, keys }), (command) => {
-      const index = tabs.indexOf(tab)
-      if (index === -1) return
+      if (!find(id)) return
       switch (command) {
         case 'reload': return tab.page.isDestroyed() ? undefined : tab.page.reload()
-        // A tab still on the search box has no address, so its copy is blank too.
-        case 'duplicate': return addTab({ url: tab.url || undefined, index: index + 1 })
+        case 'duplicate': return duplicateTab(id)
         case 'close': return closeTab(id)
-        // The kept tab comes to the front first, so closing the others
-        // never shows one of them on the way.
-        case 'closeOthers':
-          activate(id)
-          return tabs.filter((other) => other !== tab).forEach((other) => closeTab(other.id))
-        case 'closeToRight':
-          if (index < tabs.indexOf(active())) activate(id)
-          return tabs.slice(index + 1).forEach((other) => closeTab(other.id))
+        case 'closeOthers': return closeOtherTabs(id)
+        case 'closeToRight': return closeTabsToRight(id)
       }
     })
   }
@@ -363,6 +388,9 @@ function createWindow() {
     openSettings,
     closeSettings,
     showTabMenu,
+    duplicateTab: () => duplicateTab(activeId),
+    closeOtherTabs: () => closeOtherTabs(activeId),
+    closeTabsToRight: () => closeTabsToRight(activeId),
     settingsOpen: () => settingsOpen,
     setRecording: (on, keys) => {
       recording = on
@@ -441,11 +469,14 @@ function buildMenu() {
         { label: 'New Tab', accelerator: key('newTab'), click: (_item, win) => { const c = controlsOf(win); if (c) c.newTab(); else createWindow() } },
         { label: 'New Window', accelerator: key('newWindow'), click: () => createWindow() },
         { type: 'separator' },
+        { label: 'Duplicate Tab', accelerator: key('duplicateTab'), click: inFocused((c) => { c.closeSettings(); c.duplicateTab() }) },
         { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closeSettings(); c.focusAddress() }) },
         { type: 'separator' },
         // With Settings open, Close Tab closes Settings instead.
         { label: 'Close Tab', accelerator: key('closeTab'), click: inFocused((c) => (c.settingsOpen() ? c.closeSettings() : c.closeTab())) },
         { label: 'Close Window', accelerator: key('closeWindow'), click: inFocused((c) => c.win.close()) },
+        { label: 'Close Other Tabs', accelerator: key('closeOtherTabs'), click: inFocused((c) => { c.closeSettings(); c.closeOtherTabs() }) },
+        { label: 'Close Tabs to the Right', accelerator: key('closeTabsToRight'), click: inFocused((c) => { c.closeSettings(); c.closeTabsToRight() }) },
       ],
     },
     { role: 'editMenu' },

@@ -44,9 +44,11 @@ test('an image inside a link gets both groups', () => {
   ])
 })
 
-test('images copy by their pixels, and open or save by their web address', () => {
-  assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'data:image/png;base64,AA', hasImageContents: true })), ['Copy Image', '—', 'Inspect Element'])
-  assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'blob:x' })), ['Back', 'Forward', 'Reload', '—', 'Inspect Element'])
+test('only web media opens in a new tab, and images copy by their pixels', () => {
+  assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'data:image/png;base64,AA', hasImageContents: true })),
+    ['Save Image As…', 'Copy Image', 'Copy Image Address', '—', 'Inspect Element'])
+  assert.deepEqual(labels(pageMenu({ mediaType: 'video', srcURL: 'blob:https://a.b/1' })), ['Save Video As…', 'Copy Video Address', '—', 'Inspect Element'])
+  assert.deepEqual(labels(pageMenu({ mediaType: 'video' })), ['Back', 'Forward', 'Reload', '—', 'Inspect Element'])
   assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'https://example.com/broken.png' })).slice(0, 3),
     ['Open Image in New Tab', 'Save Image As…', 'Copy Image Address'])
   assert.deepEqual(labels(pageMenu({ mediaType: 'video', srcURL: 'https://example.com/a.mp4' })).slice(0, 3),
@@ -95,7 +97,6 @@ test('tab menu enables what fits the tab', () => {
   const middle = tabMenu({ index: 1, count: 3, started: true })
   assert.ok(middle.every((item) => item.enabled !== false))
   assert.equal(tabMenu({ index: 2, count: 3, started: true }).at(-1).enabled, false)
-  const keyed = tabMenu({ index: 0, count: 1, started: true, keys: { reload: 'CmdOrCtrl+R', closeTab: 'CmdOrCtrl+W' } })
-  assert.equal(keyed[0].accelerator, 'CmdOrCtrl+R')
-  assert.equal(keyed[3].accelerator, 'CmdOrCtrl+W')
+  const keys = { reload: 'R', duplicateTab: 'D', closeTab: 'W', closeOtherTabs: 'O', closeTabsToRight: 'T' }
+  assert.deepEqual(tabMenu({ index: 0, count: 1, started: true, keys }).map((item) => item.accelerator), ['R', 'D', undefined, 'W', 'O', 'T'])
 })
