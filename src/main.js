@@ -146,6 +146,11 @@ function createWindow() {
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => { if (isMainFrame) { tab.url = url; sync() } })
     page.on('page-title-updated', (_event, title) => { tab.title = title; sync() })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
+    // Escape in the page closes its find field too, as in Safari and
+    // Firefox. The page still gets the key, and an input method's keeps it.
+    page.on('before-input-event', (_event, input) => {
+      if (input.type === 'keyDown' && input.key === 'Escape' && !input.isComposing && tab.find && tab.id === activeId) closeFind()
+    })
     // A new page (or a reload) gets the open search run again once it loads.
     page.on('did-finish-load', () => { if (tab.find?.text && tab.find.requestId === null) search(tab) })
     page.on('found-in-page', (_event, result) => {

@@ -429,12 +429,21 @@
     // The find field shows the active tab's find. Its text comes from main
     // only on opening or switching tabs; otherwise the field is the source.
     let findShown = false
+    let shownFind = null
     function drawFind(find, switched) {
       if (!find && findBox.contains(document.activeElement)) document.activeElement.blur()
       findBox.classList.toggle('is-open', Boolean(find))
       if (find && (switched || !findShown)) findInput.value = find.text
       findShown = Boolean(find)
-      // Blank until the page answers, so a count never belongs to old text.
+      shownFind = find
+      drawFindCount()
+    }
+
+    // The count and arrows show main's answer only while it is for the text
+    // now in the field, and stay blank until the page answers, so a count
+    // never belongs to older text typed a moment ago.
+    function drawFindCount() {
+      const find = shownFind?.text === findInput.value ? shownFind : null
       findCount.textContent = !find?.text || find.matches === null ? ''
         : find.matches ? `${find.active} of ${find.matches}` : 'No matches'
       findPrevious.disabled = findNext.disabled = !find?.text || find.matches === 0
@@ -507,12 +516,13 @@
     address.addEventListener('focus', () => address.select())
 
     // Searches as you type; Enter and ⇧Enter step through the matches.
-    // Escape closes from anywhere in the field, its buttons included.
+    // Escape closes from anywhere in the field, its buttons included (and
+    // from the page; see main).
     // While an input method (Zhuyin, Pinyin) composes, its half-typed text
     // is not searched, and the keys that confirm or cancel its candidates
     // belong to it, not to the find field.
     const search = () => window.lit.find(state.activeId, findInput.value)
-    findInput.addEventListener('input', (event) => { if (!event.isComposing) search() })
+    findInput.addEventListener('input', (event) => { if (!event.isComposing) search(); drawFindCount() })
     findInput.addEventListener('compositionend', search)
     findInput.addEventListener('keydown', (event) => {
       if (event.isComposing || event.keyCode === 229) return
