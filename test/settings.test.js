@@ -3,36 +3,62 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { SECTIONS, clean, load, update, save } = require('../src/settings')
+const { SECTIONS, SETTINGS, clean, load, update, save } = require('../src/settings')
 
-test('every setting has a unique key and a valid default', () => {
-  const settings = SECTIONS.flatMap((section) => section.settings)
-  assert.equal(new Set(settings.map((s) => s.key)).size, settings.length)
-  for (const setting of settings) {
-    if (setting.type === 'choice') assert.ok(setting.options.some((option) => option.value === setting.default), setting.key)
-  }
+const defaults = clean()
+
+test('sections and settings have unique ids and keys', () => {
+  assert.equal(new Set(SECTIONS.map((s) => s.id)).size, SECTIONS.length)
+  assert.equal(new Set(SETTINGS.map((s) => s.key)).size, SETTINGS.length)
+})
+
+test('every default is valid, so clean keeps them all', () => {
+  for (const setting of SETTINGS) assert.equal(defaults[setting.key], setting.default, setting.key)
 })
 
 test('clean keeps valid saved values and drops the rest', () => {
-  assert.deepEqual(clean({ searchEngine: 'bing', removed: true }), { searchEngine: 'bing' })
-  assert.deepEqual(clean({ searchEngine: 'altavista' }), { searchEngine: 'google' })
+  const values = clean({ searchEngine: 'bing', doNotTrack: 'yes', 'shortcuts.reload': 'Alt+CmdOrCtrl+R', removed: true })
+  assert.equal(values.searchEngine, 'bing')
+  assert.equal(values.doNotTrack, false)
+  assert.equal(values['shortcuts.reload'], 'Alt+CmdOrCtrl+R')
+  assert.equal('removed' in values, false)
 })
 
-test('update ignores unknown keys and invalid values', () => {
-  const values = clean()
-  assert.equal(update(values, 'searchEngine', 'duckduckgo').searchEngine, 'duckduckgo')
-  assert.equal(update(values, 'searchEngine', 'nope'), values)
-  assert.equal(update(values, 'nope', 'bing'), values)
+test('clean gives a clashing shortcut to the earlier command only', () => {
+  const values = clean({ 'shortcuts.newTab': 'CmdOrCtrl+R' })
+  assert.equal(values['shortcuts.newTab'], 'CmdOrCtrl+R')
+  assert.equal(values['shortcuts.reload'], '')
+})
+
+test('update checks each type', () => {
+  assert.equal(update(defaults, 'searchEngine', 'duckduckgo').values.searchEngine, 'duckduckgo')
+  assert.ok(update(defaults, 'searchEngine', 'nope').error)
+  assert.equal(update(defaults, 'doNotTrack', true).values.doNotTrack, true)
+  assert.ok(update(defaults, 'doNotTrack', 1).error)
+  assert.equal(update(defaults, 'newTabPage', '  example.com ').values.newTabPage, 'example.com')
+  assert.ok(update(defaults, 'newTabPage', 'x'.repeat(3000)).error)
+  assert.ok(update(defaults, 'nope', 'bing').error)
+})
+
+test('update refuses shortcuts that are taken or reserved, and allows none', () => {
+  assert.equal(update(defaults, 'shortcuts.reload', 'Shift+CmdOrCtrl+R').values['shortcuts.reload'], 'Shift+CmdOrCtrl+R')
+  assert.equal(update(defaults, 'shortcuts.reload', 'CmdOrCtrl+T').error, '⌘T is used by New Tab.')
+  assert.equal(update(defaults, 'shortcuts.reload', 'CmdOrCtrl+Q').error, '⌘Q is used by Quit Lit.')
+  assert.equal(update(defaults, 'shortcuts.reload', 'R').error, 'Add ⌘, ⌃ or ⌥ to the key.')
+  assert.equal(update(defaults, 'shortcuts.reload', '').values['shortcuts.reload'], '')
+  // A command can keep its own shortcut.
+  assert.equal(update(defaults, 'shortcuts.reload', 'CmdOrCtrl+R').error, undefined)
 })
 
 test('save and load round-trip, and a bad file loads defaults', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lit-settings-'))
   const file = path.join(dir, 'nested', 'settings.json')
-  assert.deepEqual(load(file), clean())
-  save(file, { searchEngine: 'bing' })
-  assert.deepEqual(load(file), { searchEngine: 'bing' })
+  assert.deepEqual(load(file), defaults)
+  const values = { ...defaults, searchEngine: 'bing' }
+  save(file, values)
+  assert.deepEqual(load(file), values)
   assert.deepEqual(fs.readdirSync(path.dirname(file)), ['settings.json'])
   fs.writeFileSync(file, '{ not json')
-  assert.deepEqual(load(file), clean())
+  assert.deepEqual(load(file), defaults)
   fs.rmSync(dir, { recursive: true })
 })

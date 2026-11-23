@@ -18,7 +18,15 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 
 Middle-click closes a tab. In the tab strip, arrow keys move between tabs and Delete closes one.
 
-Settings (⌘, or the button at the right of the tab strip) holds the search engine (Google, DuckDuckGo or Bing) used for anything typed that is not an address. Settings save as they change, to `settings.json` in the app's data folder.
+## Settings
+
+⌘, or the button at the right of the tab strip opens Settings as a popup over the window. Changes save right away, to `settings.json` in the app's data folder.
+
+- **General:** search engine (Google, DuckDuckGo or Bing).
+- **Tabs:** what new tabs open (the search box, or an address or search), where they go, whether ⌘-clicked links come to the front, and whether closing the last tab closes the window.
+- **Downloads:** ask where to save, or save straight to Downloads.
+- **Privacy:** send Do Not Track and Global Privacy Control.
+- **Keyboard Shortcuts:** every shortcut in the table above except ⌘1–9 and the ⇧⌘[ / ⇧⌘] alternates. Click a shortcut and press the new keys; Escape cancels and Delete removes it. Lit refuses a shortcut another command already uses.
 
 ## Run
 
@@ -47,6 +55,7 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 
 - `src/main.js` opens windows and gives each tab its own Chromium `WebContentsView` under the toolbar; only the active tab's view is shown. It owns the tab list and sends it to the toolbar whenever it changes. The application menu holds every shortcut, so they work whether the toolbar or a page has focus.
 - `src/index.html` is the toolbar: the tab strip (also the window's title bar) and the address bar. When the active tab has not loaded anything, the address bar fills the window as the centered search box and the tab's page view stays hidden.
-- `src/preload.js` is the bridge between Lit's own pages (the toolbar and the Settings window) and the main process.
-- `src/settings.js` lists every setting, grouped in sections, with its type and default; it also loads, checks and saves them. `src/settings.html` is the Settings window, drawn entirely from that list, so a new setting only needs an entry there (plus a control in `settings.html` if it brings a new type).
-- `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab-order rules (which tab to show after closing one, next/previous, ⌘1–9). These two and `src/settings.js` are plain Node, tested in `test/`.
+- `src/preload.js` is the bridge between Lit's own pages (the toolbar and the Settings popup) and the main process.
+- `src/settings.js` lists every setting, grouped in sections, with its type and default; it also loads, checks and saves them. `src/settings.html` is the Settings popup, drawn entirely from that list, so a new setting only needs an entry there (plus a control in `settings.html` if it brings a new type). Each window shows the popup in its own transparent view over the tabs. While a shortcut is recorded, main passes the key presses to it instead of the menu.
+- `src/shortcuts.js` turns key presses into Electron accelerators, checks them, and labels them (⇧⌘W). `src/downloads.js` picks a free file name in Downloads.
+- `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab-order rules (which tab to show after closing one, next/previous, ⌘1–9). `url.js`, `tabs.js`, `settings.js`, `shortcuts.js` and `downloads.js` are plain Node, tested in `test/`.

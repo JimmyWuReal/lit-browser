@@ -1,44 +1,52 @@
 // Lit's main process. Each window has a toolbar on top (src/index.html,
 // the window's own page) and one Chromium WebContentsView per tab below it.
-// Only the active tab's view is visible.
-const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain } = require('electron')
+// Only the active tab's view is visible. The Settings popup is one more
+// view, transparent and over everything, shown only while open.
+const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, session } = require('electron')
 const path = require('node:path')
 const { toUrl } = require('./url')
 const { afterClose, step, byNumber } = require('./tabs')
 const settingsStore = require('./settings')
+const shortcuts = require('./shortcuts')
+const { uniquePath } = require('./downloads')
 
 // Keep in sync with .strip and .bar heights in index.html.
 const STRIP_HEIGHT = 38
 const BAR_HEIGHT = STRIP_HEIGHT + 44
+const PRELOAD = path.join(__dirname, 'preload.js')
 
 // The toolbar's webContents -> its window's controls, so toolbar messages
-// only ever act on their own window.
+// only ever act on their own window. The same for each Settings popup.
 const windowsByToolbar = new WeakMap()
+const windowsBySettings = new WeakMap()
+const openWindows = new Set()
 let nextTabId = 1
 
 // Settings are read once at launch and saved on every change.
 let settingsFile
 let settings = settingsStore.clean()
-let settingsWindow = null
 
-// One Settings window for the whole app; opening it again brings it forward.
-function openSettings() {
-  if (settingsWindow) return settingsWindow.focus()
-  settingsWindow = new BrowserWindow({
-    // Room for a few settings; the page scrolls once there are more.
-    width: 480,
-    height: 240,
-    resizable: false,
-    minimizable: false,
-    fullscreenable: false,
-    title: 'Settings',
-    backgroundColor: '#090909',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 12 },
-    webPreferences: { preload: path.join(__dirname, 'preload.js') },
-  })
-  settingsWindow.on('closed', () => { settingsWindow = null })
-  settingsWindow.loadFile(path.join(__dirname, 'settings.html'))
+// What the Settings popup draws: the values, plus each shortcut as ⌘ symbols.
+function settingsState(error) {
+  const labels = {}
+  for (const setting of settingsStore.SETTINGS) {
+    if (setting.type === 'shortcut') labels[setting.key] = settings[setting.key] ? shortcuts.label(settings[setting.key]) : ''
+  }
+  return { sections: settingsStore.SECTIONS, values: settings, labels, ...(error && { error }) }
+}
+
+// Do Not Track and Global Privacy Control headers, only while turned on.
+function applyDoNotTrack() {
+  session.defaultSession.webRequest.onBeforeSendHeaders(settings.doNotTrack
+    ? (details, callback) => callback({ requestHeaders: { ...details.requestHeaders, DNT: '1', 'Sec-GPC': '1' } })
+    : null)
+}
+
+// After a change: rebuild the menu for new shortcuts, and tell every window.
+function applySettings() {
+  Menu.setApplicationMenu(buildMenu())
+  applyDoNotTrack()
+  for (const controls of openWindows) controls.settingsChanged()
 }
 
 function createWindow() {
@@ -50,7 +58,7 @@ function createWindow() {
     backgroundColor: '#090909',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 12 },
-    webPreferences: { preload: path.join(__dirname, 'preload.js') },
+    webPreferences: { preload: PRELOAD },
   })
 
   const tabs = []
@@ -58,6 +66,10 @@ function createWindow() {
   const find = (id) => tabs.find((tab) => tab.id === id)
   const active = () => find(activeId)
   const ids = () => tabs.map((tab) => tab.id)
+  // The Settings popup's view, made on first open (see openSettings).
+  let settingsView = null
+  let settingsOpen = false
+  let recording = false
 
   // Everything the toolbar draws. Sent whenever any of it changes.
   function sync() {
@@ -70,9 +82,13 @@ function createWindow() {
     })
   }
 
+  // The toolbar's tooltips show the current shortcuts.
+  const sendShortcuts = () => { if (!win.isDestroyed()) win.webContents.send('shortcuts', settingsState().labels) }
+
   function layout() {
     const { width, height } = win.getContentBounds()
     for (const tab of tabs) tab.view.setBounds({ x: 0, y: BAR_HEIGHT, width, height: height - BAR_HEIGHT })
+    settingsView?.setBounds({ x: 0, y: 0, width, height })
   }
 
   function focusAddress() {
@@ -86,7 +102,7 @@ function createWindow() {
   // move along the tabs.
   function show(tab, focus = true) {
     for (const other of tabs) other.view.setVisible(other === tab && tab.started)
-    if (!focus) return
+    if (!focus || settingsOpen) return
     if (tab.started) tab.page.focus()
     else focusAddress()
   }
@@ -110,6 +126,8 @@ function createWindow() {
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
+    // Re-adding a view moves it to the top, so Settings stays over new tabs.
+    if (settingsView) win.contentView.addChildView(settingsView)
     layout()
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
@@ -136,7 +154,8 @@ function createWindow() {
     })
 
     // Links and window.open become tabs right after the opener: Cmd-click
-    // opens in the background, everything else comes to the front.
+    // opens in the background (unless Settings says to switch to it),
+    // everything else comes to the front.
     // The new tab outlives its opener, so closing the page a link came from
     // keeps the link's tab.
     page.setWindowOpenHandler(({ disposition }) => ({
@@ -144,7 +163,7 @@ function createWindow() {
       outlivesOpener: true,
       createWindow: (options) => addTab({
         webContents: options.webContents,
-        background: disposition === 'background-tab',
+        background: disposition === 'background-tab' && !settings.switchToNewTabs,
         index: tabs.indexOf(tab) + 1,
       }).page,
     }))
@@ -153,6 +172,15 @@ function createWindow() {
     if (background) sync()
     else activate(tab.id)
     return tab
+  }
+
+  // A new tab from ⌘T or the + button, placed and filled as Settings says.
+  function newTab() {
+    const current = active()
+    addTab({
+      url: settings.newTabPage ? toUrl(settings.newTabPage, settings.searchEngine) : undefined,
+      index: settings.newTabPosition === 'next' && current ? tabs.indexOf(current) + 1 : tabs.length,
+    })
   }
 
   // A tab's first load turns it from the search box into its page.
@@ -178,8 +206,9 @@ function createWindow() {
     tabs.splice(tabs.indexOf(tab), 1)
     if (win.isDestroyed()) return
     win.contentView.removeChildView(tab.view)
-    // Closing the last tab closes the window, as in Chrome and Safari.
-    if (nextId === null) return win.close()
+    // Closing the last tab closes the window, as in Chrome and Safari,
+    // unless Settings says to keep it open with a new tab.
+    if (nextId === null) return settings.closeWindowWithLastTab ? win.close() : newTab()
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
   }
@@ -192,9 +221,48 @@ function createWindow() {
     tab.page.loadURL(toUrl(input, settings.searchEngine)).catch(() => {})
   }
 
+  // The Settings popup (src/settings.html): made on first use, then hidden
+  // and shown. While a shortcut is being recorded, key presses go to it
+  // instead of the menu, so ⌘T records ⌘T rather than opening a tab.
+  function openSettings() {
+    if (!settingsView) {
+      settingsView = new WebContentsView({ webPreferences: { preload: PRELOAD } })
+      settingsView.setBackgroundColor('#00000000')
+      windowsBySettings.set(settingsView.webContents, controls)
+      settingsView.webContents.on('before-input-event', (event, input) => {
+        if (!recording || input.type !== 'keyDown') return
+        event.preventDefault()
+        const plain = !input.control && !input.alt && !input.shift && !input.meta
+        if (input.key === 'Escape') settingsView.webContents.send('shortcut-pressed', { cancel: true })
+        else if (plain && (input.code === 'Backspace' || input.code === 'Delete')) settingsView.webContents.send('shortcut-pressed', { accelerator: '' })
+        else {
+          const accelerator = shortcuts.fromInput(input)
+          if (accelerator) settingsView.webContents.send('shortcut-pressed', { accelerator })
+        }
+      })
+      settingsView.webContents.loadFile(path.join(__dirname, 'settings.html'))
+    }
+    settingsOpen = true
+    win.contentView.addChildView(settingsView)
+    layout()
+    settingsView.setVisible(true)
+    settingsView.webContents.focus()
+    settingsView.webContents.send('settings-open', settingsState())
+  }
+
+  // The popup has no exit animation, so it just hides.
+  function closeSettings() {
+    if (!settingsOpen) return
+    settingsOpen = false
+    recording = false
+    settingsView.setVisible(false)
+    const tab = active()
+    if (tab) show(tab)
+  }
+
   const controls = {
     win,
-    newTab: () => addTab(),
+    newTab,
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
     activate,
     navigate,
@@ -203,20 +271,31 @@ function createWindow() {
     byNumber: (number) => activate(byNumber(ids(), number)),
     // The active page, for reload, back, forward and its developer tools.
     page: () => (active()?.started && !active().page.isDestroyed() ? active().page : null),
+    openSettings,
+    closeSettings,
+    settingsOpen: () => settingsOpen,
+    setRecording: (on) => { recording = on },
+    settingsChanged() {
+      sendShortcuts()
+      if (settingsView) settingsView.webContents.send('settings-changed', settingsState())
+    },
   }
   windowsByToolbar.set(win.webContents, controls)
+  openWindows.add(controls)
 
   win.on('resize', layout)
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
-  win.webContents.on('did-finish-load', sync)
+  win.webContents.on('did-finish-load', () => { sync(); sendShortcuts() })
   win.on('closed', () => {
+    openWindows.delete(controls)
     for (const tab of tabs.splice(0)) {
       if (!tab.page.isDestroyed()) tab.page.close()
     }
+    settingsView?.webContents.close()
   })
 
   win.loadFile(path.join(__dirname, 'index.html'))
-  addTab()
+  newTab()
   return controls
 }
 
@@ -228,19 +307,14 @@ const inFocused = (action) => (_item, win) => {
 }
 
 // The menu holds every shortcut, so they work whether the toolbar or a page
-// has focus. Hidden items still answer their shortcuts on macOS.
+// has focus. Most come from Settings; hidden items still answer their
+// shortcuts on macOS. Keep the fixed ones in RESERVED in src/shortcuts.js.
 function buildMenu() {
+  const key = (command) => settings[`shortcuts.${command}`] || undefined
   const hidden = (label, accelerator, click) => ({ label, accelerator, click, visible: false })
   const numbers = Array.from({ length: 9 }, (_, i) =>
     hidden(`Select Tab ${i + 1}`, `CmdOrCtrl+${i + 1}`, inFocused((c) => c.byNumber(i + 1))))
   const pageAction = (action) => inFocused((c) => { const page = c.page(); if (page) action(page) })
-
-  // Close Tab and Close Window also close windows without tabs, like Settings.
-  const closeFocused = (action) => (_item, win) => {
-    const controls = controlsOf(win)
-    if (controls) action(controls)
-    else win?.close()
-  }
 
   return Menu.buildFromTemplate([
     {
@@ -248,7 +322,15 @@ function buildMenu() {
       submenu: [
         { role: 'about' },
         { type: 'separator' },
-        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: openSettings },
+        {
+          label: 'Settings…',
+          accelerator: key('settings'),
+          click: (_item, win) => {
+            const c = controlsOf(win) || createWindow()
+            if (c.settingsOpen()) c.closeSettings()
+            else c.openSettings()
+          },
+        },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -262,25 +344,26 @@ function buildMenu() {
     {
       label: 'File',
       submenu: [
-        { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: (_item, win) => { const c = controlsOf(win); if (c) c.newTab(); else createWindow() } },
-        { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => createWindow() },
+        { label: 'New Tab', accelerator: key('newTab'), click: (_item, win) => { const c = controlsOf(win); if (c) c.newTab(); else createWindow() } },
+        { label: 'New Window', accelerator: key('newWindow'), click: () => createWindow() },
         { type: 'separator' },
-        { label: 'Open Location…', accelerator: 'CmdOrCtrl+L', click: inFocused((c) => c.focusAddress()) },
+        { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closeSettings(); c.focusAddress() }) },
         { type: 'separator' },
-        { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: closeFocused((c) => c.closeTab()) },
-        { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', click: closeFocused((c) => c.win.close()) },
+        // With Settings open, Close Tab closes Settings instead.
+        { label: 'Close Tab', accelerator: key('closeTab'), click: inFocused((c) => (c.settingsOpen() ? c.closeSettings() : c.closeTab())) },
+        { label: 'Close Window', accelerator: key('closeWindow'), click: inFocused((c) => c.win.close()) },
       ],
     },
     { role: 'editMenu' },
     {
       label: 'View',
       submenu: [
-        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: pageAction((page) => page.reload()) },
+        { label: 'Reload', accelerator: key('reload'), click: pageAction((page) => page.reload()) },
         { type: 'separator' },
-        { label: 'Back', accelerator: 'CmdOrCtrl+[', click: pageAction((page) => page.navigationHistory.goBack()) },
-        { label: 'Forward', accelerator: 'CmdOrCtrl+]', click: pageAction((page) => page.navigationHistory.goForward()) },
+        { label: 'Back', accelerator: key('back'), click: pageAction((page) => page.navigationHistory.goBack()) },
+        { label: 'Forward', accelerator: key('forward'), click: pageAction((page) => page.navigationHistory.goForward()) },
         { type: 'separator' },
-        { label: 'Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: pageAction((page) => page.toggleDevTools()) },
+        { label: 'Developer Tools', accelerator: key('devTools'), click: pageAction((page) => page.toggleDevTools()) },
         { role: 'togglefullscreen' },
       ],
     },
@@ -291,10 +374,10 @@ function buildMenu() {
         { role: 'minimize' },
         { role: 'zoom' },
         { type: 'separator' },
-        { label: 'Show Next Tab', accelerator: 'Ctrl+Tab', click: inFocused((c) => c.step(1)) },
-        { label: 'Show Previous Tab', accelerator: 'Ctrl+Shift+Tab', click: inFocused((c) => c.step(-1)) },
-        hidden('Show Next Tab', 'CmdOrCtrl+Shift+]', inFocused((c) => c.step(1))),
-        hidden('Show Previous Tab', 'CmdOrCtrl+Shift+[', inFocused((c) => c.step(-1))),
+        { label: 'Show Next Tab', accelerator: key('nextTab'), click: inFocused((c) => c.step(1)) },
+        { label: 'Show Previous Tab', accelerator: key('previousTab'), click: inFocused((c) => c.step(-1)) },
+        hidden('Show Next Tab', 'Shift+CmdOrCtrl+]', inFocused((c) => c.step(1))),
+        hidden('Show Previous Tab', 'Shift+CmdOrCtrl+[', inFocused((c) => c.step(-1))),
         ...numbers,
         { type: 'separator' },
         { role: 'front' },
@@ -312,36 +395,48 @@ ipcMain.on('navigate', fromToolbar((c, input) => typeof input === 'string' && c.
 ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
 ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
-ipcMain.on('open-settings', fromToolbar(() => openSettings()))
+ipcMain.on('open-settings', fromToolbar((c) => c.openSettings()))
 
-// Settings messages, answered only for the Settings window.
+// Settings messages, answered only for a Settings popup.
 const fromSettings = (handler) => (event, ...args) => {
-  if (settingsWindow && event.sender === settingsWindow.webContents) return handler(...args)
+  const controls = windowsBySettings.get(event.sender)
+  if (controls) return handler(controls, ...args)
 }
-ipcMain.handle('settings-get', fromSettings(() => ({ sections: settingsStore.SECTIONS, values: settings })))
-ipcMain.handle('settings-set', fromSettings((key, value) => {
-  // Saved first, so a failed write leaves the old settings in use, and the
-  // window hears about it from the rejected call.
-  const next = settingsStore.update(settings, key, value)
-  if (next !== settings) {
-    settingsStore.save(settingsFile, next)
-    settings = next
+ipcMain.handle('settings-get', fromSettings(() => settingsState()))
+ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
+  const { values, error } = settingsStore.update(settings, key, value)
+  if (error) return settingsState(error)
+  if (values === settings) return settingsState()
+  // Saved first, so a failed write leaves the old settings in use.
+  try {
+    settingsStore.save(settingsFile, values)
+  } catch {
+    return settingsState('Couldn’t save settings.')
   }
-  return settings
+  settings = values
+  applySettings()
+  return settingsState()
 }))
+ipcMain.on('settings-record', fromSettings((c, on) => c.setRecording(on === true)))
+ipcMain.on('settings-close', fromSettings((c) => c.closeSettings()))
 
 app.whenReady().then(() => {
   settingsFile = path.join(app.getPath('userData'), 'settings.json')
   settings = settingsStore.load(settingsFile)
+  applyDoNotTrack()
+  // Saving straight to Downloads, when Settings says so; otherwise
+  // Electron asks where to save.
+  session.defaultSession.on('will-download', (_event, item) => {
+    if (settings.downloadLocation === 'downloads') item.setSavePath(uniquePath(app.getPath('downloads'), item.getFilename()))
+  })
   // The packaged app gets its icon from the bundle; in development, show it in the Dock too.
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '..', 'build', 'icon.png'))
   Menu.setApplicationMenu(buildMenu())
   createWindow()
   // Like other Mac browsers, Lit keeps running with no windows open;
-  // clicking the Dock icon opens a fresh one (Settings alone does not count).
-  // Registered after the first window so a launch-time activate cannot open
-  // a second.
-  app.on('activate', () => { if (!BrowserWindow.getAllWindows().some(controlsOf)) createWindow() })
+  // clicking the Dock icon opens a fresh one. Registered after the first
+  // window so a launch-time activate cannot open a second.
+  app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow() })
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
