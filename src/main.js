@@ -34,6 +34,15 @@ let zoomFile
 let siteZooms = new Map()
 const zoomFor = (url) => siteZooms.get(zoom.siteOf(url)) ?? settings.defaultZoom
 
+function saveSiteZooms(next) {
+  siteZooms = next
+  try {
+    zoom.save(zoomFile, siteZooms)
+  } catch {
+    // Unsaved, the zooms still hold until Lit quits.
+  }
+}
+
 // Zooms every tab on `url`'s site, in every window, and remembers it;
 // zooming back to the default forgets the site.
 function zoomSite(url, factor) {
@@ -42,13 +51,16 @@ function zoomSite(url, factor) {
   const next = new Map(siteZooms)
   if (zoom.same(factor, settings.defaultZoom)) next.delete(site)
   else next.set(site, factor)
-  siteZooms = next
-  try {
-    zoom.save(zoomFile, siteZooms)
-  } catch {
-    // Unsaved, the zoom still holds until Lit quits.
-  }
+  saveSiteZooms(next)
   for (const controls of openWindows) controls.applyZoom()
+}
+
+// After the default zoom changes, sites zoomed to the new default are
+// forgotten, so they follow the default from then on (and the address bar,
+// which hides at the default, never hides a zoom that can't be reset).
+function forgetDefaultZooms() {
+  const next = new Map([...siteZooms].filter(([, factor]) => !zoom.same(factor, settings.defaultZoom)))
+  if (next.size !== siteZooms.size) saveSiteZooms(next)
 }
 
 // What the Settings popup draws: the values, plus each shortcut as ⌘ symbols.
@@ -110,7 +122,7 @@ function createWindow() {
       tabs: tabs.map(({ id, title, url, favicon, loading, started, zoom: factor }) => ({
         id, title, url, favicon, loading, started,
         // The address bar shows the zoom only when it is not the default.
-        zoom: url && !zoom.same(factor, settings.defaultZoom) ? zoom.percent(factor) : '',
+        zoom: started && !zoom.same(factor, settings.defaultZoom) ? zoom.percent(factor) : '',
       })),
     })
   }
@@ -253,8 +265,11 @@ function createWindow() {
     tab.zoom = factor
     if (!tab.page.isDestroyed()) tab.page.setZoomFactor(factor)
   }
-  const zoomBy = (tab, direction) => { if (tab.url) zoomSite(tab.url, zoom.step(tab.zoom, direction)) }
-  const resetZoom = (tab) => { if (tab.url) zoomSite(tab.url, settings.defaultZoom) }
+  // The page's own URL, not tab.url: a popup can stay on the about:blank its
+  // opener writes into, which never fires did-navigate.
+  const urlOf = (tab) => (tab.page.isDestroyed() ? '' : tab.page.getURL())
+  const zoomBy = (tab, direction) => { const url = urlOf(tab); if (url) zoomSite(url, zoom.step(tab.zoom, direction)) }
+  const resetZoom = (tab) => { const url = urlOf(tab); if (url) zoomSite(url, settings.defaultZoom) }
 
   function navigate(input) {
     const tab = active()
@@ -322,7 +337,10 @@ function createWindow() {
     zoomBy: (direction) => { const tab = active(); if (tab?.started) zoomBy(tab, direction) },
     resetZoom: () => { const tab = active(); if (tab?.started) resetZoom(tab) },
     applyZoom() {
-      for (const tab of tabs) if (tab.url) setZoom(tab, zoomFor(tab.url))
+      for (const tab of tabs) {
+        const url = urlOf(tab)
+        if (url) setZoom(tab, zoomFor(url))
+      }
       sync()
     },
     openSettings,
@@ -424,8 +442,8 @@ function buildMenu() {
         { label: 'Reset Zoom', accelerator: key('resetZoom'), click: inFocused((c) => c.resetZoom()) },
         { label: 'Zoom In', accelerator: key('zoomIn'), click: inFocused((c) => c.zoomBy(1)) },
         { label: 'Zoom Out', accelerator: key('zoomOut'), click: inFocused((c) => c.zoomBy(-1)) },
-        // ⌘+ as well as ⌘=, as in other browsers.
-        hidden('Zoom In', 'CmdOrCtrl+Plus', inFocused((c) => c.zoomBy(1))),
+        // ⌘+ as well as ⌘=, as in other browsers, while Zoom In is on ⌘=.
+        ...(key('zoomIn') === 'CmdOrCtrl+=' ? [hidden('Zoom In', 'CmdOrCtrl+Plus', inFocused((c) => c.zoomBy(1)))] : []),
         { type: 'separator' },
         { label: 'Developer Tools', accelerator: key('devTools'), click: pageAction((page) => page.toggleDevTools()) },
         { role: 'togglefullscreen' },
@@ -478,7 +496,9 @@ ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
   } catch {
     return settingsState('Couldn’t save settings.')
   }
+  const defaultZoomChanged = values.defaultZoom !== settings.defaultZoom
   settings = values
+  if (defaultZoomChanged) forgetDefaultZooms()
   applySettings()
   return settingsState()
 }))
