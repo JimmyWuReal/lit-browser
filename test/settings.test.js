@@ -24,10 +24,21 @@ test('clean keeps valid saved values and drops the rest', () => {
   assert.equal('removed' in values, false)
 })
 
-test('clean gives a clashing shortcut to the earlier command only', () => {
+test('clean gives a clashing shortcut to the saved command, else the earlier one', () => {
   const values = clean({ 'shortcuts.newTab': 'CmdOrCtrl+R' })
   assert.equal(values['shortcuts.newTab'], 'CmdOrCtrl+R')
   assert.equal(values['shortcuts.reload'], '')
+  // A saved shortcut keeps its keys when a command declared before it
+  // (here Zoom In and Reset Zoom, added later) has them as its default.
+  const kept = clean({ 'shortcuts.nextTab': 'CmdOrCtrl+=', 'shortcuts.settings': 'CmdOrCtrl+0' })
+  assert.equal(kept['shortcuts.nextTab'], 'CmdOrCtrl+=')
+  assert.equal(kept['shortcuts.settings'], 'CmdOrCtrl+0')
+  assert.equal(kept['shortcuts.zoomIn'], '')
+  assert.equal(kept['shortcuts.resetZoom'], '')
+  // Two saved commands on one shortcut: the earlier keeps it.
+  const both = clean({ 'shortcuts.newTab': 'CmdOrCtrl+R', 'shortcuts.reload': 'CmdOrCtrl+R' })
+  assert.equal(both['shortcuts.newTab'], 'CmdOrCtrl+R')
+  assert.equal(both['shortcuts.reload'], '')
 })
 
 test('update checks each type', () => {

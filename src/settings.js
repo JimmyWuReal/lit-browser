@@ -156,11 +156,15 @@ function clean(saved = {}) {
     const value = Object.hasOwn(saved, setting.key) ? saved[setting.key] : setting.default
     values[setting.key] = problem(setting, value, {}) ? setting.default : value
   }
-  // Two commands can end up on one shortcut (an edited file, or a saved
-  // shortcut that is now another command's default); the later one gets none.
+  // Two commands can end up on one shortcut: a saved shortcut that is now
+  // another command's default (a new command's, after an update), or an
+  // edited file. Saved shortcuts win over defaults; between two of a kind,
+  // the later command gets none.
+  const isSaved = (setting) => Object.hasOwn(saved, setting.key) && values[setting.key] === saved[setting.key]
+  const commands = SETTINGS.filter((setting) => setting.type === 'shortcut')
   const used = new Set()
-  for (const setting of SETTINGS) {
-    if (setting.type !== 'shortcut' || !values[setting.key]) continue
+  for (const setting of [...commands.filter(isSaved), ...commands.filter((setting) => !isSaved(setting))]) {
+    if (!values[setting.key]) continue
     if (used.has(values[setting.key])) values[setting.key] = ''
     used.add(values[setting.key])
   }
