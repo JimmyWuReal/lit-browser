@@ -38,6 +38,8 @@ test('update checks each type', () => {
   assert.equal(update(defaults, 'newTabPage', '  example.com ').values.newTabPage, 'example.com')
   assert.ok(update(defaults, 'newTabPage', 'x'.repeat(3000)).error)
   assert.ok(update(defaults, 'nope', 'bing').error)
+  assert.equal(update(defaults, 'defaultZoom', 1.25).values.defaultZoom, 1.25)
+  assert.ok(update(defaults, 'defaultZoom', 1.23).error)
 })
 
 test('update refuses shortcuts that are taken or reserved, and allows none', () => {

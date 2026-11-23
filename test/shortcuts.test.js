@@ -40,6 +40,8 @@ test('accepts shortcuts with ⌘, ⌃ or ⌥, and F-keys alone', () => {
   assert.equal(problem('Shift+T'), 'Add ⌘, ⌃ or ⌥ to the key.')
   assert.equal(problem('CmdOrCtrl+1'), '⌘1 is used by Select Tab 1.')
   assert.equal(problem('Alt+Shift+CmdOrCtrl+V'), '⌥⇧⌘V is used by Paste and Match Style.')
+  // ⇧⌘= is ⌘+ on a US keyboard, which Zoom In answers.
+  assert.equal(problem(fromInput({ code: 'Equal', key: '+', shift: true, meta: true }, { Equal: '=' })), '⇧⌘= is used by Zoom In.')
 })
 
 test('rejects anything not canonical', () => {

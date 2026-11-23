@@ -191,6 +191,35 @@
       transition: color 200ms ease;
     }
     .address:focus-within svg { color: #fff; }
+    /* Room for the zoom button, only while it shows. */
+    .address.is-zoomed input { padding-right: 64px; }
+
+    /* The page's zoom, shown at the right of the address field when it is
+       not the default; clicking resets it. Stays mounted and eases in and
+       out like the kit's search clear button. */
+    .zoom {
+      position: absolute;
+      top: 50%;
+      right: 5px;
+      height: 22px;
+      padding: 0 7px;
+      border-radius: 6px;
+      color: #bdbdbd;
+      font-size: 11.5px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-50%) scale(.8);
+      transition:
+        color 180ms ease-out,
+        box-shadow 200ms ease,
+        opacity 160ms ease-out,
+        transform 200ms var(--settle),
+        visibility 0s linear 200ms;
+    }
+    .address.is-zoomed .zoom { opacity: 1; visibility: visible; transform: translateY(-50%); transition-delay: 0s; }
+    .address.is-zoomed .zoom:active { transform: translateY(-50%) scale(.94); }
 
     /* Home: a tab that has not loaded anything shows the address as a
        centered search box (the kit's search field) filling the window. */
@@ -232,6 +261,7 @@
       </svg>
       <input id="address" type="text" placeholder="Search or enter address" aria-label="Search or enter address"
         autocomplete="off" spellcheck="false" autofocus>
+      <button class="icon-button zoom" id="zoom" type="button" tabindex="-1" title="Actual Size" data-shortcut="shortcuts.actualSize"></button>
     </label>
   </form>
 
@@ -257,6 +287,7 @@
   <script>
     const bar = document.getElementById('bar')
     const address = document.getElementById('address')
+    const zoomButton = document.getElementById('zoom')
     const tabList = document.getElementById('tabs')
     const thumb = document.getElementById('thumb')
     const tabTemplate = document.getElementById('tab-template')
@@ -353,6 +384,15 @@
       if (switched) editing = false
       if (switched || (!editing && url !== shownUrl)) address.value = url
       shownUrl = url
+
+      // The zoom button keeps its last text while it fades out.
+      const zoom = tab?.started ? tab.zoom : ''
+      address.parentElement.classList.toggle('is-zoomed', Boolean(zoom))
+      zoomButton.tabIndex = zoom ? 0 : -1
+      if (zoom) {
+        zoomButton.textContent = zoom
+        zoomButton.setAttribute('aria-label', `Zoom ${zoom}, reset to actual size`)
+      }
     }
 
     // Moves the thumb under the active tab. Window resizes jump, so the
@@ -400,6 +440,7 @@
 
     document.getElementById('new-tab').addEventListener('click', () => window.lit.newTab())
     document.getElementById('open-settings').addEventListener('click', () => window.lit.openSettings())
+    zoomButton.addEventListener('click', () => window.lit.resetZoom())
 
     bar.addEventListener('submit', (event) => {
       event.preventDefault()

@@ -5,6 +5,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { SEARCH_ENGINES } = require('./url')
+const zoom = require('./zoom')
 const shortcuts = require('./shortcuts')
 
 // Each setting: { key, label, description?, type, default, ...type fields }.
@@ -28,6 +29,14 @@ const SECTIONS = [
         type: 'choice',
         options: Object.entries(SEARCH_ENGINES).map(([value, { name }]) => ({ value, label: name })),
         default: 'google',
+      },
+      {
+        key: 'defaultZoom',
+        label: 'Page zoom',
+        description: 'For sites you have not zoomed yourself.',
+        type: 'choice',
+        options: [0.8, 0.9, 1, 1.1, 1.25, 1.5].map((value) => ({ value, label: zoom.percent(value) })),
+        default: 1,
       },
     ],
   },
@@ -104,6 +113,9 @@ const SECTIONS = [
       shortcut('reload', 'Reload', 'CmdOrCtrl+R'),
       shortcut('back', 'Back', 'CmdOrCtrl+['),
       shortcut('forward', 'Forward', 'CmdOrCtrl+]'),
+      shortcut('zoomIn', 'Zoom In', 'CmdOrCtrl+='),
+      shortcut('zoomOut', 'Zoom Out', 'CmdOrCtrl+-'),
+      shortcut('actualSize', 'Actual Size', 'CmdOrCtrl+0'),
       shortcut('nextTab', 'Show Next Tab', 'Ctrl+Tab'),
       shortcut('previousTab', 'Show Previous Tab', 'Ctrl+Shift+Tab'),
       shortcut('devTools', 'Developer Tools', 'Alt+CmdOrCtrl+I'),

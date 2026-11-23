@@ -10,6 +10,7 @@ const { afterClose, step, byNumber } = require('./tabs')
 const settingsStore = require('./settings')
 const shortcuts = require('./shortcuts')
 const { uniquePath } = require('./downloads')
+const zoom = require('./zoom')
 
 // Keep in sync with .strip and .bar heights in index.html.
 const STRIP_HEIGHT = 38
@@ -26,6 +27,29 @@ let nextTabId = 1
 // Settings are read once at launch and saved on every change.
 let settingsFile
 let settings = settingsStore.clean()
+
+// Each site's zoom, when it differs from the default (see src/zoom.js).
+// Read at launch and saved whenever a site's zoom changes.
+let zoomFile
+let siteZooms = new Map()
+const zoomFor = (url) => siteZooms.get(zoom.siteOf(url)) ?? settings.defaultZoom
+
+// Zooms every tab on `url`'s site, in every window, and remembers it;
+// zooming back to the default forgets the site.
+function zoomSite(url, factor) {
+  const site = zoom.siteOf(url)
+  if (!site) return
+  const next = new Map(siteZooms)
+  if (zoom.same(factor, settings.defaultZoom)) next.delete(site)
+  else next.set(site, factor)
+  siteZooms = next
+  try {
+    zoom.save(zoomFile, siteZooms)
+  } catch {
+    // Unsaved, the zoom still holds until Lit quits.
+  }
+  for (const controls of openWindows) controls.applyZoom()
+}
 
 // What the Settings popup draws: the values, plus each shortcut as ⌘ symbols.
 function settingsState(error) {
@@ -47,7 +71,7 @@ function applyDoNotTrack() {
 function applySettings() {
   Menu.setApplicationMenu(buildMenu())
   applyDoNotTrack()
-  for (const controls of openWindows) controls.settingsChanged()
+  for (const controls of openWindows) { controls.applyZoom(); controls.settingsChanged() }
 }
 
 function createWindow() {
@@ -83,7 +107,11 @@ function createWindow() {
     win.setTitle(current?.title || (current?.started ? current.url : '') || 'New Tab')
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started }) => ({ id, title, url, favicon, loading, started })),
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, zoom: factor }) => ({
+        id, title, url, favicon, loading, started,
+        // The address bar shows the zoom only when it is not the default.
+        zoom: url && !zoom.same(factor, settings.defaultZoom) ? zoom.percent(factor) : '',
+      })),
     })
   }
 
@@ -127,7 +155,7 @@ function createWindow() {
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents) }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents), zoom: settings.defaultZoom }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -137,7 +165,8 @@ function createWindow() {
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
     page.on('did-stop-loading', () => { tab.loading = false; sync() })
-    page.on('did-navigate', (_event, url) => { tab.url = url; tab.title = ''; tab.favicon = null; sync() })
+    // Each new page opens at its site's zoom.
+    page.on('did-navigate', (_event, url) => { tab.url = url; tab.title = ''; tab.favicon = null; setZoom(tab, zoomFor(url)); sync() })
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => { if (isMainFrame) { tab.url = url; sync() } })
     page.on('page-title-updated', (_event, title) => { tab.title = title; sync() })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
@@ -218,6 +247,15 @@ function createWindow() {
     else sync()
   }
 
+  // Zoom is per site, so changing it goes through zoomSite, which comes
+  // back here (applyZoom) for every tab on that site.
+  function setZoom(tab, factor) {
+    tab.zoom = factor
+    if (!tab.page.isDestroyed()) tab.page.setZoomFactor(factor)
+  }
+  const zoomBy = (tab, direction) => { if (tab.url) zoomSite(tab.url, zoom.step(tab.zoom, direction)) }
+  const resetZoom = (tab) => { if (tab.url) zoomSite(tab.url, settings.defaultZoom) }
+
   function navigate(input) {
     const tab = active()
     if (!tab || !input.trim()) return
@@ -280,6 +318,13 @@ function createWindow() {
     byNumber: (number) => activate(byNumber(ids(), number)),
     // The active page, for reload, back, forward and its developer tools.
     page: () => (active()?.started && !active().page.isDestroyed() ? active().page : null),
+    // Zoom acts on the active tab's page, once it has an address.
+    zoomBy: (direction) => { const tab = active(); if (tab?.started) zoomBy(tab, direction) },
+    resetZoom: () => { const tab = active(); if (tab?.started) resetZoom(tab) },
+    applyZoom() {
+      for (const tab of tabs) if (tab.url) setZoom(tab, zoomFor(tab.url))
+      sync()
+    },
     openSettings,
     closeSettings,
     settingsOpen: () => settingsOpen,
@@ -375,6 +420,12 @@ function buildMenu() {
         { label: 'Back', accelerator: key('back'), click: pageAction((page) => page.navigationHistory.goBack()) },
         { label: 'Forward', accelerator: key('forward'), click: pageAction((page) => page.navigationHistory.goForward()) },
         { type: 'separator' },
+        { label: 'Actual Size', accelerator: key('actualSize'), click: inFocused((c) => c.resetZoom()) },
+        { label: 'Zoom In', accelerator: key('zoomIn'), click: inFocused((c) => c.zoomBy(1)) },
+        { label: 'Zoom Out', accelerator: key('zoomOut'), click: inFocused((c) => c.zoomBy(-1)) },
+        // ⌘+ as well as ⌘=, as in other browsers.
+        hidden('Zoom In', 'CmdOrCtrl+Plus', inFocused((c) => c.zoomBy(1))),
+        { type: 'separator' },
         { label: 'Developer Tools', accelerator: key('devTools'), click: pageAction((page) => page.toggleDevTools()) },
         { role: 'togglefullscreen' },
       ],
@@ -408,6 +459,7 @@ ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
 ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
 ipcMain.on('open-settings', fromToolbar((c) => c.openSettings()))
+ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
 
 // Settings messages, answered only for a Settings popup.
 const fromSettings = (handler) => (event, ...args) => {
@@ -435,6 +487,8 @@ ipcMain.on('settings-close', fromSettings((c) => c.closeSettings()))
 app.whenReady().then(() => {
   settingsFile = path.join(app.getPath('userData'), 'settings.json')
   settings = settingsStore.load(settingsFile)
+  zoomFile = path.join(app.getPath('userData'), 'zoom.json')
+  siteZooms = zoom.load(zoomFile)
   applyDoNotTrack()
   // Saving straight to Downloads, when Settings says so; otherwise
   // Electron asks where to save. Paths of unfinished downloads count as

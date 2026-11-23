@@ -10,10 +10,13 @@ contextBridge.exposeInMainWorld('lit', {
   // `focus: false` keeps keyboard focus in the toolbar.
   closeTab: (id, focus = true) => ipcRenderer.send('close-tab', id, focus),
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started }] }
+  // { activeId, tabs: [{ id, title, url, favicon, loading, started, zoom }] },
+  // `zoom` being '125%', or '' at the default zoom.
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   openSettings: () => ipcRenderer.send('open-settings'),
+  // Puts the active page back at the default zoom.
+  resetZoom: () => ipcRenderer.send('reset-zoom'),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
   onShortcuts: (callback) => on('shortcuts', callback),
   // For the Settings popup only; main ignores these from anywhere else.
