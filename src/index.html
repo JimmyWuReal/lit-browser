@@ -261,7 +261,7 @@
       </svg>
       <input id="address" type="text" placeholder="Search or enter address" aria-label="Search or enter address"
         autocomplete="off" spellcheck="false" autofocus>
-      <button class="icon-button zoom" id="zoom" type="button" tabindex="-1" title="Actual Size" data-shortcut="shortcuts.actualSize"></button>
+      <button class="icon-button zoom" id="zoom" type="button" tabindex="-1" title="Reset Zoom" data-shortcut="shortcuts.resetZoom"></button>
     </label>
   </form>
 
@@ -391,7 +391,7 @@
       zoomButton.tabIndex = zoom ? 0 : -1
       if (zoom) {
         zoomButton.textContent = zoom
-        zoomButton.setAttribute('aria-label', `Zoom ${zoom}, reset to actual size`)
+        zoomButton.setAttribute('aria-label', `Zoom ${zoom}, reset zoom`)
       }
     }
 

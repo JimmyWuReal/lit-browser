@@ -15,9 +15,9 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | ⌃Tab, ⇧⌘] / ⌃⇧Tab, ⇧⌘[ | Next / previous tab |
 | ⌘1–⌘8, ⌘9 | That tab, last tab |
 | ⌘R, ⌘[, ⌘] | Reload, back, forward |
-| ⌘= or ⌘+, ⌘-, ⌘0 | Zoom in, zoom out, actual size |
+| ⌘= or ⌘+, ⌘-, ⌘0 | Zoom in, zoom out, reset zoom |
 
-Zoom is per site, as in Chrome: zooming a page zooms every tab on that site, and Lit remembers it for next time (in `zoom.json` in the app's data folder). A zoomed page shows its zoom at the right of the address bar; click it to go back to the default.
+Zoom is per site, as in Chrome: zooming a page zooms every tab on that site, and Lit remembers it for next time (in `zoom.json` in the app's data folder). A zoomed page shows its zoom at the right of the address bar; click it, or press ⌘0, to go back to the default zoom set in Settings.
 
 Middle-click closes a tab. In the tab strip, arrow keys move between tabs and Delete closes one.
 

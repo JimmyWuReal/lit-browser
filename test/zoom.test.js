@@ -16,10 +16,10 @@ test('step moves one zoom level and stops at the ends', () => {
   assert.equal(step(1.0999999, 1), 1.25)
 })
 
-test('a site is its host, shared by http and https', () => {
+test('a site is its host name, shared by http, https and every port', () => {
   assert.equal(siteOf('https://example.com/a?b'), 'example.com')
   assert.equal(siteOf('http://example.com/'), 'example.com')
-  assert.equal(siteOf('http://localhost:3000/'), 'localhost:3000')
+  assert.equal(siteOf('http://localhost:3000/'), 'localhost')
   assert.equal(siteOf('file:///Users/me/a.html'), 'file:')
   assert.equal(siteOf('not a url'), null)
 })

@@ -1,5 +1,6 @@
 // Page zoom: the steps ⌘+ and ⌘- move through, and the per-site zoom Lit
-// remembers. Like Chrome, a site is its host (http and https share one), and
+// remembers. Like Chrome, a site is its host name (http and https, and every
+// port, share one; Chromium itself shares zoom that way), and
 // only sites zoomed away from the default zoom are kept, in zoom.json.
 // Plain Node, so it is tested in test/zoom.test.js.
 const fs = require('node:fs')
@@ -21,12 +22,12 @@ function step(factor, direction) {
 
 const same = (a, b) => Math.abs(a - b) < EPSILON
 
-// The site a URL's zoom belongs to: its host, or for pages without one its
-// scheme ("file:"), so all local files share one zoom.
+// The site a URL's zoom belongs to: its host name, or for pages without one
+// its scheme ("file:"), so all local files share one zoom.
 function siteOf(url) {
   try {
-    const { host, protocol } = new URL(url)
-    return host || protocol
+    const { hostname, protocol } = new URL(url)
+    return hostname || protocol
   } catch {
     return null
   }

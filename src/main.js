@@ -420,7 +420,8 @@ function buildMenu() {
         { label: 'Back', accelerator: key('back'), click: pageAction((page) => page.navigationHistory.goBack()) },
         { label: 'Forward', accelerator: key('forward'), click: pageAction((page) => page.navigationHistory.goForward()) },
         { type: 'separator' },
-        { label: 'Actual Size', accelerator: key('actualSize'), click: inFocused((c) => c.resetZoom()) },
+        // Back to the default zoom from Settings, which may not be 100%.
+        { label: 'Reset Zoom', accelerator: key('resetZoom'), click: inFocused((c) => c.resetZoom()) },
         { label: 'Zoom In', accelerator: key('zoomIn'), click: inFocused((c) => c.zoomBy(1)) },
         { label: 'Zoom Out', accelerator: key('zoomOut'), click: inFocused((c) => c.zoomBy(-1)) },
         // ⌘+ as well as ⌘=, as in other browsers.

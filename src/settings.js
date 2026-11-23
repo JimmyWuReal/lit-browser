@@ -115,7 +115,7 @@ const SECTIONS = [
       shortcut('forward', 'Forward', 'CmdOrCtrl+]'),
       shortcut('zoomIn', 'Zoom In', 'CmdOrCtrl+='),
       shortcut('zoomOut', 'Zoom Out', 'CmdOrCtrl+-'),
-      shortcut('actualSize', 'Actual Size', 'CmdOrCtrl+0'),
+      shortcut('resetZoom', 'Reset Zoom', 'CmdOrCtrl+0'),
       shortcut('nextTab', 'Show Next Tab', 'Ctrl+Tab'),
       shortcut('previousTab', 'Show Previous Tab', 'Ctrl+Shift+Tab'),
       shortcut('devTools', 'Developer Tools', 'Alt+CmdOrCtrl+I'),
