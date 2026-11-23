@@ -1,5 +1,5 @@
-// The only bridge between Lit's own pages (the toolbar and the Settings
-// popup) and the main process.
+// The only bridge between Lit's own pages (the toolbar, and the Settings and
+// History popups) and the main process.
 const { contextBridge, ipcRenderer } = require('electron')
 
 const on = (channel, callback) => ipcRenderer.on(channel, (_event, value) => callback(value))
@@ -31,5 +31,18 @@ contextBridge.exposeInMainWorld('lit', {
     onShortcutPressed: (callback) => on('shortcut-pressed', callback),
     onOpen: (callback) => on('settings-open', callback),
     onChanged: (callback) => on('settings-changed', callback),
+  },
+  // For the History popup only. State is { entries: [{ url, title, time }],
+  // enabled, closedTabs, error? } (see historyState in main), newest first.
+  history: {
+    get: () => ipcRenderer.invoke('history-get'),
+    // `background` opens it in a new tab behind the current one.
+    open: (url, background = false) => ipcRenderer.send('history-open-page', url, background),
+    // Both answer with the new state, with `error` if nothing changed.
+    remove: (url) => ipcRenderer.invoke('history-remove', url),
+    clear: () => ipcRenderer.invoke('history-clear'),
+    close: () => ipcRenderer.send('history-close'),
+    onOpen: (callback) => on('history-open', callback),
+    onChanged: (callback) => on('history-changed', callback),
   },
 })
