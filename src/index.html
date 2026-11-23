@@ -361,6 +361,9 @@
       close.addEventListener('click', () => window.lit.closeTab(id))
       // Middle click closes, as in other browsers.
       root.addEventListener('auxclick', (event) => { if (event.button === 1) window.lit.closeTab(id) })
+      // Main shows the tab's menu; preventing the default keeps the
+      // toolbar's own text menu from showing too.
+      root.addEventListener('contextmenu', (event) => { event.preventDefault(); window.lit.showTabMenu(id) })
       labelShortcut(close)
       const elements = { root, select, close, icon: root.querySelector('.tab-icon'), title: root.querySelector('.tab-title'), iconKey: null }
       tabElements.set(id, elements)

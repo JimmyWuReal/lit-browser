@@ -1,4 +1,4 @@
-// Pure tab-order rules, kept apart from Electron so they can be tested.
+// Pure tab and window rules, kept apart from Electron so they can be tested.
 
 // The tab to show after closing `closingId`: the active tab stays active
 // unless it is the one closing; then its right neighbor wins, else its left
@@ -24,4 +24,31 @@ function byNumber(ids, number) {
   return number === 9 ? ids[ids.length - 1] : ids[number - 1] ?? null
 }
 
-module.exports = { afterClose, step, byNumber }
+// Closed tabs and windows, for Reopen Closed Tab: newest last, and only
+// the `limit` newest are kept.
+function remember(closed, entry, limit = 25) {
+  closed.push(entry)
+  if (closed.length > limit) closed.splice(0, closed.length - limit)
+  return closed
+}
+
+// Drops entries closed `keepFor` ms or more before `now` (each has `time`).
+// Returns when the next one expires, or null when none are left.
+function forgetOlder(closed, now, keepFor) {
+  const kept = closed.filter((entry) => now - entry.time < keepFor)
+  closed.splice(0, closed.length, ...kept)
+  return kept.length ? Math.min(...kept.map((entry) => entry.time)) + keepFor : null
+}
+
+// Where a reopened tab goes: back at its old place, or at the end if the
+// window now has fewer tabs.
+const reopenIndex = (index, count) => Math.min(Math.max(index, 0), count)
+
+// Whether a window at `bounds` would show on any of the displays' work
+// areas (all { x, y, width, height }), so a reopened window never lands
+// off screen after a display is unplugged.
+const onScreen = (bounds, areas) => areas.some((area) =>
+  bounds.x < area.x + area.width && bounds.x + bounds.width > area.x &&
+  bounds.y < area.y + area.height && bounds.y + bounds.height > area.y)
+
+module.exports = { afterClose, step, byNumber, remember, forgetOlder, reopenIndex, onScreen }

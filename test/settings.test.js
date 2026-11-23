@@ -37,6 +37,12 @@ test('clean gives a saved shortcut precedence over a new default', () => {
   assert.equal(values['shortcuts.find'], '')
 })
 
+test('clean keeps a chosen shortcut over a newer default', () => {
+  const values = clean({ 'shortcuts.reload': 'Shift+CmdOrCtrl+T' })
+  assert.equal(values['shortcuts.reload'], 'Shift+CmdOrCtrl+T')
+  assert.equal(values['shortcuts.reopenTab'], '')
+})
+
 test('update checks each type', () => {
   assert.equal(update(defaults, 'searchEngine', 'duckduckgo').values.searchEngine, 'duckduckgo')
   assert.ok(update(defaults, 'searchEngine', 'nope').error)
