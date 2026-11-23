@@ -84,6 +84,13 @@ const SECTIONS = [
     title: 'Privacy',
     settings: [
       {
+        key: 'saveHistory',
+        label: 'Save history',
+        description: 'Pages you visit, and closed tabs to reopen. When off, neither is kept.',
+        type: 'toggle',
+        default: true,
+      },
+      {
         key: 'doNotTrack',
         label: 'Ask sites not to track me',
         description: 'Sends Do Not Track and Global Privacy Control with every request.',
@@ -99,6 +106,7 @@ const SECTIONS = [
       shortcut('newTab', 'New Tab', 'CmdOrCtrl+T'),
       shortcut('newWindow', 'New Window', 'CmdOrCtrl+N'),
       shortcut('reopenTab', 'Reopen Closed Tab', 'Shift+CmdOrCtrl+T'),
+      shortcut('history', 'Show History', 'CmdOrCtrl+Y'),
       shortcut('openLocation', 'Open Location', 'CmdOrCtrl+L'),
       shortcut('closeTab', 'Close Tab', 'CmdOrCtrl+W'),
       shortcut('closeWindow', 'Close Window', 'Shift+CmdOrCtrl+W'),
@@ -179,8 +187,8 @@ function update(values, key, value) {
   return { values: { ...values, [key]: value } }
 }
 
-// Writes a sibling file and renames it over the old one, so an interrupted
-// write never leaves a half-written settings file.
+// Writes JSON to a sibling file and renames it over the old one, so an
+// interrupted write never leaves a half-written file. History uses it too.
 function save(file, values) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const temporary = `${file}.tmp`

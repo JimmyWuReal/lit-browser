@@ -10,6 +10,7 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | --- | --- |
 | ⌘T / ⌘N | New tab / new window |
 | ⇧⌘T | Reopen the last closed tab or window |
+| ⌘Y | History |
 | ⌘W / ⇧⌘W | Close tab / close window |
 | ⌘L | Focus the address bar |
 | ⌘, | Settings |
@@ -17,7 +18,13 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | ⌘1–⌘8, ⌘9 | That tab, last tab |
 | ⌘R, ⌘[, ⌘] | Reload, back, forward |
 
-Middle-click closes a tab. ⇧⌘T brings back the last closed tab with its back/forward history, in its old place; a closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers the last 25 closed tabs and windows until it quits. In the tab strip, arrow keys move between tabs and Delete closes one.
+Middle-click closes a tab. In the tab strip, arrow keys move between tabs and Delete closes one.
+
+⇧⌘T brings back the last tab you closed (⌘W, its close button, middle-click) as it was then, with its back/forward history, in its old place. A closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers the last 25 closed tabs and windows until it quits; a page closing itself (such as a sign-in popup) is not remembered.
+
+## History
+
+⌘Y opens History as a popup over the window: every page visited, newest first and grouped by day, saved to `history.json` in the app's data folder (the newest 5,000 pages). Type to search titles and addresses. Click a page to open it in the current tab, or ⌘-click to open it in a background tab. Remove one page with its × (or Delete), or everything with Clear History, which also forgets closed tabs.
 
 ## Settings
 
@@ -26,7 +33,7 @@ Middle-click closes a tab. ⇧⌘T brings back the last closed tab with its back
 - **General:** search engine (Google, DuckDuckGo or Bing).
 - **Tabs:** what new tabs open (the search box, or an address or search), where they go, whether ⌘-clicked links come to the front, and whether closing the last tab closes the window.
 - **Downloads:** ask where to save, or save straight to Downloads.
-- **Privacy:** send Do Not Track and Global Privacy Control.
+- **Privacy:** save history (pages visited and closed tabs; when off, nothing new is saved, closed tabs are forgotten and Reopen Closed Tab does nothing), and send Do Not Track and Global Privacy Control.
 - **Keyboard Shortcuts:** every shortcut in the table above except ⌘1–9 and the ⇧⌘[ / ⇧⌘] alternates. Click a shortcut and press the new keys; Escape cancels and Delete removes it. Lit refuses a shortcut another command already uses.
 
 ## Run
@@ -56,8 +63,8 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 
 - `src/main.js` opens windows and gives each tab its own Chromium `WebContentsView` under the toolbar; only the active tab's view is shown. It owns the tab list and sends it to the toolbar whenever it changes. The application menu holds every shortcut, so they work whether the toolbar or a page has focus.
 - `src/index.html` is the toolbar: the tab strip (also the window's title bar) and the address bar. When the active tab has not loaded anything, the address bar fills the window as the centered search box and the tab's page view stays hidden.
-- `src/preload.js` is the bridge between Lit's own pages (the toolbar and the Settings popup) and the main process.
+- `src/preload.js` is the bridge between Lit's own pages (the toolbar, and the Settings and History popups) and the main process.
 - `src/settings.js` lists every setting, grouped in sections, with its type and default; it also loads, checks and saves them. `src/settings.html` is the Settings popup, drawn entirely from that list, so a new setting only needs an entry there (plus a control in `settings.html` if it brings a new type). Each window shows the popup in its own transparent view over the tabs. While a shortcut is recorded, main passes the key presses to it instead of the menu.
 - `src/shortcuts.js` turns key presses into Electron accelerators, checks them, and labels them (⇧⌘W). `src/downloads.js` picks a free file name in Downloads.
-- Closed tabs and windows go on a list in `src/main.js`, each with its `navigationHistory` entries, which Reopen Closed Tab restores.
-- `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab-order rules (which tab to show after closing one, next/previous, ⌘1–9, how many closed tabs to remember and where one reopens). `url.js`, `tabs.js`, `settings.js`, `shortcuts.js` and `downloads.js` are plain Node, tested in `test/`.
+- Closed tabs and windows go on a list in `src/main.js`, each with its `navigationHistory` entries, which Reopen Closed Tab restores. `src/history.js` keeps the pages visited (one entry per address) and `src/history.html` is the History popup, shown the same way as Settings.
+- `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab-order rules (which tab to show after closing one, next/previous, ⌘1–9, how many closed tabs to remember and where one reopens). `url.js`, `tabs.js`, `settings.js`, `history.js`, `shortcuts.js` and `downloads.js` are plain Node, tested in `test/`.

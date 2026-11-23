@@ -1,13 +1,15 @@
 // Lit's main process. Each window has a toolbar on top (src/index.html,
 // the window's own page) and one Chromium WebContentsView per tab below it.
-// Only the active tab's view is visible. The Settings popup is one more
-// view, transparent and over everything, shown only while open.
+// Only the active tab's view is visible. The Settings and History popups
+// are each one more view, transparent and over everything, shown only
+// while open.
 const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, session } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl } = require('./url')
-const { afterClose, step, byNumber, remember, reopenIndex, withPending } = require('./tabs')
+const { afterClose, step, byNumber, remember, reopenIndex } = require('./tabs')
 const settingsStore = require('./settings')
+const historyStore = require('./history')
 const shortcuts = require('./shortcuts')
 const { uniquePath } = require('./downloads')
 
@@ -17,9 +19,10 @@ const BAR_HEIGHT = STRIP_HEIGHT + 44
 const PRELOAD = path.join(__dirname, 'preload.js')
 
 // The toolbar's webContents -> its window's controls, so toolbar messages
-// only ever act on their own window. The same for each Settings popup.
+// only ever act on their own window. Each popup's webContents ->
+// { controls, name }, so a popup only gets its own messages answered.
 const windowsByToolbar = new WeakMap()
-const windowsBySettings = new WeakMap()
+const windowsByPopup = new WeakMap()
 const openWindows = new Set()
 let nextTabId = 1
 // Names a window for Reopen Closed Tab; a reopened window keeps its key,
@@ -27,8 +30,9 @@ let nextTabId = 1
 let nextWindowKey = 1
 
 // Recently closed tabs and windows, newest last, for Reopen Closed Tab.
-// Every close counts, so it always undoes the latest one; a blank tab has
-// a null history and comes back blank.
+// Only closes people make count (⌘W, the close button, closing a window),
+// not a page closing itself; a blank tab has a null history and comes
+// back blank. Nothing is kept while Save history is off.
 // A tab: { windowKey, index, history }, back in its window if that is open.
 // A window: { key, tabs: [history], activeIndex, size }, so tab order and
 // the active tab come back as they were.
@@ -39,6 +43,40 @@ const closed = []
 // Settings are read once at launch and saved on every change.
 let settingsFile
 let settings = settingsStore.clean()
+
+// Pages visited (src/history.js), newest first. Loaded at launch, and saved
+// a moment after a change, so a burst of navigations writes once.
+let historyFile
+let visited = []
+let historySave = null
+
+function saveVisited() {
+  clearTimeout(historySave)
+  historySave = null
+  try {
+    historyStore.save(historyFile, visited)
+  } catch {}
+}
+
+function setVisited(next) {
+  if (next === visited) return
+  visited = next
+  clearTimeout(historySave)
+  historySave = setTimeout(saveVisited, 1000)
+  for (const controls of openWindows) controls.historyChanged()
+}
+
+function recordVisit(url, title) {
+  if (settings.saveHistory) setVisited(historyStore.visit(visited, { url, title, time: Date.now() }))
+}
+
+// What the History popup draws.
+const historyState = () => ({ entries: visited, enabled: settings.saveHistory })
+
+function forgetClosed() {
+  closed.length = 0
+  refreshReopen()
+}
 
 // What the Settings popup draws: the values, plus each shortcut as ⌘ symbols.
 function settingsState(error) {
@@ -63,6 +101,7 @@ function refreshReopen() {
 }
 
 function rememberClosed(entry) {
+  if (!settings.saveHistory) return
   remember(closed, entry)
   refreshReopen()
 }
@@ -87,6 +126,7 @@ function reopenClosed(focused) {
 function applySettings() {
   Menu.setApplicationMenu(buildMenu())
   applyDoNotTrack()
+  if (!settings.saveHistory) forgetClosed()
   for (const controls of openWindows) controls.settingsChanged()
 }
 
@@ -108,11 +148,12 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   const find = (id) => tabs.find((tab) => tab.id === id)
   const active = () => find(activeId)
   const ids = () => tabs.map((tab) => tab.id)
-  // The Settings popup's view, made on first open (see openSettings).
-  let settingsView = null
-  let settingsOpen = false
+  // Popup views by name, each made on first open (see openPopup), and the
+  // name of the one open, if any.
+  const popups = {}
+  let popupOpen = null
   let recording = false
-  // Whether the toolbar had focus when Settings opened, to give it back.
+  // Whether the toolbar had focus when a popup opened, to give it back.
   let toolbarHadFocus = false
   // The keyboard layout's code -> character map, sent by the popup.
   let keyboardLayout = {}
@@ -134,7 +175,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   function layout() {
     const { width, height } = win.getContentBounds()
     for (const tab of tabs) tab.view.setBounds({ x: 0, y: BAR_HEIGHT, width, height: height - BAR_HEIGHT })
-    settingsView?.setBounds({ x: 0, y: 0, width, height })
+    for (const view of Object.values(popups)) view.setBounds({ x: 0, y: 0, width, height })
   }
 
   function focusAddress() {
@@ -148,7 +189,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // move along the tabs.
   function show(tab, focus = true) {
     for (const other of tabs) other.view.setVisible(other === tab && tab.started)
-    if (!focus || settingsOpen) return
+    if (!focus || popupOpen) return
     if (tab.started) tab.page.focus()
     else focusAddress()
   }
@@ -169,34 +210,39 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, pendingUrl: '' }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
-    // Re-adding a view moves it to the top, so Settings stays over new tabs.
-    if (settingsView) win.contentView.addChildView(settingsView)
+    // Re-adding a view moves it to the top, so popups stay over new tabs.
+    for (const popup of Object.values(popups)) win.contentView.addChildView(popup)
     layout()
 
-    // The page being loaded, until it commits, fails or is stopped; a tab
-    // closed meanwhile reopens on it.
-    page.on('did-start-navigation', ({ url, isMainFrame, isSameDocument }) => {
-      if (isMainFrame && !isSameDocument) tab.pendingUrl = url
-    })
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
-    page.on('did-stop-loading', () => { tab.loading = false; tab.pendingUrl = ''; sync() })
+    page.on('did-stop-loading', () => { tab.loading = false; sync() })
     // A new page has no title yet; a reopened one keeps its entry's title,
     // as Chromium does not announce a title it already had.
     page.on('did-navigate', (_event, url) => {
       const history = page.navigationHistory
       tab.url = url
-      tab.pendingUrl = ''
       tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
       tab.favicon = null
       saveHistory(tab)
+      recordVisit(url, tab.title)
       sync()
     })
-    page.on('did-navigate-in-page', (_event, url, isMainFrame) => { if (isMainFrame) { tab.url = url; saveHistory(tab); sync() } })
-    page.on('page-title-updated', (_event, title) => { tab.title = title; sync() })
+    page.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+      if (!isMainFrame) return
+      tab.url = url
+      saveHistory(tab)
+      recordVisit(url, tab.title)
+      sync()
+    })
+    page.on('page-title-updated', (_event, title) => {
+      tab.title = title
+      if (settings.saveHistory) setVisited(historyStore.retitle(visited, tab.url, title))
+      sync()
+    })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
     // Every tab leaves through here: after closeTab's request, or when a
     // page closes itself (window.close() on a popup it opened).
@@ -252,10 +298,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     })
   }
 
-  // Copies the tab's committed back/forward list onto it, so it can still
-  // be reopened after its page is gone (a popup calling window.close()).
-  // Read once more at close for the freshest scroll positions and form
-  // values. Returns that list plus any page still loading, to reopen.
+  // Copies the tab's back/forward list onto it, as it is now, for Reopen
+  // Closed Tab. Kept on each navigation, and read once more at close for
+  // the freshest scroll positions and form values. A page still loading
+  // is not part of it: a tab reopens as it was when closed.
   // Until its first page commits (tab.url is set), Chromium's list holds
   // only its initial blank entry, so it is not read.
   function saveHistory(tab) {
@@ -263,7 +309,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       const entries = tab.page.navigationHistory.getAllEntries()
       if (entries.length) tab.history = { entries, index: tab.page.navigationHistory.getActiveIndex() }
     }
-    return withPending(tab.history, tab.pendingUrl)
+    return tab.history
   }
 
   // What Reopen Closed Tab needs to bring this window back.
@@ -279,11 +325,13 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   }
 
   // Asks the page to close, so its beforeunload can still keep it open;
-  // removeTab runs once it is gone.
+  // removeTab runs once it is gone. Only tabs closed through here can be
+  // reopened.
   function closeTab(id, focus = true) {
     const tab = find(id)
     if (!tab) return
     tab.closeFocus = focus
+    tab.closedByUser = true
     saveHistory(tab)
     if (tab.page.isDestroyed()) removeTab(tab)
     else tab.page.close({ waitForBeforeUnload: true })
@@ -302,7 +350,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // unless Settings says to keep it open with a new tab. Then the window
     // is what reopens.
     const closesWindow = nextId === null && settings.closeWindowWithLastTab
-    rememberClosed(closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
+    if (tab.closedByUser) rememberClosed(closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
     if (nextId === null) return closesWindow ? win.close() : newTab()
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
@@ -316,47 +364,72 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     tab.page.loadURL(toUrl(input, settings.searchEngine)).catch(() => {})
   }
 
-  // The Settings popup (src/settings.html): made on first use, then hidden
-  // and shown. While a shortcut is being recorded, key presses go to it
+  // The Settings and History popups (src/settings.html, src/history.html):
+  // each is made on first use, then hidden and shown; one is open at a time.
+  // While a shortcut is being recorded in Settings, key presses go to it
   // instead of the menu, so ⌘T records ⌘T rather than opening a tab.
-  function openSettings() {
-    if (!settingsView) {
-      settingsView = new WebContentsView({ webPreferences: { preload: PRELOAD } })
-      settingsView.setBackgroundColor('#00000000')
-      windowsBySettings.set(settingsView.webContents, controls)
-      settingsView.webContents.on('before-input-event', (event, input) => {
+  function popupView(name) {
+    if (popups[name]) return popups[name]
+    const view = new WebContentsView({ webPreferences: { preload: PRELOAD } })
+    view.setBackgroundColor('#00000000')
+    windowsByPopup.set(view.webContents, { controls, name })
+    if (name === 'settings') {
+      view.webContents.on('before-input-event', (event, input) => {
         if (!recording || input.type !== 'keyDown') return
         event.preventDefault()
         const plain = !input.control && !input.alt && !input.shift && !input.meta
-        if (input.key === 'Escape') settingsView.webContents.send('shortcut-pressed', { cancel: true })
-        else if (plain && (input.code === 'Backspace' || input.code === 'Delete')) settingsView.webContents.send('shortcut-pressed', { accelerator: '' })
+        if (input.key === 'Escape') view.webContents.send('shortcut-pressed', { cancel: true })
+        else if (plain && (input.code === 'Backspace' || input.code === 'Delete')) view.webContents.send('shortcut-pressed', { accelerator: '' })
         else {
           const accelerator = shortcuts.fromInput(input, keyboardLayout)
-          if (accelerator) settingsView.webContents.send('shortcut-pressed', { accelerator })
+          if (accelerator) view.webContents.send('shortcut-pressed', { accelerator })
         }
       })
-      settingsView.webContents.loadFile(path.join(__dirname, 'settings.html'))
     }
-    if (!settingsOpen) toolbarHadFocus = win.webContents.isFocused()
-    settingsOpen = true
-    win.contentView.addChildView(settingsView)
-    layout()
-    settingsView.setVisible(true)
-    settingsView.webContents.focus()
-    settingsView.webContents.send('settings-open', settingsState())
+    view.webContents.loadFile(path.join(__dirname, `${name}.html`))
+    popups[name] = view
+    return view
   }
 
-  // The popup has no exit animation, so it just hides. Focus goes back
+  // Opening one popup over another swaps them; focus still goes back to
+  // where it was before the first.
+  function openPopup(name) {
+    const view = popupView(name)
+    if (!popupOpen) toolbarHadFocus = win.webContents.isFocused()
+    else if (popupOpen !== name) {
+      popups[popupOpen].setVisible(false)
+      recording = false
+    }
+    popupOpen = name
+    win.contentView.addChildView(view)
+    layout()
+    view.setVisible(true)
+    view.webContents.focus()
+    view.webContents.send(`${name}-open`, name === 'settings' ? settingsState() : historyState())
+  }
+
+  // Popups have no exit animation, so they just hide. Focus goes back
   // where it was: the toolbar (its settings button, or the address bar)
   // keeps its own focused element, otherwise the page gets it.
-  function closeSettings() {
-    if (!settingsOpen) return
-    settingsOpen = false
+  function closePopup() {
+    if (!popupOpen) return
+    popups[popupOpen].setVisible(false)
+    popupOpen = null
     recording = false
-    settingsView.setVisible(false)
     if (toolbarHadFocus) return win.webContents.focus()
     const tab = active()
     if (tab) show(tab)
+  }
+
+  // A page picked in History opens in the current tab, or with ⌘ in a
+  // background tab next to it, leaving History open.
+  function openFromHistory(url, background) {
+    if (background) {
+      const current = active()
+      return addTab({ url, background: true, index: current ? tabs.indexOf(current) + 1 : tabs.length })
+    }
+    closePopup()
+    navigate(url)
   }
 
   const controls = {
@@ -365,7 +438,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     newTab,
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
     reopenTab(history, index) {
-      closeSettings()
+      closePopup()
       addTab({ history, index: reopenIndex(index, tabs.length) })
     },
     activate,
@@ -375,16 +448,21 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     byNumber: (number) => activate(byNumber(ids(), number)),
     // The active page, for reload, back, forward and its developer tools.
     page: () => (active()?.started && !active().page.isDestroyed() ? active().page : null),
-    openSettings,
-    closeSettings,
-    settingsOpen: () => settingsOpen,
+    openPopup,
+    closePopup,
+    popupOpen: () => popupOpen,
+    openFromHistory,
     setRecording: (on, keys) => {
       recording = on
       keyboardLayout = on && keys && typeof keys === 'object' ? keys : {}
     },
     settingsChanged() {
       sendShortcuts()
-      if (settingsView) settingsView.webContents.send('settings-changed', settingsState())
+      popups.settings?.webContents.send('settings-changed', settingsState())
+      controls.historyChanged()
+    },
+    historyChanged() {
+      if (popupOpen === 'history') popups.history.webContents.send('history-changed', historyState())
     },
   }
   windowsByToolbar.set(win.webContents, controls)
@@ -405,7 +483,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     for (const tab of tabs.splice(0)) {
       if (!tab.page.isDestroyed()) tab.page.close()
     }
-    settingsView?.webContents.close()
+    for (const view of Object.values(popups)) view.webContents.close()
   })
 
   win.loadFile(path.join(__dirname, 'index.html'))
@@ -421,6 +499,14 @@ const controlsOf = (win) => (win && !win.isDestroyed() ? windowsByToolbar.get(wi
 const inFocused = (action) => (_item, win) => {
   const controls = controlsOf(win)
   if (controls) action(controls)
+}
+
+// Settings and History open in the focused window, or a new one, and the
+// same command closes them again.
+const togglePopup = (name) => (_item, win) => {
+  const c = controlsOf(win) || createWindow()
+  if (c.popupOpen() === name) c.closePopup()
+  else c.openPopup(name)
 }
 
 // The menu holds every shortcut, so they work whether the toolbar or a page
@@ -442,11 +528,7 @@ function buildMenu() {
         {
           label: 'Settings…',
           accelerator: key('settings'),
-          click: (_item, win) => {
-            const c = controlsOf(win) || createWindow()
-            if (c.settingsOpen()) c.closeSettings()
-            else c.openSettings()
-          },
+          click: togglePopup('settings'),
         },
         { type: 'separator' },
         { role: 'services' },
@@ -463,12 +545,11 @@ function buildMenu() {
       submenu: [
         { label: 'New Tab', accelerator: key('newTab'), click: (_item, win) => { const c = controlsOf(win); if (c) c.newTab(); else createWindow() } },
         { label: 'New Window', accelerator: key('newWindow'), click: () => createWindow() },
-        { id: 'reopenTab', label: 'Reopen Closed Tab', accelerator: key('reopenTab'), enabled: closed.length > 0, click: (_item, win) => reopenClosed(controlsOf(win)) },
         { type: 'separator' },
-        { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closeSettings(); c.focusAddress() }) },
+        { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closePopup(); c.focusAddress() }) },
         { type: 'separator' },
-        // With Settings open, Close Tab closes Settings instead.
-        { label: 'Close Tab', accelerator: key('closeTab'), click: inFocused((c) => (c.settingsOpen() ? c.closeSettings() : c.closeTab())) },
+        // With a popup open, Close Tab closes the popup instead.
+        { label: 'Close Tab', accelerator: key('closeTab'), click: inFocused((c) => (c.popupOpen() ? c.closePopup() : c.closeTab())) },
         { label: 'Close Window', accelerator: key('closeWindow'), click: inFocused((c) => c.win.close()) },
       ],
     },
@@ -483,6 +564,14 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Developer Tools', accelerator: key('devTools'), click: pageAction((page) => page.toggleDevTools()) },
         { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'History',
+      submenu: [
+        { label: 'Show All History', accelerator: key('history'), click: togglePopup('history') },
+        { type: 'separator' },
+        { id: 'reopenTab', label: 'Reopen Closed Tab', accelerator: key('reopenTab'), enabled: closed.length > 0, click: (_item, win) => reopenClosed(controlsOf(win)) },
       ],
     },
     {
@@ -513,13 +602,15 @@ ipcMain.on('navigate', fromToolbar((c, input) => typeof input === 'string' && c.
 ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
 ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
-ipcMain.on('open-settings', fromToolbar((c) => c.openSettings()))
+ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 
-// Settings messages, answered only for a Settings popup.
-const fromSettings = (handler) => (event, ...args) => {
-  const controls = windowsBySettings.get(event.sender)
-  if (controls) return handler(controls, ...args)
+// Popup messages, answered only for the popup `name`.
+const fromPopup = (name, handler) => (event, ...args) => {
+  const popup = windowsByPopup.get(event.sender)
+  if (popup?.name === name) return handler(popup.controls, ...args)
 }
+const fromSettings = (handler) => fromPopup('settings', handler)
+const fromHistory = (handler) => fromPopup('history', handler)
 ipcMain.handle('settings-get', fromSettings(() => settingsState()))
 ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
   const { values, error } = settingsStore.update(settings, key, value)
@@ -536,11 +627,23 @@ ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
   return settingsState()
 }))
 ipcMain.on('settings-record', fromSettings((c, on, keys) => c.setRecording(on === true, keys)))
-ipcMain.on('settings-close', fromSettings((c) => c.closeSettings()))
+ipcMain.on('settings-close', fromSettings((c) => c.closePopup()))
+
+ipcMain.handle('history-get', fromHistory(() => historyState()))
+// Only addresses already in history can be opened from it.
+ipcMain.on('history-open-page', fromHistory((c, url, background) => {
+  if (visited.some((entry) => entry.url === url)) c.openFromHistory(url, background === true)
+}))
+ipcMain.on('history-remove', fromHistory((_c, url) => setVisited(historyStore.remove(visited, url))))
+// Clearing history forgets closed tabs too.
+ipcMain.on('history-clear', fromHistory(() => { setVisited([]); forgetClosed() }))
+ipcMain.on('history-close', fromHistory((c) => c.closePopup()))
 
 app.whenReady().then(() => {
   settingsFile = path.join(app.getPath('userData'), 'settings.json')
   settings = settingsStore.load(settingsFile)
+  historyFile = path.join(app.getPath('userData'), 'history.json')
+  visited = historyStore.load(historyFile)
   applyDoNotTrack()
   // Saving straight to Downloads, when Settings says so; otherwise
   // Electron asks where to save. Paths of unfinished downloads count as
@@ -563,4 +666,6 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow() })
 })
 
+// A save still waiting when Lit quits is written now.
+app.on('will-quit', () => { if (historySave) saveVisited() })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
