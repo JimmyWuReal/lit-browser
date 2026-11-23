@@ -6,7 +6,7 @@ const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, session } = 
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl } = require('./url')
-const { afterClose, step, byNumber } = require('./tabs')
+const { afterClose, step, byNumber, remember, reopenIndex } = require('./tabs')
 const settingsStore = require('./settings')
 const shortcuts = require('./shortcuts')
 const { uniquePath } = require('./downloads')
@@ -22,6 +22,13 @@ const windowsByToolbar = new WeakMap()
 const windowsBySettings = new WeakMap()
 const openWindows = new Set()
 let nextTabId = 1
+
+// Recently closed tabs and windows, newest last, for Reopen Closed Tab.
+// A tab: { controls, index, history }, back in its window if that is still
+// open. A window: { tabs: [history], activeIndex, size }. A history is
+// { entries, index } from navigationHistory, so back and forward come back too.
+// Kept only while Lit runs.
+const closed = []
 
 // Settings are read once at launch and saved on every change.
 let settingsFile
@@ -43,6 +50,33 @@ function applyDoNotTrack() {
     : null)
 }
 
+// The menu item is grayed out while there is nothing to reopen.
+function refreshReopen() {
+  const item = Menu.getApplicationMenu()?.getMenuItemById('reopenTab')
+  if (item) item.enabled = closed.length > 0
+}
+
+function rememberClosed(entry) {
+  remember(closed, entry)
+  refreshReopen()
+}
+
+// The last closed tab goes back where it was: its own window if still open,
+// else the focused one, else a new window. A closed window reopens whole.
+function reopenClosed(focused) {
+  const entry = closed.pop()
+  if (!entry) return
+  refreshReopen()
+  if (entry.tabs) return createWindow(entry)
+  const target = openWindows.has(entry.controls) ? entry.controls : focused
+  if (!target) return createWindow({ tabs: [entry.history] })
+  if (target !== focused) {
+    if (target.win.isMinimized()) target.win.restore()
+    target.win.focus()
+  }
+  target.reopenTab(entry.history, entry.index)
+}
+
 // After a change: rebuild the menu for new shortcuts, and tell every window.
 function applySettings() {
   Menu.setApplicationMenu(buildMenu())
@@ -50,10 +84,11 @@ function applySettings() {
   for (const controls of openWindows) controls.settingsChanged()
 }
 
-function createWindow() {
+// `tabs`, `activeIndex` and `size` reopen a closed window (see `closed`).
+function createWindow({ tabs: restored = [], activeIndex = 0, size } = {}) {
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: size?.width || 1200,
+    height: size?.height || 800,
     minWidth: 480,
     minHeight: 320,
     backgroundColor: '#090909',
@@ -122,12 +157,13 @@ function createWindow() {
 
   // `webContents` is passed when a page opens the tab itself, so the new
   // page keeps its link back to the opener (sign-in popups need it).
-  function addTab({ url, webContents, background = false, index = tabs.length } = {}) {
+  // `history` reopens a closed tab with its back/forward list.
+  function addTab({ url, webContents, history, background = false, index = tabs.length } = {}) {
     const view = new WebContentsView(webContents ? { webContents } : {})
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents) }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -137,8 +173,17 @@ function createWindow() {
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
     page.on('did-stop-loading', () => { tab.loading = false; sync() })
-    page.on('did-navigate', (_event, url) => { tab.url = url; tab.title = ''; tab.favicon = null; sync() })
-    page.on('did-navigate-in-page', (_event, url, isMainFrame) => { if (isMainFrame) { tab.url = url; sync() } })
+    // A new page has no title yet; a reopened one keeps its entry's title,
+    // as Chromium does not announce a title it already had.
+    page.on('did-navigate', (_event, url) => {
+      const history = page.navigationHistory
+      tab.url = url
+      tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
+      tab.favicon = null
+      saveHistory(tab)
+      sync()
+    })
+    page.on('did-navigate-in-page', (_event, url, isMainFrame) => { if (isMainFrame) { tab.url = url; saveHistory(tab); sync() } })
     page.on('page-title-updated', (_event, title) => { tab.title = title; sync() })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
     // Every tab leaves through here: after closeTab's request, or when a
@@ -173,7 +218,14 @@ function createWindow() {
       }).page,
     }))
 
-    if (url) page.loadURL(url).catch(() => {})
+    if (history) {
+      // Shows the page's address and title until it loads.
+      const current = history.entries[history.index] || {}
+      tab.url = current.url || ''
+      tab.title = current.title || ''
+      tab.history = history
+      page.navigationHistory.restore(history).catch(() => {})
+    } else if (url) page.loadURL(url).catch(() => {})
     if (background) sync()
     else activate(tab.id)
     return tab
@@ -188,6 +240,22 @@ function createWindow() {
     })
   }
 
+  // Copies the tab's back/forward list onto it, so it can still be reopened
+  // after its page is gone (a popup calling window.close()). Read once more
+  // at close for the freshest scroll positions and form values.
+  function saveHistory(tab) {
+    if (tab.page.isDestroyed()) return tab.history
+    const entries = tab.page.navigationHistory.getAllEntries()
+    if (entries.length) tab.history = { entries, index: tab.page.navigationHistory.getActiveIndex() }
+    return tab.history
+  }
+
+  // What Reopen Closed Tab needs to bring this window back.
+  function closedWindow(histories, activeIndex) {
+    const { width, height } = win.getNormalBounds()
+    return { tabs: histories, activeIndex, size: { width, height } }
+  }
+
   // A tab's first load turns it from the search box into its page.
   function refresh(tab) {
     if (tab.id === activeId && !tab.view.getVisible()) show(tab)
@@ -200,6 +268,7 @@ function createWindow() {
     const tab = find(id)
     if (!tab) return
     tab.closeFocus = focus
+    saveHistory(tab)
     if (tab.page.isDestroyed()) removeTab(tab)
     else tab.page.close({ waitForBeforeUnload: true })
   }
@@ -208,12 +277,18 @@ function createWindow() {
     if (!find(tab.id)) return
     const nextId = afterClose(ids(), activeId, tab.id)
     const focus = tab.closeFocus ?? true
-    tabs.splice(tabs.indexOf(tab), 1)
+    const index = tabs.indexOf(tab)
+    // Tabs that never loaded anything are not worth reopening.
+    const history = tab.started ? saveHistory(tab) : null
+    tabs.splice(index, 1)
     if (win.isDestroyed()) return
     win.contentView.removeChildView(tab.view)
     // Closing the last tab closes the window, as in Chrome and Safari,
-    // unless Settings says to keep it open with a new tab.
-    if (nextId === null) return settings.closeWindowWithLastTab ? win.close() : newTab()
+    // unless Settings says to keep it open with a new tab. Then the window
+    // is what reopens.
+    const closesWindow = nextId === null && settings.closeWindowWithLastTab
+    if (history) rememberClosed(closesWindow ? closedWindow([history], 0) : { controls, index, history })
+    if (nextId === null) return closesWindow ? win.close() : newTab()
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
   }
@@ -273,6 +348,10 @@ function createWindow() {
     win,
     newTab,
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
+    reopenTab(history, index) {
+      closeSettings()
+      addTab({ history, index: reopenIndex(index, tabs.length) })
+    },
     activate,
     navigate,
     focusAddress,
@@ -296,6 +375,13 @@ function createWindow() {
   openWindows.add(controls)
 
   win.on('resize', layout)
+  // A window closed with tabs still in it (⇧⌘W, the close button) can be
+  // reopened whole. A window closed by its last tab was remembered in removeTab.
+  win.on('close', () => {
+    const open = tabs.filter((tab) => tab.started && saveHistory(tab))
+    if (!open.length) return
+    rememberClosed(closedWindow(open.map((tab) => tab.history), Math.max(open.indexOf(active()), 0)))
+  })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
   win.webContents.on('did-finish-load', () => { sync(); sendShortcuts() })
   win.on('closed', () => {
@@ -307,7 +393,10 @@ function createWindow() {
   })
 
   win.loadFile(path.join(__dirname, 'index.html'))
-  newTab()
+  if (restored.length) {
+    for (const history of restored) addTab({ history, background: true })
+    activate(tabs[Math.min(activeIndex, tabs.length - 1)].id)
+  } else newTab()
   return controls
 }
 
@@ -358,6 +447,7 @@ function buildMenu() {
       submenu: [
         { label: 'New Tab', accelerator: key('newTab'), click: (_item, win) => { const c = controlsOf(win); if (c) c.newTab(); else createWindow() } },
         { label: 'New Window', accelerator: key('newWindow'), click: () => createWindow() },
+        { id: 'reopenTab', label: 'Reopen Closed Tab', accelerator: key('reopenTab'), enabled: closed.length > 0, click: (_item, win) => reopenClosed(controlsOf(win)) },
         { type: 'separator' },
         { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closeSettings(); c.focusAddress() }) },
         { type: 'separator' },

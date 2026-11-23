@@ -24,4 +24,16 @@ function byNumber(ids, number) {
   return number === 9 ? ids[ids.length - 1] : ids[number - 1] ?? null
 }
 
-module.exports = { afterClose, step, byNumber }
+// Closed tabs and windows, for Reopen Closed Tab: newest last, and only
+// the `limit` newest are kept.
+function remember(closed, entry, limit = 25) {
+  closed.push(entry)
+  if (closed.length > limit) closed.splice(0, closed.length - limit)
+  return closed
+}
+
+// Where a reopened tab goes: back at its old place, or at the end if the
+// window now has fewer tabs.
+const reopenIndex = (index, count) => Math.min(Math.max(index, 0), count)
+
+module.exports = { afterClose, step, byNumber, remember, reopenIndex }

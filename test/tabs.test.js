@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber } = require('../src/tabs')
+const { afterClose, step, byNumber, remember, reopenIndex } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -25,4 +25,17 @@ test('numbers pick tabs and 9 picks the last', () => {
   assert.equal(byNumber([1, 2, 3], 2), 2)
   assert.equal(byNumber([1, 2, 3], 5), null)
   assert.equal(byNumber([1, 2, 3], 9), 3)
+})
+
+test('remember keeps the newest closed entries last, up to the limit', () => {
+  const closed = []
+  for (const entry of [1, 2, 3, 4]) remember(closed, entry, 3)
+  assert.deepEqual(closed, [2, 3, 4])
+  assert.equal(closed.pop(), 4)
+})
+
+test('a reopened tab goes back to its place, or the end', () => {
+  assert.equal(reopenIndex(1, 3), 1)
+  assert.equal(reopenIndex(5, 2), 2)
+  assert.equal(reopenIndex(-1, 2), 0)
 })

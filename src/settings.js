@@ -98,6 +98,7 @@ const SECTIONS = [
     settings: [
       shortcut('newTab', 'New Tab', 'CmdOrCtrl+T'),
       shortcut('newWindow', 'New Window', 'CmdOrCtrl+N'),
+      shortcut('reopenTab', 'Reopen Closed Tab', 'Shift+CmdOrCtrl+T'),
       shortcut('openLocation', 'Open Location', 'CmdOrCtrl+L'),
       shortcut('closeTab', 'Close Tab', 'CmdOrCtrl+W'),
       shortcut('closeWindow', 'Close Window', 'Shift+CmdOrCtrl+W'),
@@ -145,10 +146,14 @@ function clean(saved = {}) {
     values[setting.key] = problem(setting, value, {}) ? setting.default : value
   }
   // Two commands can end up on one shortcut (an edited file, or a saved
-  // shortcut that is now another command's default); the later one gets none.
+  // shortcut that is now another command's default). A shortcut someone
+  // chose beats a default, so a new command never takes theirs; otherwise
+  // the later command gets none.
   const used = new Set()
-  for (const setting of SETTINGS) {
-    if (setting.type !== 'shortcut' || !values[setting.key]) continue
+  const chosen = (setting) => Object.hasOwn(saved, setting.key) && saved[setting.key] === values[setting.key]
+  const shortcutSettings = SETTINGS.filter((setting) => setting.type === 'shortcut')
+  for (const setting of [...shortcutSettings.filter(chosen), ...shortcutSettings.filter((setting) => !chosen(setting))]) {
+    if (!values[setting.key]) continue
     if (used.has(values[setting.key])) values[setting.key] = ''
     used.add(values[setting.key])
   }

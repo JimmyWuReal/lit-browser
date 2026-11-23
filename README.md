@@ -9,6 +9,7 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | Shortcut | Action |
 | --- | --- |
 | ⌘T / ⌘N | New tab / new window |
+| ⇧⌘T | Reopen the last closed tab or window |
 | ⌘W / ⇧⌘W | Close tab / close window |
 | ⌘L | Focus the address bar |
 | ⌘, | Settings |
@@ -16,7 +17,7 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | ⌘1–⌘8, ⌘9 | That tab, last tab |
 | ⌘R, ⌘[, ⌘] | Reload, back, forward |
 
-Middle-click closes a tab. In the tab strip, arrow keys move between tabs and Delete closes one.
+Middle-click closes a tab. ⇧⌘T brings back the last closed tab with its back/forward history, in its old place; a closed window comes back with all its tabs. Lit remembers the last 25 closed tabs and windows until it quits. In the tab strip, arrow keys move between tabs and Delete closes one.
 
 ## Settings
 
@@ -58,4 +59,5 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 - `src/preload.js` is the bridge between Lit's own pages (the toolbar and the Settings popup) and the main process.
 - `src/settings.js` lists every setting, grouped in sections, with its type and default; it also loads, checks and saves them. `src/settings.html` is the Settings popup, drawn entirely from that list, so a new setting only needs an entry there (plus a control in `settings.html` if it brings a new type). Each window shows the popup in its own transparent view over the tabs. While a shortcut is recorded, main passes the key presses to it instead of the menu.
 - `src/shortcuts.js` turns key presses into Electron accelerators, checks them, and labels them (⇧⌘W). `src/downloads.js` picks a free file name in Downloads.
-- `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab-order rules (which tab to show after closing one, next/previous, ⌘1–9). `url.js`, `tabs.js`, `settings.js`, `shortcuts.js` and `downloads.js` are plain Node, tested in `test/`.
+- Closed tabs and windows go on a list in `src/main.js`, each with its `navigationHistory` entries, which Reopen Closed Tab restores.
+- `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab-order rules (which tab to show after closing one, next/previous, ⌘1–9, how many closed tabs to remember and where one reopens). `url.js`, `tabs.js`, `settings.js`, `shortcuts.js` and `downloads.js` are plain Node, tested in `test/`.
