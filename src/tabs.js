@@ -36,4 +36,17 @@ function remember(closed, entry, limit = 25) {
 // window now has fewer tabs.
 const reopenIndex = (index, count) => Math.min(Math.max(index, 0), count)
 
-module.exports = { afterClose, step, byNumber, remember, reopenIndex }
+// A tab's back/forward list ({ entries, index }, or null before its first
+// page) with the page it was still loading, the way Chrome reopens a tab
+// closed mid-load. Back, forward and reload load a page already in the
+// list, so those only move the index; anything else replaces what was ahead.
+function withPending(history, url) {
+  if (!url) return history
+  if (!history) return { entries: [{ url, title: '' }], index: 0 }
+  const { entries, index } = history
+  const near = [index, index - 1, index + 1].find((i) => entries[i]?.url === url)
+  if (near !== undefined) return { entries, index: near }
+  return { entries: [...entries.slice(0, index + 1), { url, title: '' }], index: index + 1 }
+}
+
+module.exports = { afterClose, step, byNumber, remember, reopenIndex, withPending }

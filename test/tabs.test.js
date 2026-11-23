@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, remember, reopenIndex } = require('../src/tabs')
+const { afterClose, step, byNumber, remember, reopenIndex, withPending } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -38,4 +38,19 @@ test('a reopened tab goes back to its place, or the end', () => {
   assert.equal(reopenIndex(1, 3), 1)
   assert.equal(reopenIndex(5, 2), 2)
   assert.equal(reopenIndex(-1, 2), 0)
+})
+
+test('a page still loading is added to the history it leaves', () => {
+  const a = { url: 'a', title: 'A' }
+  const b = { url: 'b', title: 'B' }
+  const c = { url: 'c', title: 'C' }
+  const history = { entries: [a, b, c], index: 1 }
+  assert.equal(withPending(history, ''), history)
+  assert.deepEqual(withPending(null, 'x'), { entries: [{ url: 'x', title: '' }], index: 0 })
+  // A new page replaces what was ahead.
+  assert.deepEqual(withPending(history, 'x'), { entries: [a, b, { url: 'x', title: '' }], index: 2 })
+  // Back, forward and reload only move the index.
+  assert.equal(withPending(history, 'a').index, 0)
+  assert.equal(withPending(history, 'c').index, 2)
+  assert.deepEqual(withPending(history, 'b'), history)
 })

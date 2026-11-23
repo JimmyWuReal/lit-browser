@@ -6,7 +6,7 @@ const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, session } = 
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl } = require('./url')
-const { afterClose, step, byNumber, remember, reopenIndex } = require('./tabs')
+const { afterClose, step, byNumber, remember, reopenIndex, withPending } = require('./tabs')
 const settingsStore = require('./settings')
 const shortcuts = require('./shortcuts')
 const { uniquePath } = require('./downloads')
@@ -177,16 +177,19 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (settingsView) win.contentView.addChildView(settingsView)
     layout()
 
+    // The page being loaded, until it commits, fails or is stopped; a tab
+    // closed meanwhile reopens on it.
     page.on('did-start-navigation', ({ url, isMainFrame, isSameDocument }) => {
       if (isMainFrame && !isSameDocument) tab.pendingUrl = url
     })
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
-    page.on('did-stop-loading', () => { tab.loading = false; sync() })
+    page.on('did-stop-loading', () => { tab.loading = false; tab.pendingUrl = ''; sync() })
     // A new page has no title yet; a reopened one keeps its entry's title,
     // as Chromium does not announce a title it already had.
     page.on('did-navigate', (_event, url) => {
       const history = page.navigationHistory
       tab.url = url
+      tab.pendingUrl = ''
       tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
       tab.favicon = null
       saveHistory(tab)
@@ -249,18 +252,18 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     })
   }
 
-  // Copies the tab's back/forward list onto it, so it can still be reopened
-  // after its page is gone (a popup calling window.close()). Read once more
-  // at close for the freshest scroll positions and form values.
-  // Until its first page commits (tab.url is set), a tab's list holds only
-  // Chromium's initial blank entry; then the address it was loading stands in.
+  // Copies the tab's committed back/forward list onto it, so it can still
+  // be reopened after its page is gone (a popup calling window.close()).
+  // Read once more at close for the freshest scroll positions and form
+  // values. Returns that list plus any page still loading, to reopen.
+  // Until its first page commits (tab.url is set), Chromium's list holds
+  // only its initial blank entry, so it is not read.
   function saveHistory(tab) {
     if (!tab.page.isDestroyed() && tab.url) {
       const entries = tab.page.navigationHistory.getAllEntries()
       if (entries.length) tab.history = { entries, index: tab.page.navigationHistory.getActiveIndex() }
     }
-    if (!tab.history && tab.pendingUrl) return { entries: [{ url: tab.pendingUrl, title: '' }], index: 0 }
-    return tab.history
+    return withPending(tab.history, tab.pendingUrl)
   }
 
   // What Reopen Closed Tab needs to bring this window back.
