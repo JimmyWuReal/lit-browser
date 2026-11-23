@@ -18,9 +18,10 @@ function toUrl(input, engine = 'google') {
 // The engine, falling back to Google for an unknown one.
 const engineOf = (engine) => (Object.hasOwn(SEARCH_ENGINES, engine) ? SEARCH_ENGINES[engine] : SEARCH_ENGINES.google)
 
-// A search for `text`, even when it looks like an address.
+// A search for `text`, even when it looks like an address. A selection can
+// end halfway through an emoji; toWellFormed keeps that from throwing.
 function searchUrl(text, engine = 'google') {
-  return `${engineOf(engine).url}${encodeURIComponent(text.trim())}`
+  return `${engineOf(engine).url}${encodeURIComponent(text.trim().toWellFormed())}`
 }
 
 module.exports = { toUrl, searchUrl, engineOf, SEARCH_ENGINES }

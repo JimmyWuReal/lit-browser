@@ -27,4 +27,6 @@ test('searches with the chosen engine, falling back to Google', () => {
 test('searchUrl searches even for text that looks like an address', () => {
   assert.equal(searchUrl(' example.com ', 'bing'), 'https://www.bing.com/search?q=example.com')
   assert.equal(searchUrl('a b', 'nope'), 'https://www.google.com/search?q=a%20b')
+  // Half of an emoji's surrogate pair becomes U+FFFD instead of throwing.
+  assert.equal(searchUrl('hi \uD83D'), 'https://www.google.com/search?q=hi%20%EF%BF%BD')
 })

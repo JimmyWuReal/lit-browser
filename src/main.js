@@ -124,8 +124,9 @@ function createWindow() {
   // `webContents` is passed when a page opens the tab itself, so the new
   // page keeps its link back to the opener (sign-in popups need it).
   // `history` ({ entries, index }) restores another tab's back/forward list;
-  // `url` is then loaded only if that fails.
-  function addTab({ url, webContents, history, background = false, index = tabs.length } = {}) {
+  // `url` is then loaded only if that fails. `referrer` ({ url, policy })
+  // is sent with `url`, as a link opened from a page sends it.
+  function addTab({ url, webContents, history, referrer, background = false, index = tabs.length } = {}) {
     const view = new WebContentsView(webContents ? { webContents } : {})
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
@@ -181,7 +182,7 @@ function createWindow() {
     page.on('context-menu', (_event, params) => showPageMenu(page, params))
 
     if (history) page.navigationHistory.restore(history).catch(() => { if (url && !page.isDestroyed()) page.loadURL(url).catch(() => {}) })
-    else if (url) page.loadURL(url).catch(() => {})
+    else if (url) page.loadURL(url, referrer ? { httpReferrer: referrer } : {}).catch(() => {})
     if (background) sync()
     else activate(tab.id)
     return tab
@@ -267,7 +268,13 @@ function createWindow() {
       const index = from ? tabs.indexOf(from) + 1 : tabs.length
       switch (command) {
         // Like ⌘-click: in the background unless Settings says to switch.
-        case 'openInNewTab': return addTab({ url: arg, index, background: !settings.switchToNewTabs })
+        // The page the link is on is the referrer, under that frame's policy.
+        case 'openInNewTab': return addTab({
+          url: arg,
+          referrer: { url: params.frameURL || params.pageURL, policy: params.referrerPolicy?.policy || 'default' },
+          index,
+          background: !settings.switchToNewTabs,
+        })
         case 'search': return addTab({ url: searchUrl(arg, settings.searchEngine), index })
         // Through will-download, so the Downloads setting applies.
         case 'download': return contents.downloadURL(arg)
