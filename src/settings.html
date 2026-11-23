@@ -95,6 +95,8 @@
     .rows { display: flex; flex-direction: column; gap: 22px; animation: panel-enter 260ms var(--settle); }
     @keyframes panel-enter { from { opacity: 0; transform: translateY(4px); } }
     .shortcuts .rows { gap: 10px; }
+    /* A new section's controls mount at rest, not easing into their values. */
+    .is-mounting * { transition: none !important; }
 
     /* The kit's quiet icon button, for closing the popup and resetting. */
     .icon-button {
@@ -320,6 +322,7 @@
 
     // Shows the current values; `errors` is { key: message } for rows whose
     // last change was refused.
+    const clearErrors = () => rows.forEach((row) => { row.error.textContent = '' })
     function redraw(errors = {}) {
       for (const row of rows) {
         row.draw()
@@ -513,10 +516,12 @@
       rows = section.settings.map(row)
       const list = el('div', 'rows')
       list.append(...rows.map((item) => item.element))
-      content.className = `content ${id}`
+      content.className = `content ${id} is-mounting`
       content.replaceChildren(el('h2', '', section.title), list)
-      content.scrollTop = 0
       redraw()
+      content.scrollTop = 0
+      content.getBoundingClientRect()
+      content.classList.remove('is-mounting')
     }
 
     function build() {
@@ -538,6 +543,7 @@
     function open(next) {
       recorder?.stop()
       readLayout()
+      clearErrors()
       state = next
       if (!sectionId) build()
       else redraw()
@@ -556,7 +562,7 @@
 
     settings.onOpen(open)
     // Another window changed a setting.
-    settings.onChanged((next) => { state = next; redraw() })
+    settings.onChanged((next) => { state = next; clearErrors(); redraw() })
     settings.get().then(open)
   </script>
 </body>

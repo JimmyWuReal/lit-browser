@@ -71,6 +71,8 @@ function createWindow() {
   let settingsView = null
   let settingsOpen = false
   let recording = false
+  // Whether the toolbar had focus when Settings opened, to give it back.
+  let toolbarHadFocus = false
   // The keyboard layout's code -> character map, sent by the popup.
   let keyboardLayout = {}
 
@@ -245,6 +247,7 @@ function createWindow() {
       })
       settingsView.webContents.loadFile(path.join(__dirname, 'settings.html'))
     }
+    if (!settingsOpen) toolbarHadFocus = win.webContents.isFocused()
     settingsOpen = true
     win.contentView.addChildView(settingsView)
     layout()
@@ -253,12 +256,15 @@ function createWindow() {
     settingsView.webContents.send('settings-open', settingsState())
   }
 
-  // The popup has no exit animation, so it just hides.
+  // The popup has no exit animation, so it just hides. Focus goes back
+  // where it was: the toolbar (its settings button, or the address bar)
+  // keeps its own focused element, otherwise the page gets it.
   function closeSettings() {
     if (!settingsOpen) return
     settingsOpen = false
     recording = false
     settingsView.setVisible(false)
+    if (toolbarHadFocus) return win.webContents.focus()
     const tab = active()
     if (tab) show(tab)
   }

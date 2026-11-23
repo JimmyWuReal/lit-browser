@@ -16,15 +16,17 @@ test('records the typed letter, not its position, on other layouts', () => {
   // AZERTY: the key marked A sits where US has Q.
   assert.equal(fromInput({ code: 'KeyQ', key: 'a', meta: true }), 'CmdOrCtrl+A')
   assert.equal(fromInput({ code: 'KeyQ', key: 'A', meta: true, shift: true }), 'Shift+CmdOrCtrl+A')
-  // ⇧ changes punctuation, so the position names the key.
-  assert.equal(fromInput({ code: 'BracketRight', key: '}', meta: true, shift: true }), 'Shift+CmdOrCtrl+]')
+  // ⇧ changes punctuation, so the layout names the key.
+  assert.equal(fromInput({ code: 'BracketRight', key: '}', meta: true, shift: true }, { BracketRight: ']' }), 'Shift+CmdOrCtrl+]')
   // ⌥ changes letters on macOS (⌥O types ø); the layout names the key.
-  assert.equal(fromInput({ code: 'KeyO', key: 'ø', meta: true, alt: true }), 'Alt+CmdOrCtrl+O')
+  assert.equal(fromInput({ code: 'KeyO', key: 'ø', meta: true, alt: true }, { KeyO: 'o' }), 'Alt+CmdOrCtrl+O')
   assert.equal(fromInput({ code: 'KeyQ', key: 'æ', meta: true, alt: true }, { KeyQ: 'a' }), 'Alt+CmdOrCtrl+A')
   // A base character no accelerator can name is kept, so it gets refused.
   const dollar = fromInput({ code: 'BracketRight', key: '£', meta: true, shift: true }, { BracketRight: '$' })
   assert.equal(dollar, 'Shift+CmdOrCtrl+$')
   assert.equal(problem(dollar), 'That key can’t be used in a shortcut.')
+  // Without the layout, a character is never swapped for a US position.
+  assert.equal(problem(fromInput({ code: 'Semicolon', key: 'ö', meta: true })), 'That key can’t be used in a shortcut.')
 })
 
 test('ignores presses of modifiers alone', () => {

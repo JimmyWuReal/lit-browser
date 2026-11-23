@@ -40,11 +40,12 @@ const RESERVED = {
 // the key's own character in the active layout, from the page's
 // navigator.keyboard.getLayoutMap() (⌥ and ⇧ change what is typed); else,
 // for keys without a character such as Tab, its position. A character no
-// accelerator can name comes back as is, and problem() refuses it.
+// accelerator can name comes back as is, and problem() refuses it, rather
+// than guessing a US position the key may not have.
 function fromInput({ key: typed, code, control, alt, shift, meta }, layout = {}) {
   const character = typed?.length === 1 ? typed.toUpperCase() : ''
   const base = typeof layout[code] === 'string' && layout[code].length === 1 ? layout[code].toUpperCase() : ''
-  let key = /^[A-Z0-9]$/.test(character) || (KEYS.has(character) && !shift) ? character : base || CODE_KEYS[code]
+  let key = /^[A-Z0-9]$/.test(character) || (KEYS.has(character) && !shift) ? character : base || character || CODE_KEYS[code]
   if (!key) key = /^Key([A-Z])$/.exec(code)?.[1] || /^Digit(\d)$/.exec(code)?.[1]
   if (!key && isFunctionKey(code)) key = code
   if (!key) return null
