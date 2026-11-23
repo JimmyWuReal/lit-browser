@@ -17,7 +17,7 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | ⌘1–⌘8, ⌘9 | That tab, last tab |
 | ⌘R, ⌘[, ⌘] | Reload, back, forward |
 
-Middle-click closes a tab. ⇧⌘T brings back the last closed tab with its back/forward history, in its old place; a closed window comes back with all its tabs. Lit remembers the last 25 closed tabs and windows until it quits. In the tab strip, arrow keys move between tabs and Delete closes one.
+Middle-click closes a tab. ⇧⌘T brings back the last closed tab with its back/forward history, in its old place; a closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers the last 25 closed tabs and windows until it quits. In the tab strip, arrow keys move between tabs and Delete closes one.
 
 ## Settings
 

@@ -22,12 +22,16 @@ const windowsByToolbar = new WeakMap()
 const windowsBySettings = new WeakMap()
 const openWindows = new Set()
 let nextTabId = 1
+// Names a window for Reopen Closed Tab; a reopened window keeps its key,
+// so tabs closed from it earlier still find their way back to it.
+let nextWindowKey = 1
 
 // Recently closed tabs and windows, newest last, for Reopen Closed Tab.
-// A tab: { controls, index, history }, back in its window if that is still
-// open. A window: { tabs: [history], activeIndex, size }. A history is
-// { entries, index } from navigationHistory, so back and forward come back too.
-// Kept only while Lit runs.
+// A tab: { windowKey, index, history }, back in its window if that is open.
+// A window: { key, tabs: [history or null], activeIndex, size }, null for a
+// blank tab, so tab order and the active tab come back as they were.
+// A history is { entries, index } from navigationHistory, so back and
+// forward come back too. Kept only while Lit runs.
 const closed = []
 
 // Settings are read once at launch and saved on every change.
@@ -68,7 +72,7 @@ function reopenClosed(focused) {
   if (!entry) return
   refreshReopen()
   if (entry.tabs) return createWindow(entry)
-  const target = openWindows.has(entry.controls) ? entry.controls : focused
+  const target = [...openWindows].find((c) => c.key === entry.windowKey) || focused
   if (!target) return createWindow({ tabs: [entry.history] })
   if (target !== focused) {
     if (target.win.isMinimized()) target.win.restore()
@@ -84,8 +88,8 @@ function applySettings() {
   for (const controls of openWindows) controls.settingsChanged()
 }
 
-// `tabs`, `activeIndex` and `size` reopen a closed window (see `closed`).
-function createWindow({ tabs: restored = [], activeIndex = 0, size } = {}) {
+// `key`, `tabs`, `activeIndex` and `size` reopen a closed window (see `closed`).
+function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex = 0, size } = {}) {
   const win = new BrowserWindow({
     width: size?.width || 1200,
     height: size?.height || 800,
@@ -253,7 +257,7 @@ function createWindow({ tabs: restored = [], activeIndex = 0, size } = {}) {
   // What Reopen Closed Tab needs to bring this window back.
   function closedWindow(histories, activeIndex) {
     const { width, height } = win.getNormalBounds()
-    return { tabs: histories, activeIndex, size: { width, height } }
+    return { key, tabs: histories, activeIndex, size: { width, height } }
   }
 
   // A tab's first load turns it from the search box into its page.
@@ -287,7 +291,7 @@ function createWindow({ tabs: restored = [], activeIndex = 0, size } = {}) {
     // unless Settings says to keep it open with a new tab. Then the window
     // is what reopens.
     const closesWindow = nextId === null && settings.closeWindowWithLastTab
-    if (history) rememberClosed(closesWindow ? closedWindow([history], 0) : { controls, index, history })
+    if (history) rememberClosed(closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
     if (nextId === null) return closesWindow ? win.close() : newTab()
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
@@ -346,6 +350,7 @@ function createWindow({ tabs: restored = [], activeIndex = 0, size } = {}) {
 
   const controls = {
     win,
+    key,
     newTab,
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
     reopenTab(history, index) {
@@ -378,9 +383,9 @@ function createWindow({ tabs: restored = [], activeIndex = 0, size } = {}) {
   // A window closed with tabs still in it (⇧⌘W, the close button) can be
   // reopened whole. A window closed by its last tab was remembered in removeTab.
   win.on('close', () => {
-    const open = tabs.filter((tab) => tab.started && saveHistory(tab))
-    if (!open.length) return
-    rememberClosed(closedWindow(open.map((tab) => tab.history), Math.max(open.indexOf(active()), 0)))
+    const histories = tabs.map((tab) => (tab.started ? saveHistory(tab) : null))
+    if (!histories.some(Boolean)) return
+    rememberClosed(closedWindow(histories, Math.max(tabs.indexOf(active()), 0)))
   })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
   win.webContents.on('did-finish-load', () => { sync(); sendShortcuts() })
@@ -394,7 +399,7 @@ function createWindow({ tabs: restored = [], activeIndex = 0, size } = {}) {
 
   win.loadFile(path.join(__dirname, 'index.html'))
   if (restored.length) {
-    for (const history of restored) addTab({ history, background: true })
+    for (const history of restored) addTab(history ? { history, background: true } : { background: true })
     activate(tabs[Math.min(activeIndex, tabs.length - 1)].id)
   } else newTab()
   return controls
