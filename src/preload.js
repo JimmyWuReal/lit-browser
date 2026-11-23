@@ -33,13 +33,14 @@ contextBridge.exposeInMainWorld('lit', {
     onChanged: (callback) => on('settings-changed', callback),
   },
   // For the History popup only. State is { entries: [{ url, title, time }],
-  // enabled } (see historyState in main), newest first.
+  // enabled, closedTabs, error? } (see historyState in main), newest first.
   history: {
     get: () => ipcRenderer.invoke('history-get'),
     // `background` opens it in a new tab behind the current one.
     open: (url, background = false) => ipcRenderer.send('history-open-page', url, background),
-    remove: (url) => ipcRenderer.send('history-remove', url),
-    clear: () => ipcRenderer.send('history-clear'),
+    // Both answer with the new state, with `error` if nothing changed.
+    remove: (url) => ipcRenderer.invoke('history-remove', url),
+    clear: () => ipcRenderer.invoke('history-clear'),
     close: () => ipcRenderer.send('history-close'),
     onOpen: (callback) => on('history-open', callback),
     onChanged: (callback) => on('history-changed', callback),

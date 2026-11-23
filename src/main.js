@@ -53,23 +53,35 @@ let historyFile
 let visited = []
 let historySave = null
 
+// Whether the write worked.
 function saveVisited() {
   clearTimeout(historySave)
   historySave = null
   try {
     historyStore.save(historyFile, visited)
-  } catch {}
+    return true
+  } catch {
+    return false
+  }
 }
 
+// `now` saves right away and keeps the old list if that fails, so a page
+// someone removed never comes back after a restart. Returns whether the
+// change was made.
 function setVisited(next, { now = false } = {}) {
-  if (next === visited) return
+  if (next === visited) return true
+  const before = visited
   visited = next
-  if (now) saveVisited()
-  else {
+  if (now && !saveVisited()) {
+    visited = before
+    return false
+  }
+  if (!now) {
     clearTimeout(historySave)
     historySave = setTimeout(saveVisited, 1000)
   }
   for (const controls of openWindows) controls.historyChanged()
+  return true
 }
 
 // Whether the visit was recorded, so a title arriving later goes only to
@@ -82,7 +94,8 @@ function recordVisit(url, title) {
 // What the History popup draws.
 // `closedTabs` counts tabs and windows Reopen Closed Tab still has, which
 // Clear History also forgets.
-const historyState = () => ({ entries: visited, enabled: settings.saveHistory, closedTabs: closed.length })
+// `error` says why the last removal didn't happen.
+const historyState = (error) => ({ entries: visited, enabled: settings.saveHistory, closedTabs: closed.length, ...(error && { error }) })
 
 function forgetClosed() {
   closed.length = 0
@@ -329,7 +342,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       tab.url = current.url || ''
       tab.title = current.title || ''
       tab.history = history
-      page.navigationHistory.restore(history).catch(() => { if (url && !page.isDestroyed()) page.loadURL(url).catch(() => {}) })
+      // If restoring fails, the page it was on still loads.
+      const retry = url || current.url
+      page.navigationHistory.restore(history).catch(() => { if (retry && !page.isDestroyed()) page.loadURL(retry).catch(() => {}) })
     } else if (url) page.loadURL(url, referrer ? { httpReferrer: referrer } : {}).catch(() => {})
     if (background) sync()
     else activate(tab.id)
@@ -817,9 +832,16 @@ ipcMain.handle('history-get', fromHistory(() => historyState()))
 ipcMain.on('history-open-page', fromHistory((c, url, background) => {
   if (visited.some((entry) => entry.url === url)) c.openFromHistory(url, background === true)
 }))
-ipcMain.on('history-remove', fromHistory((_c, url) => setVisited(historyStore.remove(visited, url), { now: true })))
+// Removing and clearing answer with the state, saying so if nothing changed.
+ipcMain.handle('history-remove', fromHistory((_c, url) => (setVisited(historyStore.remove(visited, url), { now: true })
+  ? historyState()
+  : historyState('Couldn’t save history, so that page wasn’t removed.'))))
 // Clearing history forgets closed tabs too.
-ipcMain.on('history-clear', fromHistory(() => { setVisited([], { now: true }); forgetClosed() }))
+ipcMain.handle('history-clear', fromHistory(() => {
+  if (!setVisited([], { now: true })) return historyState('Couldn’t save history, so nothing was cleared.')
+  forgetClosed()
+  return historyState()
+}))
 ipcMain.on('history-close', fromHistory((c) => c.closePopup()))
 
 app.whenReady().then(() => {
