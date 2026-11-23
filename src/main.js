@@ -1,7 +1,7 @@
 // Lit's main process. Each window has a toolbar on top (src/index.html,
 // the window's own page) and one Chromium WebContentsView per tab below it.
 // Only the active tab's view is visible.
-const { app, BrowserWindow, Menu, WebContentsView, ipcMain } = require('electron')
+const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain } = require('electron')
 const path = require('node:path')
 const { toUrl } = require('./url')
 const { afterClose, step, byNumber } = require('./tabs')
@@ -92,8 +92,22 @@ function createWindow() {
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => { if (isMainFrame) { tab.url = url; sync() } })
     page.on('page-title-updated', (_event, title) => { tab.title = title; sync() })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
-    // A page can close its own tab (window.close() on a popup it opened).
-    page.on('destroyed', () => { if (find(tab.id)) closeTab(tab.id) })
+    // Every tab leaves through here: after closeTab's request, or when a
+    // page closes itself (window.close() on a popup it opened).
+    page.on('destroyed', () => removeTab(tab))
+    // Electron cancels an unload a page objects to without asking; ask the
+    // way other browsers do, both for closing the tab and for leaving the page.
+    page.on('will-prevent-unload', (event) => {
+      const choice = dialog.showMessageBoxSync(win, {
+        type: 'question',
+        buttons: ['Leave', 'Stay'],
+        defaultId: 0,
+        cancelId: 1,
+        message: 'Leave this page?',
+        detail: 'Changes you made may not be saved.',
+      })
+      if (choice === 0) event.preventDefault()
+    })
 
     // Links and window.open become tabs right after the opener: Cmd-click
     // opens in the background, everything else comes to the front.
@@ -121,14 +135,23 @@ function createWindow() {
     sync()
   }
 
+  // Asks the page to close, so its beforeunload can still keep it open;
+  // removeTab runs once it is gone.
   function closeTab(id, focus = true) {
     const tab = find(id)
     if (!tab) return
-    const nextId = afterClose(ids(), activeId, id)
+    tab.closeFocus = focus
+    if (tab.page.isDestroyed()) removeTab(tab)
+    else tab.page.close({ waitForBeforeUnload: true })
+  }
+
+  function removeTab(tab) {
+    if (!find(tab.id)) return
+    const nextId = afterClose(ids(), activeId, tab.id)
+    const focus = tab.closeFocus ?? true
     tabs.splice(tabs.indexOf(tab), 1)
-    if (!win.isDestroyed()) win.contentView.removeChildView(tab.view)
-    if (!tab.page.isDestroyed()) tab.page.close()
     if (win.isDestroyed()) return
+    win.contentView.removeChildView(tab.view)
     // Closing the last tab closes the window, as in Chrome and Safari.
     if (nextId === null) return win.close()
     if (nextId !== activeId) activate(nextId, focus)
