@@ -16,3 +16,9 @@ test('adds a scheme to domains and local addresses', () => {
 test('searches everything else', () => {
   assert.equal(toUrl('lit browser'), 'https://www.google.com/search?q=lit%20browser')
 })
+
+test('searches with the chosen engine, falling back to Google', () => {
+  assert.equal(toUrl('lit browser', 'duckduckgo'), 'https://duckduckgo.com/?q=lit%20browser')
+  assert.equal(toUrl('lit browser', 'bing'), 'https://www.bing.com/search?q=lit%20browser')
+  assert.equal(toUrl('lit browser', 'unknown'), 'https://www.google.com/search?q=lit%20browser')
+})

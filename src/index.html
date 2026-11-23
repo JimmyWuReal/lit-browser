@@ -140,7 +140,9 @@
     .tab.is-active .tab-close,
     .tab:hover .tab-close,
     .tab-close:focus-visible { opacity: 1; }
-    .new-tab { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; }
+    .new-tab,
+    .open-settings { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; }
+    .open-settings { margin-left: auto; }
 
     /* Narrow tabs keep just the icon; the active one keeps its close button. */
     @container (max-width: 72px) {
@@ -214,6 +216,12 @@
     <button class="icon-button new-tab" id="new-tab" type="button" aria-label="New tab" title="New Tab (⌘T)">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+    </button>
+    <button class="icon-button open-settings" id="open-settings" type="button" aria-label="Settings" title="Settings (⌘,)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 7h-9"></path><path d="M14 17H5"></path><circle cx="17" cy="17" r="3"></circle><circle cx="7" cy="7" r="3"></circle>
+      </svg>
     </button>
   </div>
   <form class="bar" id="bar">
@@ -382,6 +390,7 @@
     })
 
     document.getElementById('new-tab').addEventListener('click', () => window.lit.newTab())
+    document.getElementById('open-settings').addEventListener('click', () => window.lit.openSettings())
 
     bar.addEventListener('submit', (event) => {
       event.preventDefault()

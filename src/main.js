@@ -5,6 +5,7 @@ const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain } = require('
 const path = require('node:path')
 const { toUrl } = require('./url')
 const { afterClose, step, byNumber } = require('./tabs')
+const settingsStore = require('./settings')
 
 // Keep in sync with .strip and .bar heights in index.html.
 const STRIP_HEIGHT = 38
@@ -14,6 +15,31 @@ const BAR_HEIGHT = STRIP_HEIGHT + 44
 // only ever act on their own window.
 const windowsByToolbar = new WeakMap()
 let nextTabId = 1
+
+// Settings are read once at launch and saved on every change.
+let settingsFile
+let settings = settingsStore.clean()
+let settingsWindow = null
+
+// One Settings window for the whole app; opening it again brings it forward.
+function openSettings() {
+  if (settingsWindow) return settingsWindow.focus()
+  settingsWindow = new BrowserWindow({
+    // Room for a few settings; the page scrolls once there are more.
+    width: 480,
+    height: 240,
+    resizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    title: 'Settings',
+    backgroundColor: '#090909',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 16, y: 12 },
+    webPreferences: { preload: path.join(__dirname, 'preload.js') },
+  })
+  settingsWindow.on('closed', () => { settingsWindow = null })
+  settingsWindow.loadFile(path.join(__dirname, 'settings.html'))
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -163,7 +189,7 @@ function createWindow() {
     if (!tab || !input.trim()) return
     tab.started = true
     show(tab)
-    tab.page.loadURL(toUrl(input)).catch(() => {})
+    tab.page.loadURL(toUrl(input, settings.searchEngine)).catch(() => {})
   }
 
   const controls = {
@@ -209,8 +235,30 @@ function buildMenu() {
     hidden(`Select Tab ${i + 1}`, `CmdOrCtrl+${i + 1}`, inFocused((c) => c.byNumber(i + 1))))
   const pageAction = (action) => inFocused((c) => { const page = c.page(); if (page) action(page) })
 
+  // Close Tab and Close Window also close windows without tabs, like Settings.
+  const closeFocused = (action) => (_item, win) => {
+    const controls = controlsOf(win)
+    if (controls) action(controls)
+    else win?.close()
+  }
+
   return Menu.buildFromTemplate([
-    { role: 'appMenu' },
+    {
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: openSettings },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
     {
       label: 'File',
       submenu: [
@@ -219,8 +267,8 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Open Location…', accelerator: 'CmdOrCtrl+L', click: inFocused((c) => c.focusAddress()) },
         { type: 'separator' },
-        { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: inFocused((c) => c.closeTab()) },
-        { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', click: inFocused((c) => c.win.close()) },
+        { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: closeFocused((c) => c.closeTab()) },
+        { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', click: closeFocused((c) => c.win.close()) },
       ],
     },
     { role: 'editMenu' },
@@ -264,8 +312,25 @@ ipcMain.on('navigate', fromToolbar((c, input) => typeof input === 'string' && c.
 ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
 ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
+ipcMain.on('open-settings', fromToolbar(() => openSettings()))
+
+// Settings messages, answered only for the Settings window.
+const fromSettings = (handler) => (event, ...args) => {
+  if (settingsWindow && event.sender === settingsWindow.webContents) return handler(...args)
+}
+ipcMain.handle('settings-get', fromSettings(() => ({ sections: settingsStore.SECTIONS, values: settings })))
+ipcMain.handle('settings-set', fromSettings((key, value) => {
+  const next = settingsStore.update(settings, key, value)
+  if (next !== settings) {
+    settings = next
+    settingsStore.save(settingsFile, settings)
+  }
+  return settings
+}))
 
 app.whenReady().then(() => {
+  settingsFile = path.join(app.getPath('userData'), 'settings.json')
+  settings = settingsStore.load(settingsFile)
   // The packaged app gets its icon from the bundle; in development, show it in the Dock too.
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '..', 'build', 'icon.png'))
   Menu.setApplicationMenu(buildMenu())

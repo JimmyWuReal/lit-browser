@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'">
+  <title>Settings</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap">
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      --dim: #848484;
+      --sub: #8c8c8c;
+      --line: rgba(255, 255, 255, .18);
+      --settle: cubic-bezier(.22, 1, .36, 1);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      background: #090909;
+      color: #ededed;
+      user-select: none;
+    }
+    button { font: inherit; color: inherit; }
+    button:focus-visible { outline: 2px solid rgba(255, 255, 255, .8); outline-offset: 3px; }
+
+    /* The title bar, which drags the window. */
+    .title {
+      height: 38px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      -webkit-app-region: drag;
+    }
+
+    main { flex: 1; overflow: auto; padding: 12px 24px 24px; }
+    section + section { margin-top: 28px; }
+    h2 { margin: 0 0 14px; font-size: 12px; font-weight: 500; color: var(--dim); }
+    .rows { display: flex; flex-direction: column; gap: 20px; }
+
+    /* The kit's control row: label and note on the left, control on the right. */
+    .control-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .control-row > div:first-child { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .control-row strong { font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
+    .control-row > div:first-child span { font-size: 11.5px; color: var(--sub); }
+
+    /* The kit's segmented control: one white thumb slides to the choice. */
+    .segmented {
+      position: relative;
+      flex: 0 0 auto;
+      display: grid;
+      grid-template-columns: repeat(var(--count), auto);
+      padding: 4px;
+      border-radius: 12px;
+      box-shadow: inset 0 0 0 1px var(--line);
+    }
+    .segmented-thumb {
+      position: absolute;
+      top: 4px;
+      bottom: 4px;
+      left: 0;
+      width: var(--thumb-width);
+      border-radius: 8px;
+      background: #fff;
+      transform: translateX(var(--thumb-x));
+    }
+    /* The thumb lands in place first, and only slides after that. */
+    .segmented.is-ready .segmented-thumb {
+      transition: transform 320ms var(--settle), width 320ms var(--settle);
+    }
+    .segmented button {
+      position: relative;
+      z-index: 1;
+      height: 32px;
+      padding: 0 14px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #8a8a8a;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      cursor: pointer;
+      transition: color 260ms ease;
+    }
+    .segmented button:not(.is-active):hover { color: #e6e6e6; }
+    .segmented button.is-active { color: #0a0a0a; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="title">Settings</div>
+  <main id="sections"></main>
+
+  <script>
+    // Draws every section and setting from src/settings.js. A new setting
+    // needs no change here unless it brings a new `type`.
+    const root = document.getElementById('sections')
+    let values = {}
+
+    // Shows the choice at once, then whatever main saved. Only the latest
+    // reply counts, so quick changes never snap back to an older one.
+    let saves = 0
+    function save(key, value) {
+      if (values[key] === value) return
+      const id = ++saves
+      values = { ...values, [key]: value }
+      redraw()
+      window.lit.settings.set(key, value).then((saved) => {
+        if (id === saves) { values = saved; redraw() }
+      })
+    }
+
+    // Each control registers how to show the current value.
+    const redraws = []
+    const redraw = () => redraws.forEach((draw) => draw())
+
+    // A choice is a segmented control. Arrow keys move focus and selection
+    // together; only the selected option is tabbable.
+    function choice(setting, labelId) {
+      const group = document.createElement('div')
+      group.className = 'segmented'
+      group.setAttribute('role', 'radiogroup')
+      group.setAttribute('aria-labelledby', labelId)
+      group.style.setProperty('--count', setting.options.length)
+      const thumb = document.createElement('span')
+      thumb.className = 'segmented-thumb'
+      thumb.setAttribute('aria-hidden', 'true')
+      thumb.style.opacity = '0'
+      group.append(thumb)
+
+      const buttons = setting.options.map((option) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.setAttribute('role', 'radio')
+        button.textContent = option.label
+        button.addEventListener('click', () => save(setting.key, option.value))
+        group.append(button)
+        return button
+      })
+
+      group.addEventListener('keydown', (event) => {
+        const delta = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key]
+        if (!delta) return
+        event.preventDefault()
+        const count = setting.options.length
+        const index = setting.options.findIndex((option) => option.value === values[setting.key])
+        const next = (index + delta + count) % count
+        buttons[next].focus()
+        save(setting.key, setting.options[next].value)
+      })
+
+      function place() {
+        const active = buttons[setting.options.findIndex((option) => option.value === values[setting.key])]
+        if (!active) return
+        thumb.style.setProperty('--thumb-x', `${active.offsetLeft}px`)
+        thumb.style.setProperty('--thumb-width', `${active.offsetWidth}px`)
+        if (!group.classList.contains('is-ready')) {
+          thumb.style.opacity = '1'
+          thumb.getBoundingClientRect()
+          requestAnimationFrame(() => group.classList.add('is-ready'))
+        }
+      }
+      redraws.push(() => {
+        setting.options.forEach((option, i) => {
+          const on = option.value === values[setting.key]
+          buttons[i].classList.toggle('is-active', on)
+          buttons[i].setAttribute('aria-checked', String(on))
+          buttons[i].tabIndex = on ? 0 : -1
+        })
+        place()
+      })
+      // Widths change when the web font arrives.
+      new ResizeObserver(place).observe(group)
+      document.fonts.ready.then(place)
+      return group
+    }
+
+    const controls = { choice }
+
+    function row(setting) {
+      const element = document.createElement('div')
+      element.className = 'control-row'
+      const text = document.createElement('div')
+      const label = document.createElement('strong')
+      label.id = `label-${setting.key}`
+      label.textContent = setting.label
+      text.append(label)
+      if (setting.description) {
+        const note = document.createElement('span')
+        note.textContent = setting.description
+        text.append(note)
+      }
+      element.append(text, controls[setting.type](setting, label.id))
+      return element
+    }
+
+    window.lit.settings.get().then((state) => {
+      values = state.values
+      for (const section of state.sections) {
+        const element = document.createElement('section')
+        const title = document.createElement('h2')
+        title.textContent = section.title
+        const rows = document.createElement('div')
+        rows.className = 'rows'
+        rows.append(...section.settings.map(row))
+        element.append(title, rows)
+        root.append(element)
+      }
+      redraw()
+    })
+  </script>
+</body>
+</html>

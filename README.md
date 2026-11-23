@@ -11,11 +11,14 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | ⌘T / ⌘N | New tab / new window |
 | ⌘W / ⇧⌘W | Close tab / close window |
 | ⌘L | Focus the address bar |
+| ⌘, | Settings |
 | ⌃Tab, ⇧⌘] / ⌃⇧Tab, ⇧⌘[ | Next / previous tab |
 | ⌘1–⌘8, ⌘9 | That tab, last tab |
 | ⌘R, ⌘[, ⌘] | Reload, back, forward |
 
 Middle-click closes a tab. In the tab strip, arrow keys move between tabs and Delete closes one.
+
+Settings (⌘, or the button at the right of the tab strip) holds the search engine (Google, DuckDuckGo or Bing) used for anything typed that is not an address. Settings save as they change, to `settings.json` in the app's data folder.
 
 ## Run
 
@@ -44,5 +47,6 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 
 - `src/main.js` opens windows and gives each tab its own Chromium `WebContentsView` under the toolbar; only the active tab's view is shown. It owns the tab list and sends it to the toolbar whenever it changes. The application menu holds every shortcut, so they work whether the toolbar or a page has focus.
 - `src/index.html` is the toolbar: the tab strip (also the window's title bar) and the address bar. When the active tab has not loaded anything, the address bar fills the window as the centered search box and the tab's page view stays hidden.
-- `src/preload.js` is the bridge between the toolbar and the main process.
-- `src/url.js` turns typed text into a URL or a Google search; `src/tabs.js` holds the tab-order rules (which tab to show after closing one, next/previous, ⌘1–9). Both are plain Node, tested in `test/`.
+- `src/preload.js` is the bridge between Lit's own pages (the toolbar and the Settings window) and the main process.
+- `src/settings.js` lists every setting, grouped in sections, with its type and default; it also loads, checks and saves them. `src/settings.html` is the Settings window, drawn entirely from that list, so a new setting only needs an entry there (plus a control in `settings.html` if it brings a new type).
+- `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab-order rules (which tab to show after closing one, next/previous, ⌘1–9). These two and `src/settings.js` are plain Node, tested in `test/`.
