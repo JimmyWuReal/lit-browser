@@ -6,7 +6,8 @@ const MODIFIERS = ['Ctrl', 'Alt', 'Shift', 'CmdOrCtrl']
 const MODIFIER_LABELS = { Ctrl: '⌃', Alt: '⌥', Shift: '⇧', CmdOrCtrl: '⌘' }
 
 // KeyboardEvent.code -> accelerator key, for keys that are not letters,
-// digits or F-keys. Codes are layout positions, so ⇧ never changes the key.
+// digits or F-keys. Codes are US layout positions; fromInput prefers the
+// typed character, as macOS menus match by character, not position.
 const CODE_KEYS = {
   Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\',
   Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backquote: '`',
@@ -33,9 +34,12 @@ const RESERVED = {
 }
 
 // The accelerator for a key press from Electron's before-input-event, or
-// null while only modifiers are held.
-function fromInput({ code, control, alt, shift, meta }) {
-  let key = CODE_KEYS[code]
+// null while only modifiers are held. The typed character wins when it is a
+// letter, a digit, or unshifted punctuation, so on AZERTY the key marked A
+// records ⌘A. Otherwise (⇧ or ⌥ changed the character) the position does.
+function fromInput({ key: typed, code, control, alt, shift, meta }) {
+  const character = typed?.length === 1 ? typed.toUpperCase() : ''
+  let key = /^[A-Z0-9]$/.test(character) || (KEYS.has(character) && !shift) ? character : CODE_KEYS[code]
   if (!key) key = /^Key([A-Z])$/.exec(code)?.[1] || /^Digit(\d)$/.exec(code)?.[1]
   if (!key && isFunctionKey(code)) key = code
   if (!key) return null

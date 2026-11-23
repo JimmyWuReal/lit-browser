@@ -4,6 +4,7 @@
 // view, transparent and over everything, shown only while open.
 const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, session } = require('electron')
 const path = require('node:path')
+const fs = require('node:fs')
 const { toUrl } = require('./url')
 const { afterClose, step, byNumber } = require('./tabs')
 const settingsStore = require('./settings')
@@ -425,9 +426,15 @@ app.whenReady().then(() => {
   settings = settingsStore.load(settingsFile)
   applyDoNotTrack()
   // Saving straight to Downloads, when Settings says so; otherwise
-  // Electron asks where to save.
+  // Electron asks where to save. Paths of unfinished downloads count as
+  // taken, so two same-name downloads never share one.
+  const downloading = new Set()
   session.defaultSession.on('will-download', (_event, item) => {
-    if (settings.downloadLocation === 'downloads') item.setSavePath(uniquePath(app.getPath('downloads'), item.getFilename()))
+    if (settings.downloadLocation !== 'downloads') return
+    const file = uniquePath(app.getPath('downloads'), item.getFilename(), (candidate) => downloading.has(candidate) || fs.existsSync(candidate))
+    downloading.add(file)
+    item.setSavePath(file)
+    item.once('done', () => downloading.delete(file))
   })
   // The packaged app gets its icon from the bundle; in development, show it in the Dock too.
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '..', 'build', 'icon.png'))
