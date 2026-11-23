@@ -338,9 +338,10 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(buildMenu())
   createWindow()
   // Like other Mac browsers, Lit keeps running with no windows open;
-  // clicking the Dock icon opens a fresh one. Registered after the first
-  // window so a launch-time activate cannot open a second.
-  app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow() })
+  // clicking the Dock icon opens a fresh one (Settings alone does not count).
+  // Registered after the first window so a launch-time activate cannot open
+  // a second.
+  app.on('activate', () => { if (!BrowserWindow.getAllWindows().some(controlsOf)) createWindow() })
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

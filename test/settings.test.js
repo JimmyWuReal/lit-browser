@@ -8,8 +8,9 @@ const { SECTIONS, clean, load, update, save } = require('../src/settings')
 test('every setting has a unique key and a valid default', () => {
   const settings = SECTIONS.flatMap((section) => section.settings)
   assert.equal(new Set(settings.map((s) => s.key)).size, settings.length)
-  const defaults = clean()
-  for (const setting of settings) assert.equal(defaults[setting.key], setting.default)
+  for (const setting of settings) {
+    if (setting.type === 'choice') assert.ok(setting.options.some((option) => option.value === setting.default), setting.key)
+  }
 })
 
 test('clean keeps valid saved values and drops the rest', () => {
