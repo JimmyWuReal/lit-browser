@@ -488,16 +488,19 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
 
   win.on('resize', layout)
   // A window closed with tabs still in it (⇧⌘W, the close button) can be
-  // reopened whole. A window closed by its last tab was remembered in removeTab.
+  // reopened whole. A window closed by its last tab was remembered in
+  // removeTab. Its tabs are read while it is still there, and remembered
+  // only once it is really gone, in case the close is cancelled.
+  let closingWindow = null
   win.on('close', () => {
     const histories = tabs.map((tab) => (tab.started ? saveHistory(tab) : null))
-    if (!histories.length) return
-    rememberClosed(closedWindow(histories, Math.max(tabs.indexOf(active()), 0)))
+    closingWindow = histories.length ? closedWindow(histories, Math.max(tabs.indexOf(active()), 0)) : null
   })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
   win.webContents.on('did-finish-load', () => { sync(); sendShortcuts() })
   win.on('closed', () => {
     openWindows.delete(controls)
+    if (closingWindow) rememberClosed(closingWindow)
     for (const tab of tabs.splice(0)) {
       if (!tab.page.isDestroyed()) tab.page.close()
     }
