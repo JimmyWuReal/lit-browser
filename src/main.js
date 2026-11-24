@@ -100,24 +100,25 @@ function choosePermission(site, kinds, choice) {
   for (const controls of openWindows) { controls.settlePrompts(); controls.settingsChanged() }
 }
 
-// The site a request is for: the page in the address bar, as in Chrome,
-// even when a frame in it asks. Without a page (a service worker),
-// the origin that asked.
-function siteFor(contents, fallbackUrl) {
-  const url = contents && !contents.isDestroyed() ? contents.getURL() : ''
-  return permissions.originOf(url || fallbackUrl)
+// The site a request or check is for: the origin that asked, but only when
+// it is the page in the address bar, so a choice always belongs to the site
+// people see. A frame from another site gets null, and is refused, as is a
+// page with no origin. Without a page (a service worker), the origin that
+// asked stands alone.
+function siteFor(contents, asking) {
+  const site = permissions.originOf(asking)
+  const page = contents && !contents.isDestroyed() ? contents.getURL() : ''
+  return site && (!page || permissions.originOf(page) === site) ? site : null
 }
 
 // Requests for a kind Lit asks about are answered from the saved choices,
-// or by a prompt on the tab that asked. Anything not from a tab (Lit's own
-// pages, a page with no origin) is refused. Notifications are only for the
-// page itself, never a frame from another site in it.
+// or by a prompt on the tab that asked, for the kinds not yet decided.
+// Anything not from a tab (Lit's own pages, a service worker) is refused.
 function onPermissionRequest(contents, permission, callback, details) {
   const kinds = permissions.kindsOf(permission, details.mediaTypes)
   if (!kinds) return callback(true)
   const site = siteFor(contents, details.requestingUrl)
   if (!site) return callback(false)
-  if (permission === 'notifications' && permissions.originOf(details.requestingUrl) !== site) return callback(false)
   const answer = permissions.status(sitePermissions, site, kinds)
   if (answer !== 'ask') return callback(answer === 'allow')
   for (const controls of openWindows) {
@@ -134,7 +135,7 @@ function onPermissionCheck(contents, permission, requestingOrigin, details) {
   if (permission === 'media') kinds = details.mediaType === 'video' ? ['camera'] : details.mediaType === 'audio' ? ['microphone'] : ['camera', 'microphone']
   if (!kinds) return true
   const site = siteFor(contents, requestingOrigin)
-  if (!site || (permission === 'notifications' && details.embeddingOrigin)) return false
+  if (!site) return false
   return kinds.some((kind) => permissions.status(sitePermissions, site, [kind]) === 'allow')
 }
 
@@ -385,7 +386,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts }) => ({
         id, title, url, favicon, loading, started,
         // The tab's oldest unanswered permission request; the rest wait.
-        prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), does: permissions.describe(prompts[0].kinds) },
+        prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
         // default or the site has its own (which can match a later default).
         zoom: started && (!zoom.same(factor, settings.defaultZoom) || siteZooms.has(zoom.siteOf(page.isDestroyed() ? '' : page.getURL())))
@@ -652,7 +653,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
 
   // Permission prompts. A tab's requests wait in order, one prompt at a
   // time; the same request asked again joins the one waiting. Each prompt
-  // is { id, site, kinds, callbacks }.
+  // is { id, site, kinds, callbacks }: `kinds` is the whole request, which
+  // settles it, while the prompt asks only about the undecided ones.
   function askPermission(contents, site, kinds, callback) {
     const tab = tabs.find((each) => each.page === contents)
     if (!tab) return false
@@ -662,6 +664,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     sync()
     return true
   }
+  // What a prompt asks about now: its kinds without a choice yet.
+  const asking = (prompt) => permissions.undecided(sitePermissions, prompt.site, prompt.kinds)
 
   // Refuses the tab's waiting requests, without saving anything.
   function dropPrompts(tab) {
@@ -677,7 +681,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     const tab = find(tabId)
     const prompt = tab?.prompts.find((each) => each.id === promptId)
     if (!prompt) return
-    if (choice) return choosePermission(prompt.site, prompt.kinds, choice)
+    if (choice) return choosePermission(prompt.site, asking(prompt), choice)
     tab.prompts.splice(tab.prompts.indexOf(prompt), 1)
     for (const callback of prompt.callbacks) callback(false)
     sync()

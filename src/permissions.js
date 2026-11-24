@@ -36,24 +36,21 @@ function kindsOf(permission, mediaTypes = []) {
   return Object.hasOwn(BY_PERMISSION, permission) ? [BY_PERMISSION[permission]] : null
 }
 
-// "https://example.com", or "file://" for every local file. Pages with no
-// origin of their own (data:, about:blank) have none, and are never asked.
+// "https://example.com". Pages with no origin of their own (data:,
+// about:blank) have none, and neither do local files: one origin would
+// cover every file on disk, so they are refused instead of asked.
 function originOf(url) {
   try {
-    const parsed = new URL(url)
-    if (parsed.protocol === 'file:') return 'file://'
-    return parsed.origin === 'null' ? null : parsed.origin
+    const { origin } = new URL(url)
+    return origin === 'null' ? null : origin
   } catch {
     return null
   }
 }
 
-// How the prompt and Settings name a site: https is left out, as the
-// address bar does everywhere else in Chrome; anything else is kept.
-function label(site) {
-  if (site === 'file://') return 'Local files'
-  return site.replace(/^https:\/\//, '')
-}
+// How the prompt and Settings name a site: https is left out, as Chrome's
+// prompts do; anything else is kept.
+const label = (site) => site.replace(/^https:\/\//, '')
 
 // "use your camera and microphone", "know your location".
 function describe(kinds) {
@@ -67,6 +64,13 @@ function status(sites, site, kinds) {
   const saved = sites.get(site) || {}
   if (kinds.some((kind) => saved[kind] === 'block')) return 'block'
   return kinds.every((kind) => saved[kind] === 'allow') ? 'allow' : 'ask'
+}
+
+// The kinds the site has no choice for yet: what a prompt asks about, so
+// answering it never changes an earlier choice.
+function undecided(sites, site, kinds) {
+  const saved = sites.get(site) || {}
+  return kinds.filter((kind) => !saved[kind])
 }
 
 // A new Map with `choice` saved for each kind, or the kinds forgotten
@@ -124,4 +128,4 @@ function save(file, sites) {
   fs.renameSync(temporary, file)
 }
 
-module.exports = { KINDS, CHOICES, kindsOf, originOf, label, describe, status, choose, list, load, save }
+module.exports = { KINDS, CHOICES, kindsOf, originOf, label, describe, status, undecided, choose, list, load, save }

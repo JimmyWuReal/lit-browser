@@ -33,7 +33,7 @@ Middle-click closes a tab. In the tab strip, arrow keys move between tabs and De
 
 ## Site permissions
 
-When a site asks to use your camera or microphone, know your location, show notifications or read your clipboard, a row appears below the address bar: "example.com wants to use your camera". Allow or Block is remembered for that site (its scheme, host and port, as in Chrome), in `permissions.json` in the app's data folder, so it is not asked again; × answers no just this time. The question belongs to the tab that asked: switching tabs hides it until you come back, and leaving the page drops it. Requests from a frame inside a page are asked as the page's site; notifications are only for the page itself. Other permissions, such as full screen, keep Electron's default and are allowed.
+When a site asks to use your camera or microphone, know your location, show notifications or read your clipboard, a row appears below the address bar: "example.com wants to use your camera". Allow or Block is remembered for that site (its scheme, host and port, as in Chrome), in `permissions.json` in the app's data folder, so it is not asked again; × answers no just this time. A request for both camera and microphone only asks about the one you have not answered yet. The question belongs to the tab that asked: switching tabs hides it until you come back, and leaving the page drops it. Only the page in the address bar can ask: a frame from another site inside it, and local files, are refused. Other permissions, such as full screen, keep Electron's default and are allowed.
 
 Electron has no "not asked yet" state, so before you answer, a site that only checks (rather than asks) sees the permission as blocked.
 

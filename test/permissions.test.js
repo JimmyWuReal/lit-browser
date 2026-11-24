@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { kindsOf, originOf, label, describe, status, choose, list, load, save } = require('../src/permissions')
+const { kindsOf, originOf, label, describe, status, undecided, choose, list, load, save } = require('../src/permissions')
 
 test('kindsOf maps the requests Lit asks about, and leaves the rest alone', () => {
   assert.deepEqual(kindsOf('media', ['video', 'audio']), ['camera', 'microphone'])
@@ -18,11 +18,11 @@ test('kindsOf maps the requests Lit asks about, and leaves the rest alone', () =
   assert.equal(kindsOf('constructor'), null)
 })
 
-test('a site is an origin; local files share one, and pages without one have none', () => {
+test('a site is an origin; local files and pages without one have none', () => {
   assert.equal(originOf('https://meet.example.com/abc?x'), 'https://meet.example.com')
   assert.equal(originOf('http://localhost:3000/a'), 'http://localhost:3000')
   assert.equal(originOf('https://example.com:443/'), 'https://example.com')
-  assert.equal(originOf('file:///Users/me/a.html'), 'file://')
+  assert.equal(originOf('file:///Users/me/a.html'), null)
   assert.equal(originOf('data:text/html,hi'), null)
   assert.equal(originOf('about:blank'), null)
   assert.equal(originOf(''), null)
@@ -31,7 +31,6 @@ test('a site is an origin; local files share one, and pages without one have non
 test('label drops https only, and describe words the request', () => {
   assert.equal(label('https://example.com'), 'example.com')
   assert.equal(label('http://localhost:3000'), 'http://localhost:3000')
-  assert.equal(label('file://'), 'Local files')
   assert.equal(describe(['camera', 'microphone']), 'use your camera and microphone')
   assert.equal(describe(['location']), 'know your location')
 })
@@ -47,6 +46,13 @@ test('status: any block blocks, every kind allowed allows, else ask', () => {
   sites = choose(sites, site, ['microphone'], 'block')
   assert.equal(status(sites, site, ['camera', 'microphone']), 'block')
   assert.equal(status(sites, 'http://example.com', ['camera']), 'ask')
+})
+
+test('undecided leaves out kinds already chosen', () => {
+  const site = 'https://example.com'
+  const sites = choose(new Map(), site, ['camera'], 'allow')
+  assert.deepEqual(undecided(sites, site, ['camera', 'microphone']), ['microphone'])
+  assert.deepEqual(undecided(sites, 'https://other.com', ['camera']), ['camera'])
 })
 
 test('choose returns a new map, and forgetting the last kind drops the site', () => {
@@ -79,12 +85,13 @@ test('save and load round-trip, keeping only valid sites, kinds and choices', ()
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lit-permissions-'))
   const file = path.join(dir, 'nested', 'permissions.json')
   assert.deepEqual(load(file), new Map())
-  const sites = new Map([['https://example.com', { camera: 'allow', location: 'block' }], ['file://', { microphone: 'allow' }]])
+  const sites = new Map([['https://example.com', { camera: 'allow', location: 'block' }], ['http://localhost:3000', { microphone: 'allow' }]])
   save(file, sites)
   assert.deepEqual(load(file), sites)
   fs.writeFileSync(file, JSON.stringify({
     'https://a.com': { camera: 'allow', speakers: 'allow', location: 'maybe' },
     'https://b.com/path': { camera: 'allow' },
+    'file://': { camera: 'allow' },
     'not a site': { camera: 'allow' },
     ['__proto__']: { camera: 'allow' },
     'https://c.com': 'allow',
