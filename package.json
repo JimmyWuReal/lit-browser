@@ -25,6 +25,9 @@
   },
   "license": "MIT",
   "type": "commonjs",
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.20.3"
+  },
   "devDependencies": {
     "electron": "^45.4.1",
     "electron-builder": "^26.18.0"

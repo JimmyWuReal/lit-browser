@@ -36,7 +36,7 @@ function quote(text) {
 //   canGoBack, canGoForward
 //   engineName     the search engine's name, for "Search Google for …"
 //   askWhereToSave whether downloads ask where to save (the Downloads setting)
-//   keys           { reload, back, forward }: the current accelerators, shown
+//   keys           { reload, back, forward, print }: the current accelerators, shown
 //                  next to those items
 //   inSubframe     whether the right-click was inside an iframe
 function pageMenu(params, context = {}) {
@@ -110,6 +110,8 @@ function pageMenu(params, context = {}) {
       { label: 'Back', command: 'back', enabled: canGoBack, accelerator: keys.back },
       { label: 'Forward', command: 'forward', enabled: canGoForward, accelerator: keys.forward },
       { label: 'Reload', command: 'reload', accelerator: keys.reload },
+    ], [
+      { label: 'Print…', command: 'print', accelerator: keys.print },
     ])
   }
 
