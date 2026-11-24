@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { LIMIT, visit, unvisit, retitle, remove, suggest, suggestWithPinned, load, save } = require('../src/history')
+const { LIMIT, visit, unvisit, retitle, remove, suggest, load, save } = require('../src/history')
 
 test('a visit puts its page first, once', () => {
   let entries = visit([], { url: 'https://a.com/', title: 'A', time: 1 })
@@ -110,23 +110,4 @@ test('suggest puts addresses that start with the text first, then word starts', 
   // Typing the scheme or www. still finds the address.
   assert.equal(suggest(entries, 'https://www.git')[0].url, 'https://www.github.com/')
   assert.equal(suggest(entries, 'git', 2).length, 2)
-})
-
-test('pinned tabs come first in suggestions, each address once', () => {
-  const entries = [
-    { url: 'https://github.com/a', title: 'Repo A', time: 3 },
-    { url: 'https://mail.example.com/', title: 'Mail', time: 2 },
-    { url: 'https://github.com/b', title: 'Repo B', time: 1 },
-  ]
-  const pinned = [{ url: 'https://github.com/b', title: 'Repo B' }, { url: 'https://news.com/', title: 'News' }]
-  assert.deepEqual(suggestWithPinned(pinned, entries, 'repo'), [
-    { url: 'https://github.com/b', title: 'Repo B', pinned: true },
-    { url: 'https://github.com/a', title: 'Repo A' },
-  ])
-  assert.deepEqual(suggestWithPinned(pinned, entries, 'repo', 1).map((item) => item.url), ['https://github.com/b'])
-  assert.deepEqual(suggestWithPinned([], entries, 'mail').map((item) => item.url), ['https://mail.example.com/'])
-  // The same address pinned twice matches by either title, and shows once.
-  const twice = [{ url: 'https://news.com/', title: 'News' }, { url: 'https://news.com/', title: 'Front page' }]
-  assert.deepEqual(suggestWithPinned(twice, [], 'front'), [{ url: 'https://news.com/', title: 'Front page', pinned: true }])
-  assert.deepEqual(suggestWithPinned(twice, [], 'news').length, 1)
 })

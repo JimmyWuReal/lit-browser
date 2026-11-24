@@ -43,8 +43,8 @@ const SECTIONS = [
       },
       {
         key: 'addressSuggestions',
-        label: 'Suggest pages as you type',
-        description: 'In the address bar, show pinned tabs and visited pages whose title or address matches, pinned tabs first.',
+        label: 'Suggest pages from history',
+        description: 'As you type in the address bar, show visited pages whose title or address matches.',
         type: 'toggle',
         default: true,
       },
@@ -109,7 +109,7 @@ const SECTIONS = [
       {
         key: 'restoreSession',
         label: 'Reopen windows from last time',
-        description: 'Lit opens with the windows and tabs that were open when it quit. Otherwise it opens a new window with your pinned tabs.',
+        description: 'Lit opens with the windows and tabs that were open when it quit.',
         type: 'toggle',
         default: true,
       },
@@ -180,7 +180,6 @@ const SECTIONS = [
       shortcut('closeTab', 'Close Tab', 'CmdOrCtrl+W'),
       shortcut('closeWindow', 'Close Window', 'Shift+CmdOrCtrl+W'),
       shortcut('duplicateTab', 'Duplicate Tab', ''),
-      shortcut('pinTab', 'Pin Tab', ''),
       shortcut('closeOtherTabs', 'Close Other Tabs', 'Alt+CmdOrCtrl+W'),
       shortcut('closeTabsToRight', 'Close Tabs to the Right', ''),
       shortcut('print', 'Print', 'CmdOrCtrl+P'),
