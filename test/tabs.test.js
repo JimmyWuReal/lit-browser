@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, remember, forgetOlder, reopenIndex, onScreen } = require('../src/tabs')
+const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -48,10 +48,26 @@ test('a window is on screen while it overlaps a display', () => {
   assert.equal(onScreen({ x: 100, y: 50, width: 800, height: 600 }, []), false)
 })
 
-test('closed entries are forgotten once they are too old', () => {
-  const closed = [{ id: 1, time: 0 }, { id: 2, time: 50 }, { id: 3, time: 90 }]
-  assert.equal(forgetOlder(closed, 100, 60), 110)
-  assert.deepEqual(closed.map((entry) => entry.id), [2, 3])
-  assert.equal(forgetOlder(closed, 200, 60), null)
-  assert.deepEqual(closed, [])
+test('lowering the limit keeps only the newest closed entries', () => {
+  const closed = [1, 2, 3, 4]
+  keepNewest(closed, 2)
+  assert.deepEqual(closed, [3, 4])
+  keepNewest(closed, 5)
+  assert.deepEqual(closed, [3, 4])
+})
+
+test('a closed window counts each of its tabs', () => {
+  const tab = { history: null }
+  const closed = [tab, tab, { tabs: [null, null, null], activeIndex: 0 }, tab]
+  keepNewest(closed, 4)
+  assert.deepEqual(closed, [{ tabs: [null, null, null], activeIndex: 0 }, tab])
+})
+
+test('a window bigger than the limit keeps its active tab and its neighbors', () => {
+  const big = [{ history: null }, { tabs: [0, 1, 2, 3, 4, 5, 6], activeIndex: 5 }]
+  keepNewest(big, 3)
+  assert.deepEqual(big, [{ tabs: [4, 5, 6], activeIndex: 1 }])
+  const start = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 0 }]
+  keepNewest(start, 2)
+  assert.deepEqual(start, [{ tabs: [0, 1], activeIndex: 0 }])
 })

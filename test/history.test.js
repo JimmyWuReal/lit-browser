@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { LIMIT, visit, retitle, remove, load, save } = require('../src/history')
+const { LIMIT, visit, unvisit, retitle, remove, suggest, load, save } = require('../src/history')
 
 test('a visit puts its page first, once', () => {
   let entries = visit([], { url: 'https://a.com/', title: 'A', time: 1 })
@@ -54,4 +54,60 @@ test('load keeps only well-formed entries, newest first', () => {
   ])
   fs.writeFileSync(file, '{ broken')
   assert.deepEqual(load(file), [])
+})
+
+test('unvisit takes a visit back and puts the older one in its place', () => {
+  const entries = [
+    { url: 'https://c.com/', title: 'C', time: 30 },
+    { url: 'https://b.com/', title: 'B', time: 20 },
+    { url: 'https://a.com/', title: 'A', time: 10 },
+  ]
+  const previous = entries[2]
+  const visited = visit(entries, { url: 'https://a.com/', time: 40 })
+  assert.deepEqual(unvisit(visited, { url: 'https://a.com/', time: 40, previous }), entries)
+  // A first visit just goes.
+  const fresh = visit(entries, { url: 'https://d.com/', time: 40 })
+  assert.deepEqual(unvisit(fresh, { url: 'https://d.com/', time: 40, previous: null }), entries)
+  // An older page comes back at the end, too.
+  const oldest = { url: 'https://z.com/', title: 'Z', time: 1 }
+  const replaced = visit(entries, { url: 'https://z.com/', time: 40 })
+  assert.deepEqual(unvisit(replaced, { url: 'https://z.com/', time: 40, previous: oldest }).at(-1), oldest)
+})
+
+test('unvisit leaves a page visited again since', () => {
+  const entries = [{ url: 'https://a.com/', title: 'A', time: 50 }]
+  assert.equal(unvisit(entries, { url: 'https://a.com/', time: 40, previous: null }), entries)
+  assert.equal(unvisit(entries, { url: 'https://b.com/', time: 40, previous: null }), entries)
+})
+
+test('suggest matches every word in the title or address', () => {
+  const entries = [
+    { url: 'https://news.example.com/rust', title: 'Rust release notes', time: 3 },
+    { url: 'https://github.com/rust-lang/rust', title: 'GitHub - rust-lang/rust', time: 2 },
+    { url: 'https://www.example.com/', title: 'Example Domain', time: 1 },
+  ]
+  assert.deepEqual(suggest(entries, '').map((e) => e.url), [])
+  assert.deepEqual(suggest(entries, '  ').map((e) => e.url), [])
+  assert.deepEqual(suggest(entries, 'RUST notes').map((e) => e.url), ['https://news.example.com/rust'])
+  assert.deepEqual(suggest(entries, 'domain').map((e) => e.url), ['https://www.example.com/'])
+  assert.deepEqual(suggest(entries, 'nothing'), [])
+  assert.deepEqual(suggest(entries, 'domain')[0], { url: 'https://www.example.com/', title: 'Example Domain' })
+})
+
+test('suggest puts addresses that start with the text first, then word starts', () => {
+  const entries = [
+    { url: 'https://blog.dev/agitate', title: 'Agitate', time: 4 },
+    { url: 'https://docs.dev/git', title: 'Docs', time: 3 },
+    { url: 'https://www.github.com/', title: 'GitHub', time: 2 },
+    { url: 'https://gitlab.com/', title: 'GitLab', time: 1 },
+  ]
+  assert.deepEqual(suggest(entries, 'git').map((e) => e.url), [
+    'https://www.github.com/',
+    'https://gitlab.com/',
+    'https://docs.dev/git',
+    'https://blog.dev/agitate',
+  ])
+  // Typing the scheme or www. still finds the address.
+  assert.equal(suggest(entries, 'https://www.git')[0].url, 'https://www.github.com/')
+  assert.equal(suggest(entries, 'git', 2).length, 2)
 })

@@ -1,12 +1,14 @@
 // Browsing history: one entry per address, newest visit first, saved to
 // history.json in the app's data folder. Plain Node, so it is tested in
 // test/history.test.js; main records visits only while the Save history
-// setting is on.
+// setting is on, and decides which navigations count as visits.
 const fs = require('node:fs')
 const { save } = require('./settings')
 
 // Enough for months of browsing while the file stays small.
 const LIMIT = 5000
+// How many pages the address bar suggests at most.
+const SUGGESTIONS = 6
 
 // Only real pages; not about:blank, data: URLs or Chromium's own pages.
 const recordable = (url) => /^(https?|file):/i.test(url)
@@ -20,6 +22,19 @@ function visit(entries, { url, title = '', time }) {
   return [next, ...entries.filter((entry) => entry !== old)].slice(0, LIMIT)
 }
 
+// Takes back a visit whose page turned out to be a step on the way to
+// another (a redirect, or an address the page replaced). `previous` is the
+// entry the visit replaced, which comes back in its place by time. Does
+// nothing once the page has been visited again since.
+function unvisit(entries, { url, time, previous }) {
+  const index = entries.findIndex((entry) => entry.url === url)
+  if (index === -1 || entries[index].time !== time) return entries
+  const rest = entries.filter((_, i) => i !== index)
+  if (!previous) return rest
+  const at = rest.findIndex((entry) => entry.time < previous.time)
+  return at === -1 ? [...rest, previous] : [...rest.slice(0, at), previous, ...rest.slice(at)]
+}
+
 function retitle(entries, url, title) {
   const index = entries.findIndex((entry) => entry.url === url)
   if (index === -1 || !title || entries[index].title === title) return entries
@@ -27,6 +42,33 @@ function retitle(entries, url, title) {
 }
 
 const remove = (entries, url) => entries.filter((entry) => entry.url !== url)
+
+// The address without its scheme and www., as people type it.
+const bare = (url) => url.toLowerCase().replace(/^[a-z]+:\/\/(www\.)?/, '')
+
+// Pages for the address bar: every typed word must be in the title or the
+// address. Addresses that start with what was typed come first, then pages
+// where a word starts one of the title's or address's words, then the
+// rest; newest first within each.
+function suggest(entries, query, limit = SUGGESTIONS) {
+  const text = query.trim().toLowerCase()
+  const words = text.split(/\s+/).filter(Boolean)
+  if (!words.length) return []
+  const typed = bare(text)
+  const ranked = [[], [], []]
+  for (const entry of entries) {
+    const url = entry.url.toLowerCase()
+    const address = bare(url)
+    const title = entry.title.toLowerCase()
+    if (!words.every((word) => url.includes(word) || title.includes(word))) continue
+    const startsWord = (haystack) => words.some((word) => haystack.startsWith(word) || haystack.includes(` ${word}`) || haystack.includes(`.${word}`) || haystack.includes(`/${word}`))
+    const rank = address.startsWith(typed) ? 0 : startsWord(title) || startsWord(address) ? 1 : 2
+    ranked[rank].push({ url: entry.url, title: entry.title })
+    // Nothing can outrank a full first group.
+    if (ranked[0].length === limit) break
+  }
+  return ranked.flat().slice(0, limit)
+}
 
 // Only well-formed entries survive a hand-edited or older file.
 function load(file) {
@@ -43,4 +85,4 @@ function load(file) {
   }
 }
 
-module.exports = { LIMIT, visit, retitle, remove, load, save }
+module.exports = { LIMIT, recordable, visit, unvisit, retitle, remove, suggest, load, save }
