@@ -182,11 +182,12 @@ const privateSessions = new Set()
 
 // Each private window browses in a session of its own, in memory only (a
 // partition without "persist:"), so its cookies, cache and site storage
-// never reach disk, and no other window, private or not, sees them.
+// never reach disk, and no other window, private or not, sees them. It has
+// no HTTP cache at all, so pages it loads aren't kept even in memory.
 // Closing the window clears it (see forgetSession), as Electron keeps a
 // session object around until Lit quits.
 function privateSession(key, store) {
-  const ses = session.fromPartition(`private-${key}`)
+  const ses = session.fromPartition(`private-${key}`, { cache: false })
   setUpSession(ses, store)
   privateSessions.add(ses)
   return ses
@@ -198,10 +199,11 @@ function forgetSession(ses) {
   ses.removeAllListeners('will-download')
   ses.setPermissionRequestHandler(null)
   ses.setPermissionCheckHandler(null)
-  ses.clearStorageData().catch(() => {})
-  ses.clearCache().catch(() => {})
+  // Every kind of data the session holds, then its open connections.
+  ses.clearData().catch(() => {})
   ses.clearAuthCache().catch(() => {})
   ses.clearHostResolverCache().catch(() => {})
+  ses.closeAllConnections().catch(() => {})
 }
 
 // Pages visited (src/history.js), newest first. Loaded at launch, and saved
@@ -351,12 +353,14 @@ function downloadsState(ses) {
 
 // Follows one download from will-download to done. Saving straight to
 // Downloads, when Settings says so; otherwise Electron asks where to save.
+// A private window always asks, so no site there writes a file unasked.
 // Paths of unfinished downloads count as taken, so two same-name downloads
 // never share one.
 const downloading = new Set()
+const askWhereToSave = (ses) => settings.downloadLocation !== 'downloads' || privateSessions.has(ses)
 function trackDownload(item, ses) {
   let file = null
-  if (settings.downloadLocation === 'downloads') {
+  if (!askWhereToSave(ses)) {
     file = downloadsStore.uniquePath(app.getPath('downloads'), item.getFilename(), (candidate) => downloading.has(candidate) || fs.existsSync(candidate))
     downloading.add(file)
     item.setSavePath(file)
@@ -546,7 +550,8 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
         find: find && { text: find.text, active: find.active, matches: find.matches },
       })),
     })
-    sessionChanged()
+    // A private window is no part of the saved session.
+    if (!isPrivate) sessionChanged()
   }
 
   // The toolbar's tooltips show the current shortcuts.
@@ -1061,7 +1066,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
       canGoBack: contents.navigationHistory.canGoBack(),
       canGoForward: contents.navigationHistory.canGoForward(),
       engineName: engineOf(settings.searchEngine).name,
-      askWhereToSave: settings.downloadLocation !== 'downloads',
+      askWhereToSave: askWhereToSave(ses),
       keys: { reload: settings['shortcuts.reload'], back: settings['shortcuts.back'], forward: settings['shortcuts.forward'], print: settings['shortcuts.print'] },
       inSubframe: Boolean(params.frame && params.frame !== contents.mainFrame),
       learnWords: !isPrivate,
@@ -1396,12 +1401,14 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   openWindows.add(controls)
 
   win.on('resize', layout)
-  // Where the window is, and which window was in front, come back next launch.
-  for (const change of ['move', 'resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(change, sessionChanged)
+  // Where the window is, and which window was in front, come back next
+  // launch; a private window changes none of that.
+  const changed = () => { if (!isPrivate) sessionChanged() }
+  for (const change of ['move', 'resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(change, changed)
   win.on('focus', () => {
     openWindows.delete(controls)
     openWindows.add(controls)
-    sessionChanged()
+    changed()
   })
   win.webContents.on('context-menu', (_event, params) => showPageMenu(win.webContents, params, false))
   // A window closed with tabs still in it (⇧⌘W, the close button) can be
@@ -1418,7 +1425,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendDownloads() })
   win.on('closed', () => {
     openWindows.delete(controls)
-    sessionChanged()
+    changed()
     if (closingWindow) rememberClosed(closingWindow)
     for (const tab of tabs.splice(0)) {
       for (const prompt of tab.prompts) for (const callback of prompt.callbacks) callback(false)
