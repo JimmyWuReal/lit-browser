@@ -357,6 +357,9 @@ function downloadsState(ses) {
 // Paths of unfinished downloads count as taken, so two same-name downloads
 // never share one.
 const downloading = new Set()
+// Every download not done yet, listed or still in its save dialog, so
+// closing a private window can cancel all of its own.
+const unfinished = new Set()
 const askWhereToSave = (ses) => settings.downloadLocation !== 'downloads' || privateSessions.has(ses)
 function trackDownload(item, ses) {
   let file = null
@@ -372,11 +375,6 @@ function trackDownload(item, ses) {
     download.received = item.getReceivedBytes()
     download.total = item.getTotalBytes()
     download.speed = state === 'progressing' ? item.getCurrentBytesPerSecond() : 0
-    // A private window closed while its save dialog was open: cancelled.
-    if (state === 'progressing' && !download.dropped && ses !== session.defaultSession && !privateSessions.has(ses)) {
-      download.dropped = true
-      item.cancel()
-    }
     // Listed once it has a place: right away, or after the save dialog;
     // never again once its private window has dropped it.
     if (!download.path || download.dropped || downloads.includes(download)) return false
@@ -385,6 +383,7 @@ function trackDownload(item, ses) {
   }
   item.on('updated', (_event, state) => downloadsChanged(read(state)))
   item.once('done', (_event, state) => {
+    unfinished.delete(download)
     if (file) downloading.delete(file)
     read(state === 'interrupted' ? 'failed' : state)
     // Done with Electron's item; the list keeps what it last said.
@@ -392,6 +391,7 @@ function trackDownload(item, ses) {
     if (state === 'completed') app.dock?.downloadFinished(download.path)
     downloadsChanged(true)
   })
+  unfinished.add(download)
   if (read('progressing')) downloadsChanged(true)
 }
 
@@ -477,9 +477,16 @@ function applySettings() {
 // It still reads what normal windows saved (history suggestions, site
 // zooms, Blocks), but what changes in it stays in it, and goes when it closes.
 function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored = [], activeIndex = 0, bounds, maximized, fullScreen } = {}) {
-  // A private window's own permission choices, starting from the saved Blocks.
+  // A private window's own permission choices, kept in memory, under the
+  // saved Blocks, which always win (choosePermission settles its prompts too).
   const permissionStore = isPrivate
-    ? { sites: permissions.blocksOnly(sitePermissions), choose(site, kinds, choice) { this.sites = permissions.choose(this.sites, site, kinds, choice); settlePrompts(); return true } }
+    ? (() => {
+        let own = new Map()
+        return {
+          get sites() { return permissions.privateView(sitePermissions, own) },
+          choose(site, kinds, choice) { own = permissions.choose(own, site, kinds, choice); settlePrompts(); return true },
+        }
+      })()
     : savedPermissions
   const ses = isPrivate ? privateSession(key, permissionStore) : session.defaultSession
   // A private window's own site zooms, over the saved ones.
@@ -508,7 +515,9 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     backgroundColor: isPrivate ? '#0c0a12' : '#090909',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 12 },
-    webPreferences: { preload: PRELOAD },
+    // A private window's own pages (toolbar, popups, suggestions) use its
+    // session too, so nothing of it lands in the profile on disk.
+    webPreferences: { preload: PRELOAD, session: ses },
   })
 
   const tabs = []
@@ -1160,7 +1169,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   // instead of the menu, so ⌘T records ⌘T rather than opening a tab.
   function popupView(name) {
     if (popups[name]) return popups[name]
-    const view = new WebContentsView({ webPreferences: { preload: PRELOAD } })
+    const view = new WebContentsView({ webPreferences: { preload: PRELOAD, session: ses } })
     view.setBackgroundColor('#00000000')
     windowsByPopup.set(view.webContents, { controls, name })
     if (name === 'settings') {
@@ -1230,7 +1239,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
 
   function showSuggestions(items, { x, y, width }) {
     if (!suggestionsView) {
-      suggestionsView = new WebContentsView({ webPreferences: { preload: PRELOAD } })
+      suggestionsView = new WebContentsView({ webPreferences: { preload: PRELOAD, session: ses } })
       suggestionsView.setBackgroundColor('#00000000')
       suggestionsView.setVisible(false)
       windowsByPopup.set(suggestionsView.webContents, { controls, name: 'suggestions' })
@@ -1436,13 +1445,15 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     clearTimeout(suggestionsHide)
     suggestionsView?.webContents.close()
     if (isPrivate) {
-      // Its downloads go too, those on their way cancelled; files already
-      // saved stay where they were saved.
-      for (const download of downloadsOf(ses)) {
+      // Its downloads go too, those on their way (or in their save dialog)
+      // cancelled; files already saved stay where they were saved. A
+      // dropped download never joins the list again.
+      for (const download of unfinished) {
+        if (download.session !== ses) continue
         download.dropped = true
         download.item?.cancel()
-        downloads.splice(downloads.indexOf(download), 1)
       }
+      downloads.splice(0, downloads.length, ...downloads.filter((download) => download.session !== ses))
       downloadsChanged(true)
       forgetSession(ses)
     }

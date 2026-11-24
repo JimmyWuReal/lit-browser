@@ -39,13 +39,13 @@ When Lit opens again, it reopens the windows and tabs that were open when it qui
 
 ⇧⌘N (File › New Private Window) opens a private window. It looks a little different: a violet tint, a Private badge in the tab strip, and a note under the search box.
 
-Each private window browses in a session of its own, kept in memory and never written to disk, so its cookies and site storage are seen by no other window, private or not. It keeps no HTTP cache, not even in memory. Lit keeps nothing from it:
+Each private window, its toolbar and popups included, browses in a session of its own, kept in memory and never written to disk, so its cookies and site storage are seen by no other window, private or not. It keeps no HTTP cache, not even in memory. Lit keeps nothing from it:
 
 - No history: its pages are not recorded, and its closed tabs, and the window itself, can't be reopened. Reopen Closed Tab from a private window brings a normal tab back into a normal window.
 - It is left out of the windows reopened at the next launch.
 - Zooming a site there zooms only that window, and isn't saved.
-- Site permissions start from the sites you blocked; a site you allowed asks again. Answers there last only until the window closes.
-- Downloads always ask where to save, whatever the Downloads setting, so no site there writes a file you didn't choose. They show only in the window's own Downloads list. Closing the window cancels those still on their way and drops the list; files already saved stay where they were saved.
+- Site permissions: a site you blocked stays blocked (even if you block it while the window is open), and one you allowed asks again. Answers there last only until the window closes.
+- Downloads always ask where to save, whatever the Downloads setting, so no site there writes a file you didn't choose. They show only in the window's own Downloads list. Closing the window cancels those still on their way (or waiting in their save dialog) and drops the list; files already saved stay where they were saved.
 - Its right-click menu has no Add to Dictionary.
 
 Closing the window clears its session's data from memory. It still reads what normal windows saved, so the address bar can suggest pages from history, and saved site zooms apply. Changes made in Settings are saved, as in any window.
