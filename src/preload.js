@@ -11,8 +11,9 @@ contextBridge.exposeInMainWorld('lit', {
   // `focus: false` keeps keyboard focus in the toolbar.
   closeTab: (id, focus = true) => ipcRenderer.send('close-tab', id, focus),
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started, find, zoom }] },
-  // `zoom` being '125%', or '' at the default zoom.
+  // { activeId, tabs: [{ id, title, url, favicon, loading, started, find, zoom, prompt }] },
+  // `zoom` being '125%', or '' at the default zoom, and `prompt` the tab's
+  // permission request, { id, site, kinds, does }, or undefined.
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   openSettings: () => ipcRenderer.send('open-settings'),
@@ -20,6 +21,9 @@ contextBridge.exposeInMainWorld('lit', {
   // The downloads indicator: { count, active, progress }, `progress` being
   // 0–1, or null while none is running or one has no known size.
   onDownloads: (callback) => on('downloads', callback),
+  // Answers a permission prompt: 'allow', 'block', or null to dismiss it.
+  // `kinds` is what the prompt showed, so a stale answer is ignored.
+  answerPermission: (tabId, promptId, kinds, choice) => ipcRenderer.send('answer-permission', tabId, promptId, kinds, choice),
   // Puts the active page back at the default zoom.
   resetZoom: () => ipcRenderer.send('reset-zoom'),
   // Find in page, on the tab the toolbar shows (main ignores a tab that is
@@ -42,10 +46,13 @@ contextBridge.exposeInMainWorld('lit', {
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
   onShortcuts: (callback) => on('shortcuts', callback),
   // For the Settings popup only; main ignores these from anywhere else.
-  // State is { sections, values, labels, error? } (see settingsState in main).
+  // State is { sections, values, labels, sitePermissions, error? } (see
+  // settingsState in main).
   settings: {
     get: () => ipcRenderer.invoke('settings-get'),
     set: (key, value) => ipcRenderer.invoke('settings-set', key, value),
+    // A site's choice for one kind: 'allow', 'block', or null to forget it.
+    setPermission: (site, kind, choice) => ipcRenderer.invoke('permissions-set', site, kind, choice),
     close: () => ipcRenderer.send('settings-close'),
     // While on, key presses come back through onShortcutPressed as
     // { accelerator } ('' clears) or { cancel: true }, not to the menu.

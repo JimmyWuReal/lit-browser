@@ -239,6 +239,28 @@
     .keys.is-recording { color: var(--dim); box-shadow: inset 0 0 0 1px var(--line-live); }
     .reset.is-hidden { opacity: 0; pointer-events: none; }
 
+    /* Site permissions: one box per site, a row per kind with its choice. */
+    .site-permissions { display: flex; flex-direction: column; gap: 14px; }
+    .site-permissions .control-text { flex: none; }
+    .sites { display: flex; flex-direction: column; gap: 10px; }
+    .sites-empty { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--sub); }
+    .site { padding: 4px 0; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line); }
+    .site-name {
+      padding: 8px 14px 4px;
+      overflow: hidden;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      user-select: text;
+    }
+    .site-kind { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 14px; }
+    .site-kind > span { flex: 1; min-width: 0; font-size: 12.5px; color: var(--sub); }
+    .segmented.is-small { padding: 3px; border-radius: 10px; }
+    .segmented.is-small .segmented-thumb { top: 3px; bottom: 3px; border-radius: 7px; }
+    .segmented.is-small button { height: 24px; padding: 0 10px; border-radius: 7px; font-size: 12px; }
+
     /* Narrow windows put the sections in a row above the settings. */
     @media (max-width: 600px) {
       .panel { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
@@ -275,6 +297,10 @@
     </div>
   </div>
 
+  <template id="remove-icon">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+  </template>
   <template id="reset-icon">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -285,7 +311,8 @@
   <script>
     // Draws every section and setting from SECTIONS in src/settings.js. A
     // new setting needs no change here unless it brings a new `type`; then
-    // add a control to `controls` below.
+    // add a control to `controls` below. A section's `list` is drawn by
+    // `lists` below.
     const settings = window.lit.settings
     const backdrop = document.getElementById('backdrop')
     const nav = document.getElementById('nav')
@@ -317,6 +344,27 @@
         if (id !== saves) return
         state = next
         redraw({ [key]: next.error || '' })
+      })
+    }
+
+    // A site's choice for one kind, or null to forget it; drawn at once,
+    // like save, and replaced by main's answer.
+    function savePermission(site, kind, choice) {
+      const id = ++saves
+      const sitePermissions = state.sitePermissions
+        .map((item) => item.site !== site ? item : {
+          ...item,
+          kinds: choice
+            ? item.kinds.map((entry) => (entry.kind === kind ? { ...entry, choice } : entry))
+            : item.kinds.filter((entry) => entry.kind !== kind),
+        })
+        .filter((item) => item.kinds.length)
+      state = { ...state, sitePermissions }
+      redraw()
+      return settings.setPermission(site, kind, choice).then((next) => {
+        if (id !== saves) return
+        state = next
+        redraw({ sitePermissions: next.error || '' })
       })
     }
 
@@ -360,39 +408,52 @@
       })
     }
 
+    // The kit's segmented control over `labels`: `index()` is the chosen
+    // one, and `choose(i)` picks another.
+    function segmented(label, labels, index, choose, className = '') {
+      const group = el('div', `segmented ${className}`)
+      group.setAttribute('role', 'radiogroup')
+      group.setAttribute('aria-label', label)
+      group.style.setProperty('--count', labels.length)
+      const thumb = el('span', 'segmented-thumb')
+      thumb.setAttribute('aria-hidden', 'true')
+      group.append(thumb)
+      const buttons = labels.map((text, i) => {
+        const button = el('button', '', text)
+        button.type = 'button'
+        button.setAttribute('role', 'radio')
+        button.addEventListener('click', () => choose(i))
+        group.append(button)
+        return button
+      })
+      arrowKeys(group, buttons, index, choose)
+      const place = () => placeThumb(group, thumb, buttons[index()])
+      const observer = new ResizeObserver(place)
+      observer.observe(group)
+      return {
+        element: group,
+        // Called once the control leaves the page.
+        stop: () => observer.disconnect(),
+        draw() {
+          buttons.forEach((button, i) => {
+            const on = i === index()
+            button.classList.toggle('is-active', on)
+            button.setAttribute('aria-checked', String(on))
+            button.tabIndex = on ? 0 : -1
+          })
+          place()
+        },
+      }
+    }
+
     const controls = {
       choice(setting) {
-        const group = el('div', 'segmented')
-        group.setAttribute('role', 'radiogroup')
-        group.setAttribute('aria-label', setting.label)
-        group.style.setProperty('--count', setting.options.length)
-        const thumb = el('span', 'segmented-thumb')
-        thumb.setAttribute('aria-hidden', 'true')
-        group.append(thumb)
-        const index = () => setting.options.findIndex((option) => option.value === state.values[setting.key])
-        const buttons = setting.options.map((option) => {
-          const button = el('button', '', option.label)
-          button.type = 'button'
-          button.setAttribute('role', 'radio')
-          button.addEventListener('click', () => save(setting.key, option.value))
-          group.append(button)
-          return button
-        })
-        arrowKeys(group, buttons, index, (next) => save(setting.key, setting.options[next].value))
-        const place = () => placeThumb(group, thumb, buttons[index()])
-        new ResizeObserver(place).observe(group)
-        return {
-          element: group,
-          draw() {
-            buttons.forEach((button, i) => {
-              const on = i === index()
-              button.classList.toggle('is-active', on)
-              button.setAttribute('aria-checked', String(on))
-              button.tabIndex = on ? 0 : -1
-            })
-            place()
-          },
-        }
+        return segmented(
+          setting.label,
+          setting.options.map((option) => option.label),
+          () => setting.options.findIndex((option) => option.value === state.values[setting.key]),
+          (i) => save(setting.key, setting.options[i].value),
+        )
       },
 
       toggle(setting) {
@@ -474,6 +535,70 @@
         return { element: wrap, draw }
       },
     }
+    const lists = {
+      // Every site given Allow or Block, each kind switchable between them,
+      // or forgotten so the site is asked again. Rebuilt only when the
+      // entries change, so a switch slides instead of redrawing.
+      sitePermissions() {
+        const element = el('div', 'site-permissions')
+        const text = el('div', 'control-text')
+        text.append(el('strong', '', 'Site permissions'))
+        text.append(el('span', '', 'Sites that asked to use your camera, microphone, location, notifications or clipboard. Changes apply the next time a site asks; reload a page to stop a camera or microphone it is already using. Remove one to be asked again.'))
+        const error = el('span', 'error')
+        error.setAttribute('role', 'alert')
+        text.append(error)
+        const body = el('div', 'sites')
+        element.append(text, body)
+        let shownKeys = null
+        let items = []
+        const choiceOf = (site, kind) => state.sitePermissions.find((item) => item.site === site)?.kinds.find((entry) => entry.kind === kind)?.choice
+        function build() {
+          const hadFocus = body.contains(document.activeElement)
+          for (const item of items) item.stop()
+          items = []
+          if (!state.sitePermissions.length) {
+            body.replaceChildren(el('p', 'sites-empty', 'No saved site permissions.'))
+          } else {
+            body.replaceChildren(...state.sitePermissions.map(({ site, label, kinds }) => {
+              const box = el('div', 'site')
+              const name = el('div', 'site-name', label)
+              name.title = site
+              box.append(name)
+              for (const { kind, label: kindLabel } of kinds) {
+                const line = el('div', 'site-kind')
+                const choice = segmented(`${kindLabel} for ${label}`, ['Allow', 'Block'],
+                  () => (choiceOf(site, kind) === 'block' ? 1 : 0),
+                  (i) => savePermission(site, kind, i ? 'block' : 'allow'), 'is-small')
+                const remove = el('button', 'icon-button')
+                remove.type = 'button'
+                remove.title = 'Remove'
+                remove.setAttribute('aria-label', `Remove ${kindLabel} for ${label}`)
+                remove.append(document.getElementById('remove-icon').content.cloneNode(true))
+                remove.addEventListener('click', () => savePermission(site, kind, null))
+                line.append(el('span', '', kindLabel), choice.element, remove)
+                box.append(line)
+                items.push(choice)
+              }
+              return box
+            }))
+          }
+          // A removed row took focus with it; the panel keeps it instead.
+          if (hadFocus && !body.contains(document.activeElement)) document.getElementById('panel').focus()
+        }
+        return {
+          key: 'sitePermissions',
+          error,
+          element,
+          stop: () => items.forEach((item) => item.stop()),
+          draw() {
+            const keys = state.sitePermissions.map((item) => `${item.site} ${item.kinds.map((entry) => entry.kind)}`).join('\n')
+            if (keys !== shownKeys) { shownKeys = keys; build() }
+            for (const item of items) item.draw()
+          },
+        }
+      },
+    }
+
     // The shortcut control waiting for keys, if any.
     let recorder = null
     // The keyboard layout, so main can name keys that ⌥ or ⇧ change.
@@ -498,7 +623,7 @@
       text.append(error)
       const control = controls[setting.type](setting)
       element.append(text, control.element)
-      return { key: setting.key, error, draw: control.draw, element }
+      return { key: setting.key, error, draw: control.draw, stop: control.stop, element }
     }
 
     // A new panel each time, so it plays the kit's panel keyframe.
@@ -513,7 +638,9 @@
         button.tabIndex = on ? 0 : -1
       }
       placeThumb(nav, navThumb, navButtons.get(id), true)
+      for (const item of rows) item.stop?.()
       rows = section.settings.map(row)
+      if (section.list) rows.push(lists[section.list]())
       const list = el('div', 'rows')
       list.append(...rows.map((item) => item.element))
       content.className = `content ${id} is-mounting`

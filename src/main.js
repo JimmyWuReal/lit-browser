@@ -3,7 +3,8 @@
 // Only the active tab's view is visible. The Settings, History and
 // Downloads popups are each one more view, transparent and over
 // everything, shown only while open. Find in page lives in the toolbar; each tab keeps its own
-// search (src/find.js).
+// search (src/find.js). A site asking for the camera, location and the like
+// gets a prompt in the toolbar, below the address row (src/permissions.js).
 const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, screen, session, shell } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
@@ -15,12 +16,16 @@ const sessionStore = require('./session')
 const shortcuts = require('./shortcuts')
 const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
+const permissions = require('./permissions')
 const findState = require('./find')
 const { pageMenu, tabMenu } = require('./menus')
 
 // Keep in sync with .strip and .bar heights in index.html.
 const STRIP_HEIGHT = 38
 const BAR_HEIGHT = STRIP_HEIGHT + 44
+// The permission prompt's row under the address row; keep in sync with
+// .prompt in index.html. Pages move down by this while their tab asks.
+const PROMPT_HEIGHT = 44
 const PRELOAD = path.join(__dirname, 'preload.js')
 // Keep in sync with .menu padding and .row height in suggestions.html.
 const SUGGESTION_ROW = 38
@@ -35,6 +40,7 @@ const windowsByToolbar = new WeakMap()
 const windowsByPopup = new WeakMap()
 const openWindows = new Set()
 let nextTabId = 1
+let nextPromptId = 1
 // Names a window for Reopen Closed Tab; a reopened window keeps its key,
 // so tabs closed from it earlier still find their way back to it.
 let nextWindowKey = 1
@@ -80,6 +86,76 @@ function zoomSite(url, factor) {
     // Unsaved, the zoom still holds until Lit quits.
   }
   for (const controls of openWindows) controls.applyZoom(site)
+}
+
+// Each site's Allow or Block, per kind (see src/permissions.js). Read at
+// launch and saved whenever one changes.
+let permissionsFile
+let sitePermissions = new Map()
+
+// Saves `choice` ('allow', 'block', or null to forget) for the kinds, then
+// answers every prompt it settles, in every window. Unsaved, a choice still
+// holds until Lit quits; returns whether it was saved.
+function choosePermission(site, kinds, choice) {
+  sitePermissions = permissions.choose(sitePermissions, site, kinds, choice)
+  let saved = true
+  try {
+    permissions.save(permissionsFile, sitePermissions)
+  } catch {
+    saved = false
+  }
+  for (const controls of openWindows) { controls.settlePrompts(); controls.settingsChanged() }
+  return saved
+}
+
+// The site a request or check is for: the origin that asked, but only when
+// it is the page in the address bar, so a choice always belongs to the site
+// people see. A frame from another site gets null, and is refused, as is a
+// page with no origin. Without a page (a service worker), the origin that
+// asked stands alone. A check can also name the origin embedding the
+// frame (`embedding`), even without a page; it has to match too.
+function siteFor(contents, asking, embedding) {
+  const site = permissions.originOf(asking)
+  const page = contents && !contents.isDestroyed() ? contents.getURL() : ''
+  if (!site || (page && permissions.originOf(page) !== site)) return null
+  return embedding && permissions.originOf(embedding) !== site ? null : site
+}
+
+// Requests for a kind Lit asks about are answered from the saved choices,
+// or by a prompt on the tab that asked, for the kinds not yet decided.
+// A frame from the page's own site is treated like the page for the camera
+// and microphone, whose requests carry the frame's real origin
+// (`securityOrigin`). Other requests carry only the frame's address, which a
+// sandboxed frame keeps without the origin, so frames are refused those.
+// The prompt names the site, not the frame, so its answer stays right even
+// if the frame has gone. Anything not from a tab (Lit's own pages, a
+// service worker) is refused too.
+function onPermissionRequest(contents, permission, callback, details) {
+  const kinds = permissions.kindsOf(permission, details.mediaTypes)
+  if (!kinds) return callback(true)
+  const site = siteFor(contents, details.securityOrigin ?? details.requestingUrl)
+  if (!site || !kinds.length) return callback(false)
+  if (!details.isMainFrame && !details.securityOrigin) return callback(false)
+  const answer = permissions.status(sitePermissions, site, kinds)
+  if (answer !== 'ask') return callback(answer === 'allow')
+  for (const controls of openWindows) {
+    if (controls.askPermission(contents, site, kinds, callback)) return
+  }
+  callback(false)
+}
+
+// Checks (Notification.permission, navigator.permissions.query, device
+// labels) say yes only once a site was allowed. Electron has no "not asked
+// yet", so until then they read as denied; asking still prompts. A frame
+// reads as its requests are answered: its site's camera and microphone
+// choices, and no for the rest. A check names the frame's real origin
+// (`requestingOrigin`). A service worker (no page) reads its site's choice.
+function onPermissionCheck(contents, permission, requestingOrigin, details) {
+  const kinds = permissions.checkKindsOf(permission, details.mediaType)
+  if (!kinds) return true
+  if (contents && !details.isMainFrame && permission !== 'media') return false
+  const site = siteFor(contents, requestingOrigin, details.embeddingOrigin)
+  return Boolean(site) && kinds.length > 0 && permissions.status(sitePermissions, site, kinds) === 'allow'
 }
 
 // Pages visited (src/history.js), newest first. Loaded at launch, and saved
@@ -269,7 +345,7 @@ function settingsState(error) {
   for (const setting of settingsStore.SETTINGS) {
     if (setting.type === 'shortcut') labels[setting.key] = settings[setting.key] ? shortcuts.label(settings[setting.key]) : ''
   }
-  return { sections: settingsStore.SECTIONS, values: settings, labels, ...(error && { error }) }
+  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), ...(error && { error }) }
 }
 
 // Do Not Track and Global Privacy Control headers, only while turned on.
@@ -357,16 +433,22 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   let toolbarHadFocus = false
   // The keyboard layout's code -> character map, sent by the popup.
   let keyboardLayout = {}
+  // How far down the pages start: lower while the active tab has a prompt.
+  let pageTop = BAR_HEIGHT
 
   // Everything the toolbar draws. Sent whenever any of it changes.
   function sync() {
     if (win.isDestroyed()) return
     const current = active()
+    const top = BAR_HEIGHT + (current?.prompts.length ? PROMPT_HEIGHT : 0)
+    if (top !== pageTop) { pageTop = top; layout() }
     win.setTitle(current?.title || (current?.started ? current.url : '') || 'New Tab')
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page }) => ({
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts }) => ({
         id, title, url, favicon, loading, started,
+        // The tab's oldest unanswered permission request; the rest wait.
+        prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
         // default or the site has its own (which can match a later default).
         zoom: started && (!zoom.same(factor, settings.defaultZoom) || siteZooms.has(zoom.siteOf(page.isDestroyed() ? '' : page.getURL())))
@@ -385,7 +467,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
 
   function layout() {
     const { width, height } = win.getContentBounds()
-    for (const tab of tabs) tab.view.setBounds({ x: 0, y: BAR_HEIGHT, width, height: height - BAR_HEIGHT })
+    for (const tab of tabs) tab.view.setBounds({ x: 0, y: pageTop, width, height: Math.max(height - pageTop, 0) })
     for (const view of Object.values(popups)) view.setBounds({ x: 0, y: 0, width, height })
   }
 
@@ -427,7 +509,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: settings.defaultZoom }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: settings.defaultZoom, prompts: [] }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -458,6 +540,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
       tab.favicon = null
       tab.find = findState.reset(tab.find)
+      // A new page has not asked for anything yet; the old page's requests go.
+      dropPrompts(tab)
       setZoom(tab, zoomFor(url))
       committed(tab, url, false)
       sync()
@@ -498,6 +582,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
         if (tab.id === activeId) findAgain(next.queued)
       }
     })
+    // A crashed page's requests went with it.
+    page.on('render-process-gone', () => dropPrompts(tab))
     // Every tab leaves through here: after closeTab's request, or when a
     // page closes itself (window.close() on a popup it opened).
     page.on('destroyed', () => removeTab(tab))
@@ -699,6 +785,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
 
   function removeTab(tab) {
     if (!find(tab.id)) return
+    dropPrompts(tab)
     const nextId = afterClose(ids(), activeId, tab.id)
     const focus = tab.closeFocus ?? true
     const index = tabs.indexOf(tab)
@@ -729,6 +816,68 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   const urlOf = (tab) => (tab.page.isDestroyed() ? '' : tab.page.getURL())
   const zoomBy = (tab, direction) => { const url = urlOf(tab); if (url) zoomSite(url, zoom.step(tab.zoom, direction)) }
   const resetZoom = (tab) => { const url = urlOf(tab); if (url) zoomSite(url, settings.defaultZoom) }
+
+  // Permission prompts. A tab's requests wait in order, one prompt at a
+  // time; the same request asked again joins the one waiting. Each prompt
+  // is { id, site, kinds, callbacks }: `kinds` is the whole request, which
+  // settles it, while the prompt asks only about the undecided ones.
+  function askPermission(contents, site, kinds, callback) {
+    const tab = tabs.find((each) => each.page === contents)
+    if (!tab) return false
+    const same = tab.prompts.find((prompt) => prompt.site === site && prompt.kinds.join() === kinds.join())
+    if (same) same.callbacks.push(callback)
+    else tab.prompts.push({ id: nextPromptId++, site, kinds, callbacks: [callback] })
+    sync()
+    return true
+  }
+  // What a prompt asks about now: its kinds without a choice yet.
+  const asking = (prompt) => permissions.undecided(sitePermissions, prompt.site, prompt.kinds)
+
+  // Refuses the tab's waiting requests, without saving anything.
+  function dropPrompts(tab) {
+    if (!tab.prompts.length) return
+    for (const prompt of tab.prompts.splice(0)) for (const callback of prompt.callbacks) callback(false)
+    sync()
+  }
+
+  // Allow or Block saves the choice for the site, which answers this
+  // prompt and any other it settles; dismissing (null) refuses only this
+  // request, so the site can ask again. `kinds` is what the row showed; an
+  // answer to a row that has since changed is ignored.
+  function answerPrompt(tabId, promptId, kinds, choice) {
+    const tab = find(tabId)
+    // Only the prompt on show: the active tab's first.
+    const prompt = tabId === activeId ? tab?.prompts[0] : null
+    if (prompt?.id !== promptId || !Array.isArray(kinds) || kinds.join() !== asking(prompt).join()) return
+    if (choice) {
+      const kinds = asking(prompt)
+      if (choosePermission(prompt.site, kinds, choice) || win.isDestroyed()) return
+      // The choice still holds; say it won't outlast this run.
+      dialog.showMessageBox(win, {
+        type: 'warning',
+        message: 'Couldn’t save site permissions',
+        detail: `${permissions.label(prompt.site)} ${choice === 'allow' ? 'can' : 'can’t'} ${permissions.describe(kinds)} until Lit quits, but it will be asked again after that.`,
+      }).catch(() => {})
+      return
+    }
+    tab.prompts.splice(tab.prompts.indexOf(prompt), 1)
+    for (const callback of prompt.callbacks) callback(false)
+    sync()
+  }
+
+  // Answers every waiting request the saved choices now decide. The rest
+  // are redrawn too, as what they ask about may have changed.
+  function settlePrompts() {
+    for (const tab of tabs) {
+      for (const prompt of [...tab.prompts]) {
+        const answer = permissions.status(sitePermissions, prompt.site, prompt.kinds)
+        if (answer === 'ask') continue
+        tab.prompts.splice(tab.prompts.indexOf(prompt), 1)
+        for (const callback of prompt.callbacks) callback(answer === 'allow')
+      }
+    }
+    sync()
+  }
 
   function navigate(input) {
     const tab = active()
@@ -1091,6 +1240,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       sync()
     },
     isActive: (id) => id === activeId,
+    askPermission,
+    answerPrompt,
+    settlePrompts,
     openFind,
     findText,
     findAgain,
@@ -1173,6 +1325,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     sessionChanged()
     if (closingWindow) rememberClosed(closingWindow)
     for (const tab of tabs.splice(0)) {
+      for (const prompt of tab.prompts) for (const callback of prompt.callbacks) callback(false)
       settle(tab)
       if (!tab.page.isDestroyed()) tab.page.close()
     }
@@ -1348,6 +1501,11 @@ ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 ipcMain.on('open-downloads', fromToolbar((c) => c.openPopup('downloads')))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
+// A prompt's answer: 'allow', 'block', or null to dismiss it, for the
+// kinds the row showed.
+ipcMain.on('answer-permission', fromToolbar((c, tabId, promptId, kinds, choice) => {
+  if (choice === null || permissions.CHOICES.includes(choice)) c.answerPrompt(tabId, promptId, kinds, choice)
+}))
 ipcMain.handle('suggest', (event, text, rect) => windowsByToolbar.get(event.sender)?.suggest(text, rect) ?? [])
 ipcMain.on('suggestions-select', fromToolbar((c, index) => Number.isInteger(index) && c.selectSuggestion(index)))
 ipcMain.on('suggestions-close', fromToolbar((c, blur) => c.hideSuggestions(blur === true)))
@@ -1374,6 +1532,14 @@ ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
   }
   settings = values
   applySettings()
+  return settingsState()
+}))
+// Changes or forgets (null) one site's choice for one kind.
+ipcMain.handle('permissions-set', fromSettings((_c, site, kind, choice) => {
+  const saved = typeof site === 'string' && Object.hasOwn(permissions.KINDS, kind) && sitePermissions.get(site)?.[kind]
+  if (saved && (choice === null || permissions.CHOICES.includes(choice)) && !choosePermission(site, [kind], choice)) {
+    return settingsState('Couldn’t save site permissions, so this change lasts only until Lit quits.')
+  }
   return settingsState()
 }))
 ipcMain.on('settings-record', fromSettings((c, on, keys) => c.setRecording(on === true, keys)))
@@ -1425,6 +1591,10 @@ app.whenReady().then(() => {
   settings = settingsStore.load(settingsFile)
   zoomFile = path.join(app.getPath('userData'), 'zoom.json')
   siteZooms = zoom.load(zoomFile)
+  permissionsFile = path.join(app.getPath('userData'), 'permissions.json')
+  sitePermissions = permissions.load(permissionsFile)
+  session.defaultSession.setPermissionRequestHandler(onPermissionRequest)
+  session.defaultSession.setPermissionCheckHandler(onPermissionCheck)
   historyFile = path.join(app.getPath('userData'), 'history.json')
   visited = historyStore.load(historyFile)
   applyDoNotTrack()
