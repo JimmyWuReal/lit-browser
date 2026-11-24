@@ -33,14 +33,20 @@ contextBridge.exposeInMainWorld('lit', {
   findAgain: (tabId, forward = true) => ipcRenderer.send('find-again', tabId, forward),
   closeFind: (tabId) => ipcRenderer.send('close-find', tabId),
   onFocusFind: (callback) => ipcRenderer.on('focus-find', () => callback()),
-  // Address bar suggestions from history. `suggest` shows the pages that
-  // match `text` under the field and answers with them, [{ url, title }]
-  // ([] when none match or the setting is off); `rect` is { x, y, width },
+  // Address bar suggestions. `suggest` shows what fits `text` under the
+  // field and answers with it: quick search sites for a half-typed
+  // shortcut, [{ kind: 'site', id, name, alias, icon, shortcut }], else pages from
+  // history, [{ url, title }] ([] when none match or both are off); `rect` is { x, y, width },
   // where the list goes. `selectSuggestion` highlights one (-1 for none).
   suggest: (text, rect) => ipcRenderer.invoke('suggest', text, rect),
   selectSuggestion: (index) => ipcRenderer.send('suggestions-select', index),
   // `blur` when the field lost focus, maybe to a click on the list.
   closeSuggestions: (blur = false) => ipcRenderer.send('suggestions-close', blur),
+  // Quick search: { prefix, sites: [{ id, name, aliases, icon }] }, or
+  // null while it is off. onQuickSearchPick is a site clicked in the
+  // suggestions, { id, alias }, to show as the field's chip.
+  onQuickSearch: (callback) => on('quick-search', callback),
+  onQuickSearchPick: (callback) => on('quick-search-pick', callback),
   // The right-click menu for a tab.
   showTabMenu: (id) => ipcRenderer.send('tab-menu', id),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
@@ -75,8 +81,8 @@ contextBridge.exposeInMainWorld('lit', {
     onOpen: (callback) => on('history-open', callback),
     onChanged: (callback) => on('history-changed', callback),
   },
-  // For the address bar's suggestions list only: it shows the pages
-  // (onShow, { items: [{ url, title }], generation }), highlights the one
+  // For the address bar's suggestions list only: it shows the items
+  // (onShow, { items, generation }, as `suggest` answers them), highlights the one
   // the toolbar selects, and says which one was clicked, on which list.
   suggestions: {
     pick: (index, generation) => ipcRenderer.send('suggestions-pick', index, generation),

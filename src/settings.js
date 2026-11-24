@@ -7,9 +7,10 @@ const path = require('node:path')
 const { SEARCH_ENGINES } = require('./url')
 const zoom = require('./zoom')
 const shortcuts = require('./shortcuts')
+const quickSearch = require('./quicksearch')
 
 // A section can also name a `list` the popup draws after its settings, from
-// state main sends with them (sitePermissions is the only one).
+// state main sends with them (sitePermissions and quickSearchSites).
 // Each setting: { key, label, description?, type, default, ...type fields }.
 // Types the popup can draw:
 //   choice    `options` is [{ value, label }]; a segmented control.
@@ -42,10 +43,33 @@ const SECTIONS = [
       },
       {
         key: 'addressSuggestions',
-        label: 'Suggest pages from history',
-        description: 'As you type in the address bar, show visited pages whose title or address matches.',
+        label: 'Suggest pages as you type',
+        description: 'In the address bar, show pinned tabs and visited pages whose title or address matches, pinned tabs first.',
         type: 'toggle',
         default: true,
+      },
+    ],
+  },
+  {
+    id: 'quickSearch',
+    title: 'Quick Search',
+    // Also lists every site and its shortcuts, after the settings.
+    list: 'quickSearchSites',
+    settings: [
+      {
+        key: 'quickSearch',
+        label: 'Search sites with shortcuts',
+        description: 'Type a shortcut with your search, such as !yt lofi, to search YouTube instead of your search engine. A shortcut alone opens the site.',
+        type: 'toggle',
+        default: true,
+      },
+      {
+        key: 'quickSearchPrefix',
+        label: 'Shortcut prefix',
+        description: 'The character that starts a shortcut.',
+        type: 'choice',
+        options: quickSearch.PREFIXES.map((value) => ({ value, label: value })),
+        default: '!',
       },
     ],
   },
@@ -85,7 +109,7 @@ const SECTIONS = [
       {
         key: 'restoreSession',
         label: 'Reopen windows from last time',
-        description: 'Lit opens with the windows and tabs that were open when it quit.',
+        description: 'Lit opens with the windows and tabs that were open when it quit. Otherwise it opens a new window with your pinned tabs.',
         type: 'toggle',
         default: true,
       },
@@ -127,6 +151,13 @@ const SECTIONS = [
         default: true,
       },
       {
+        key: 'blockAds',
+        label: 'Block ads and trackers',
+        description: 'Stops requests to ad and tracking servers and hides the space ads leave, using Ghostery’s lists, which download the first time and refresh weekly. Reload open pages to show or hide their ads.',
+        type: 'toggle',
+        default: true,
+      },
+      {
         key: 'doNotTrack',
         label: 'Ask sites not to track me',
         description: 'Sends Do Not Track and Global Privacy Control with every request.',
@@ -149,6 +180,7 @@ const SECTIONS = [
       shortcut('closeTab', 'Close Tab', 'CmdOrCtrl+W'),
       shortcut('closeWindow', 'Close Window', 'Shift+CmdOrCtrl+W'),
       shortcut('duplicateTab', 'Duplicate Tab', ''),
+      shortcut('pinTab', 'Pin Tab', ''),
       shortcut('closeOtherTabs', 'Close Other Tabs', 'Alt+CmdOrCtrl+W'),
       shortcut('closeTabsToRight', 'Close Tabs to the Right', ''),
       shortcut('print', 'Print', 'CmdOrCtrl+P'),

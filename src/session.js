@@ -5,9 +5,13 @@
 //
 // The file is { windows: [window] }, oldest-focused window first, so the
 // last one opened is the one that was in front. A window is { tabs:
-// [history | null], activeIndex, bounds, maximized, fullScreen }, the
-// same shape Reopen Closed Tab uses; a null history is a tab on the search
-// box. A history is { entries: [{ url, title, pageState? }], index }.
+// [history | null], activeIndex, pinned, bounds, maximized, fullScreen },
+// the same shape Reopen Closed Tab uses; a null history is a tab on the
+// search box. Its first `pinned` tabs are pinned (pinned tabs are always
+// at the left). A history is { entries: [{ url, title, pageState? }], index }.
+//
+// With Reopen windows turned off, the file holds only the pinned tabs, as
+// one window (pinnedWindow), which the next launch opens with a new tab.
 const fs = require('node:fs')
 const { save: write } = require('./settings')
 
@@ -42,18 +46,37 @@ const cleanBounds = (bounds) => (bounds && ['x', 'y', 'width', 'height'].every((
   ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
   : undefined)
 
-// Only well-formed windows survive a hand-edited or older file.
+// Only well-formed windows survive a hand-edited or older file. A pinned
+// tab whose page is gone is dropped, as a pinned tab always has one; the
+// rest stay pinned, and the active tab stays active (or the first does).
 function clean(saved) {
   if (!saved || !Array.isArray(saved.windows)) return []
   return saved.windows
     .filter((win) => win && Array.isArray(win.tabs) && win.tabs.length)
-    .map((win) => ({
-      tabs: win.tabs.map(cleanHistory),
-      activeIndex: isIndex(win.activeIndex, win.tabs.length) ? win.activeIndex : 0,
-      bounds: cleanBounds(win.bounds),
-      maximized: win.maximized === true,
-      fullScreen: win.fullScreen === true,
-    }))
+    .map((win) => {
+      const most = Number.isInteger(win.pinned) ? Math.min(Math.max(win.pinned, 0), win.tabs.length) : 0
+      const active = isIndex(win.activeIndex, win.tabs.length) ? win.activeIndex : 0
+      const kept = win.tabs.map((tab, i) => ({ history: cleanHistory(tab), i })).filter(({ history, i }) => history || i >= most)
+      return {
+        tabs: kept.map(({ history }) => history),
+        activeIndex: Math.max(kept.findIndex(({ i }) => i === active), 0),
+        pinned: kept.filter(({ i }) => i < most).length,
+        bounds: cleanBounds(win.bounds),
+        maximized: win.maximized === true,
+        fullScreen: win.fullScreen === true,
+      }
+    })
+    .filter((win) => win.tabs.length)
+}
+
+// Every window's pinned tabs together in one window, in window order,
+// where the window in front (the last) was; null without any. What Lit
+// keeps, and opens at launch, while Reopen windows is off.
+function pinnedWindow(windows) {
+  const tabs = windows.flatMap((win) => win.tabs.slice(0, win.pinned))
+  if (!tabs.length) return null
+  const front = windows.at(-1)
+  return { tabs, activeIndex: 0, pinned: tabs.length, bounds: front.bounds, maximized: front.maximized, fullScreen: front.fullScreen }
 }
 
 // A missing or unreadable file reopens nothing.
@@ -65,9 +88,9 @@ function load(file) {
   }
 }
 
-const save = (file, windows) => write(file, { windows: windows.map(({ tabs, activeIndex, bounds, maximized, fullScreen }) => ({ tabs, activeIndex, bounds, maximized, fullScreen })) })
+const save = (file, windows) => write(file, { windows: windows.map(({ tabs, activeIndex, pinned = 0, bounds, maximized, fullScreen }) => ({ tabs, activeIndex, pinned, bounds, maximized, fullScreen })) })
 
-// Restoring turned off: nothing of the last session stays on disk.
+// Nothing left to reopen: no file at all.
 const forget = (file) => fs.rmSync(file, { force: true })
 
-module.exports = { clean, load, save, forget }
+module.exports = { clean, pinnedWindow, load, save, forget }

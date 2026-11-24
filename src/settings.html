@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'">
+    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; script-src 'self' 'unsafe-inline'">
   <title>Settings</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400&family=Inter:wght@400;500&display=swap">
   <style>
@@ -257,6 +257,28 @@
     }
     .site-kind { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 14px; }
     .site-kind > span { flex: 1; min-width: 0; font-size: 12.5px; color: var(--sub); }
+    /* Quick search: every site with its shortcuts, for reference. */
+    .quick-sites { display: flex; flex-direction: column; gap: 14px; transition: opacity 200ms ease; }
+    .quick-sites.is-off .quick-list { opacity: .45; }
+    .quick-sites .control-text { flex: none; }
+    .quick-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 2px 12px;
+      transition: opacity 200ms ease;
+    }
+    .quick-site { display: flex; align-items: center; gap: 10px; min-width: 0; height: 34px; }
+    .quick-site img { width: 16px; height: 16px; flex: none; object-fit: contain; }
+    .quick-site-name { flex: 1; min-width: 0; overflow: hidden; font-size: 12.5px; white-space: nowrap; text-overflow: ellipsis; }
+    .quick-site-aliases { display: flex; gap: 4px; flex: none; }
+    .alias {
+      padding: 4px 6px;
+      border-radius: 5px;
+      color: #bdbdbd;
+      font: 400 11px/1 'DM Mono', ui-monospace, monospace;
+      box-shadow: inset 0 0 0 1px var(--line);
+      user-select: text;
+    }
     .segmented.is-small { padding: 3px; border-radius: 10px; }
     .segmented.is-small .segmented-thumb { top: 3px; bottom: 3px; border-radius: 7px; }
     .segmented.is-small button { height: 24px; padding: 0 10px; border-radius: 7px; font-size: 12px; }
@@ -597,6 +619,39 @@
           },
         }
       },
+    }
+
+    // Every quick search site and its shortcuts with the chosen prefix,
+    // dimmed while quick search is off. Read-only: a reference for typing.
+    lists.quickSearchSites = () => {
+      const element = el('div', 'quick-sites')
+      const text = el('div', 'control-text')
+      text.append(el('strong', '', 'Shortcuts'))
+      text.append(el('span', '', 'Type one in the address bar, then a space or Tab, to search that site.'))
+      const body = el('div', 'quick-list')
+      element.append(text, body)
+      let shownPrefix = null
+      return {
+        key: 'quickSearchSites',
+        error: el('span'),
+        element,
+        draw() {
+          element.classList.toggle('is-off', !state.values.quickSearch)
+          const prefix = state.values.quickSearchPrefix
+          if (prefix === shownPrefix) return
+          shownPrefix = prefix
+          body.replaceChildren(...state.quickSearchSites.map(({ name, aliases, icon }) => {
+            const line = el('div', 'quick-site')
+            const image = el('img')
+            image.src = icon
+            image.alt = ''
+            const names = el('span', 'quick-site-aliases')
+            names.append(...aliases.map((alias) => el('code', 'alias', `${prefix}${alias}`)))
+            line.append(image, el('span', 'quick-site-name', name), names)
+            return line
+          }))
+        },
+      }
     }
 
     // The shortcut control waiting for keys, if any.
