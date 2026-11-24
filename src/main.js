@@ -9,6 +9,7 @@ const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, s
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl, searchUrl, engineOf } = require('./url')
+const quickSearch = require('./quicksearch')
 const { afterClose, step, byNumber, remember, keepNewest, placeIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
@@ -363,8 +364,13 @@ function settingsState(error) {
   for (const setting of settingsStore.SETTINGS) {
     if (setting.type === 'shortcut') labels[setting.key] = settings[setting.key] ? shortcuts.label(settings[setting.key]) : ''
   }
-  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), ...(error && { error }) }
+  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), quickSearchSites: quickSearch.list(), ...(error && { error }) }
 }
+
+// Where typed text goes: a quick search shortcut's site (`!yt lofi`), else
+// an address or a search with the chosen engine.
+const destination = (input) =>
+  (settings.quickSearch && quickSearch.resolve(input, settings.quickSearchPrefix)) || toUrl(input, settings.searchEngine)
 
 // Do Not Track and Global Privacy Control headers, only while turned on.
 function applyDoNotTrack() {
@@ -506,6 +512,11 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
 
   // The toolbar's tooltips show the current shortcuts.
   const sendShortcuts = () => { if (!win.isDestroyed()) win.webContents.send('shortcuts', settingsState().labels) }
+  // What the toolbar needs to turn a typed shortcut into a site chip, or
+  // null while quick search is off.
+  const sendQuickSearch = () => {
+    if (!win.isDestroyed()) win.webContents.send('quick-search', settings.quickSearch ? { prefix: settings.quickSearchPrefix, sites: quickSearch.list() } : null)
+  }
   // The toolbar's downloads indicator.
   const sendDownloads = () => { if (!win.isDestroyed()) win.webContents.send('downloads', downloadsSummary()) }
 
@@ -931,7 +942,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     hideSuggestions()
     tab.started = true
     show(tab)
-    tab.page.loadURL(toUrl(input, settings.searchEngine)).catch(() => {})
+    tab.page.loadURL(destination(input)).catch(() => {})
   }
 
   // Starts a new search for the tab's find text; results come back through
@@ -1069,11 +1080,12 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   }
 
   // Pinned tabs stay open through both, as in Chrome. The kept tab comes
-  // to the front first when the active one is closing, so closing the
-  // others never shows one of them on the way.
+  // to the front first (for tabs to the right, only when the active one is
+  // closing), so closing the others never shows one of them on the way.
   function closeOtherTabs(id) {
     const tab = find(id)
     if (!tab) return
+    activate(id)
     closeTabs(id, tabs.filter((each) => each !== tab && !each.pinned))
   }
 
@@ -1245,14 +1257,18 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     }, SUGGESTIONS_FADE)
   }
 
-  // Pinned tabs' and visited pages matching what is typed, pinned tabs
-  // first, shown under the field at `rect` ({ x, y, width }, in the
-  // window). Answers with the pages shown.
+  // What to list under the field at `rect` ({ x, y, width }, in the
+  // window) for what is typed: the quick search sites a half-typed
+  // shortcut could be ({ kind: 'site', id, name, alias, icon, shortcut },
+  // `shortcut` being `!yt`), else pinned tabs' pages, then pages from
+  // history ({ url, title, pinned? }). Answers with the items shown.
   function suggest(text, rect) {
     const fits = rect && ['x', 'y', 'width'].every((key) => Number.isFinite(rect[key]))
-    const items = settings.addressSuggestions && fits && !popupOpen && typeof text === 'string' && text.length <= 2048
-      ? historyStore.suggestWithPinned(pinnedPages(), visited, text)
+    const ok = fits && !popupOpen && typeof text === 'string' && text.length <= 2048
+    const sites = ok && settings.quickSearch
+      ? quickSearch.complete(text, settings.quickSearchPrefix).map((site) => ({ kind: 'site', ...site, shortcut: settings.quickSearchPrefix + site.alias }))
       : []
+    const items = sites.length ? sites : ok && settings.addressSuggestions ? historyStore.suggestWithPinned(pinnedPages(), visited, text) : []
     if (items.length) showSuggestions(items, rect)
     else hideSuggestions()
     return items
@@ -1262,7 +1278,11 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     const item = generation === suggestionsGeneration && suggestions[index]
     if (!item) return
     hideSuggestions()
-    navigate(item.url)
+    // A site goes back to the address field as its chip, to type a search.
+    if (item.kind === 'site') {
+      win.webContents.focus()
+      win.webContents.send('quick-search-pick', { id: item.id, alias: item.alias })
+    } else navigate(item.url)
   }
 
   // A page picked in History opens in the current tab, or with ⌘ in a
@@ -1339,6 +1359,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     },
     settingsChanged() {
       sendShortcuts()
+      sendQuickSearch()
       popups.settings?.webContents.send('settings-changed', settingsState())
       controls.historyChanged()
     },
@@ -1401,7 +1422,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     closingPins = pins.length ? closedWindow(pins, 0, pins.length) : null
   })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
-  win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendDownloads() })
+  win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendQuickSearch(); sendDownloads() })
   win.on('closed', () => {
     openWindows.delete(controls)
     // While quitting, the session already holds them in this window.

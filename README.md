@@ -40,6 +40,37 @@ Lit has no bookmarks; it has pinned tabs instead. Right-click a tab and choose P
 
 A pinned tab has no close button, but ⌘W and middle-click still close it, and Reopen Closed Tab brings it back pinned. Close Other Tabs and Close Tabs to the Right leave pinned tabs open. New tabs, and links opened from a pinned tab, go after the pinned ones. Unpin Tab, in the same menu, moves it back to just after them.
 
+## Quick search
+
+Type a site's shortcut with your search to search that site instead of your search engine: `!yt lofi beats` searches YouTube, `!wiki Taiwan` Wikipedia, and `react hooks !gh` GitHub (the shortcut can come first or last). A shortcut alone, such as `!yt`, opens the site.
+
+Typing `!` lists the sites under the address bar, narrowing as you type (`!y` lists Yahoo, whose shortcut is exactly `y`, then YouTube). ↓ and ↑ move through them; Tab, Enter or a click picks one. Picking a site, or typing its whole shortcut and a space (or Tab), turns the shortcut into a chip with the site's icon and name at the start of the field, which then holds just your search; Enter sends it. Backspace at the start of the search puts the shortcut back as text, and Escape or leaving the field drops it.
+
+| Site | Shortcuts |
+| --- | --- |
+| YouTube | `yt`, `youtube` |
+| Wikipedia | `wiki`, `w` |
+| Google | `g`, `google` |
+| DuckDuckGo | `ddg`, `duck` |
+| GitHub | `gh`, `github` |
+| Google Maps | `maps`, `map` |
+| Reddit | `r`, `reddit` |
+| X | `x`, `twitter` |
+| ChatGPT | `gpt`, `chatgpt` |
+| Claude | `claude` |
+| Perplexity | `pplx`, `perplexity` |
+| Gemini | `gemini` |
+| Grok | `grok` |
+| Stack Overflow | `so`, `stack` |
+| npm | `npm` |
+| LinkedIn | `li`, `linkedin` |
+| Amazon | `amz`, `amazon` |
+| IMDb | `imdb`, `movie` |
+| Google News | `news` |
+| Yahoo | `y`, `yahoo` |
+
+The search goes straight to the site; your search engine never sees it. To add a site, add it to `SITES` in `src/quicksearch.js` with its icon in `src/sites/`. The icons come from [SVGL](https://svgl.app/), [Simple Icons](https://simpleicons.org/) and the sites' brand pages, as in the [QuickSearch](https://github.com/JimmyWuReal/quick-search) extension this comes from.
+
 ## Site permissions
 
 When a site asks to use your camera or microphone, move and zoom your camera, know your location, show notifications or read your clipboard, a row appears below the address bar: "example.com wants to use your camera". Allow or Block is remembered for that site (its scheme, host and port, as in Chrome), in `permissions.json` in the app's data folder, so it is not asked again; × answers no just this time. A request for both camera and microphone only asks about the one you have not answered yet. The question belongs to the tab that asked: switching tabs hides it until you come back, and leaving the page drops it. Only the page in the address bar can ask, and a frame from the same site for its camera and microphone (asked as the site); frames from other sites, and local files, are refused. A change in Settings applies the next time a site asks, so reload a page to stop a camera or microphone it is already using. Other permissions, such as full screen, keep Electron's default and are allowed.
@@ -71,6 +102,7 @@ Right-clicking a tab offers Reload, Duplicate (which keeps the tab's back and fo
 ⌘, or the button at the right of the tab strip opens Settings as a popup over the window. Changes save right away, to `settings.json` in the app's data folder.
 
 - **General:** search engine (Google, DuckDuckGo or Bing), the page zoom for sites you have not zoomed, and whether the address bar suggests pinned tabs and pages from history.
+- **Quick Search:** turn quick search shortcuts on or off, and the character that starts them (`!`, `@`, `#`, `:` or `/`). Also lists every site and its shortcuts.
 - **Tabs:** what new tabs open (the search box, or an address or search), where they go, whether ⌘-clicked links come to the front, whether closing the last tab closes the window, whether Lit reopens the windows and tabs from last time (when off, it still opens your pinned tabs), and how many closed tabs Reopen Closed Tab remembers (10, 25, 50 or 100; a closed window counts each of its tabs, and one bigger than the limit keeps the tabs around its active one).
 - **Downloads:** ask where to save, or save straight to Downloads.
 - **Privacy:** save history (pages visited and closed tabs; when off, nothing new is saved, closed tabs are forgotten, Reopen Closed Tab does nothing, and windows reopened at launch keep only each tab's page, not its back and forward history or what was typed into it), block ads and trackers (on by default, with Ghostery's prebuilt lists, downloaded the first time it is on, saved to `adblock.bin` in the app's data folder and refreshed when a week old; a saved copy is blocking before any tab loads, and a change shows or hides ads on open pages once they are reloaded), send Do Not Track and Global Privacy Control, and the site permissions you have given: switch each between Allow and Block, or remove it so the site is asked again.
@@ -109,4 +141,4 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 - Closed tabs and windows go on a list in `src/main.js`, each with its `navigationHistory` entries, which Reopen Closed Tab restores. `src/session.js` loads and saves the open windows in the same shape, for the next launch; each window's pinned tabs are its first ones, so it only records how many. `src/history.js` keeps the pages visited (one entry per address) and finds the address bar's suggestions; main decides which navigations count as visits. `src/history.html` is the History popup, shown the same way as Settings. `src/suggestions.html` is the suggestions list, in a view of its own laid over the page under the address field, since the toolbar's page ends above the tabs; the toolbar keeps focus and handles the keys.
 - `src/adblock.js` blocks ads and trackers with Ghostery's engine (`@ghostery/adblocker-electron`) in the default session, which every tab shares: it reads the engine saved in `adblock.bin`, or builds one from freshly downloaded lists, and switches it on and off with the setting.
 - `src/menus.js` decides what each right-click menu holds, for a page (from Chromium's context-menu details) and for a tab; main turns those items into native menus and runs what is chosen.
-- `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab and window rules (which tab to show after closing one, next/previous, ⌘1–9, how many closed tabs to remember, where one reopens, whether a window is still on screen). `url.js`, `tabs.js`, `menus.js`, `settings.js`, `history.js`, `session.js`, `shortcuts.js`, `downloads.js`, `find.js`, `zoom.js`, `permissions.js` and `adblock.js` (with the engine replaced) are plain Node, tested in `test/`.
+- `src/quicksearch.js` lists the quick search sites and turns a shortcut and search into the site's address, and a half-typed shortcut into the sites it could be; main tries it before `src/url.js`, and the toolbar draws a typed shortcut as its site's chip. `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab and window rules (which tab to show after closing one, next/previous, ⌘1–9, how many closed tabs to remember, where one reopens, whether a window is still on screen). `url.js`, `quicksearch.js`, `tabs.js`, `menus.js`, `settings.js`, `history.js`, `session.js`, `shortcuts.js`, `downloads.js`, `find.js`, `zoom.js`, `permissions.js` and `adblock.js` (with the engine replaced) are plain Node, tested in `test/`.
