@@ -460,7 +460,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     page.on('page-title-updated', (_event, title) => {
       tab.title = title
       if (tab.toRecord) tab.toRecord.title = title
-      else if (tab.visit) setVisited(historyStore.retitle(visited, tab.visit.url, title))
+      else if (tab.visit && settings.saveHistory) setVisited(historyStore.retitle(visited, tab.visit.url, title))
       sync()
     })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
@@ -601,14 +601,12 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   //   passes through while loading (redirects in the page, an address it
   //   swaps for another) never show. An address a page moves to after it
   //   has loaded (a web app's pushState) is recorded right away.
-  // - A page that replaces its tab's current entry (location.replace,
-  //   history.replaceState) takes back the visit that entry recorded, so
-  //   the address it left is not kept either. So does a page that loads
-  //   another by itself within REDIRECT_AFTER of loading, with no click,
-  //   key press or scroll on it (a redirect after loading). Electron names
-  //   no initiator for a pushState, so a web app's new address always counts.
+  // - A page that moves on by itself (a new entry, or replacing its own)
+  //   within REDIRECT_AFTER of loading, with no click, key press or scroll
+  //   on it, is redirecting: that takes back the visit it recorded. Moves
+  //   you prompt, or that come later, keep it.
   // - A page left before it finished loading is recorded when you left it
-  //   (a link clicked, an address typed, Back), as you saw it.
+  //   (a link clicked, an address typed, Back, closing it), as you saw it.
   // - A jump within the page (#section) is not a new visit.
   // - A restored page (a reopened or restored tab, a duplicate) is not
   //   one either.
@@ -616,10 +614,12 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // page ({ url, title }) still waiting to be.
   function committed(tab, url, sameDocument) {
     const list = tab.page.navigationHistory
-    const position = { length: list.length(), index: list.getActiveIndex() }
+    const position = { length: list.length(), index: list.getActiveIndex(), next: list.getEntryAtIndex(list.getActiveIndex() + 1)?.url }
     const before = tab.position
     const left = tab.url
-    const unprompted = tab.startedByPage && !tab.touched
+    // A same-document move that adds or replaces an entry is always the
+    // page's own (Electron names no initiator for pushState).
+    const unprompted = (tab.startedByPage || sameDocument) && !tab.touched
     tab.position = position
     tab.url = url
     tab.startedByPage = false
@@ -633,16 +633,17 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (sameDocument && withoutHash(url) === withoutHash(left)) return
     tab.touched = false
     const replaced = before?.length === position.length && before.index === position.index
-    // A new entry after the current one, which had none after it, so this
-    // cannot be going Forward (history.forward() from the page's script).
-    const added = before && before.length === before.index + 1 && position.index === before.index + 1 && position.length === position.index + 1
-    const redirected = added && unprompted && Date.now() - (tab.visit?.time ?? 0) < REDIRECT_AFTER
-    if ((replaced || redirected) && url !== left && tab.visit && withoutHash(tab.visit.url) === withoutHash(left)) {
+    // A new entry after the current one, dropping any after it; going
+    // Forward to the entry that was there looks the same in numbers.
+    const added = before && position.index === before.index + 1 && position.length === position.index + 1 &&
+      !(position.length === before.length && url === before.next)
+    const redirected = (replaced || added) && unprompted
+    if (redirected && url !== left && Date.now() - (tab.visit?.time ?? 0) < REDIRECT_AFTER && tab.visit && withoutHash(tab.visit.url) === withoutHash(left)) {
       setVisited(historyStore.unvisit(visited, tab.visit))
       tab.visit = null
     }
     // A page left while loading, other than by its own doing, still counts.
-    if (!replaced && !unprompted) settle(tab)
+    if (!redirected) settle(tab)
     tab.toRecord = { url, title: tab.title }
     if (!tab.page.isLoading()) settle(tab)
   }
@@ -684,6 +685,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     const focus = tab.closeFocus ?? true
     const index = tabs.indexOf(tab)
     const history = tab.started ? saveHistory(tab) || tab.closeSnapshot || null : null
+    // A page closed before it finished loading was still seen.
+    if (tab.closedByUser) settle(tab)
     tabs.splice(index, 1)
     if (win.isDestroyed()) return
     win.contentView.removeChildView(tab.view)
@@ -1107,9 +1110,13 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     forgetTabHistories() {
       for (const tab of tabs) {
         tab.history = null
+        tab.visit = null
+        tab.toRecord = null
         delete tab.closeSnapshot
       }
     },
+    // Records the pages still loading, as Lit quits.
+    settleAll: () => { for (const tab of tabs) settle(tab) },
     // What reopening this window at the next launch needs (see src/session.js).
     snapshot: () => (tabs.length ? closedWindow(tabs.map(sessionHistory), Math.max(tabs.indexOf(active()), 0)) : null),
     historyChanged() {
@@ -1148,6 +1155,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     sessionChanged()
     if (closingWindow) rememberClosed(closingWindow)
     for (const tab of tabs.splice(0)) {
+      settle(tab)
       if (!tab.page.isDestroyed()) tab.page.close()
     }
     for (const view of Object.values(popups)) view.webContents.close()
@@ -1421,6 +1429,7 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   saveSession()
   quitting = true
+  for (const controls of openWindows) controls.settleAll()
 })
 // A save still waiting when Lit quits is written now.
 app.on('will-quit', () => { if (historySave) saveVisited() })
