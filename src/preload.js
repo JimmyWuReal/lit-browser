@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('lit', {
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
   // { activeId, tabs: [{ id, title, url, favicon, loading, started, find, zoom, prompt }] },
   // `zoom` being '125%', or '' at the default zoom, and `prompt` the tab's
-  // permission request, { id, site, does }, or undefined.
+  // permission request, { id, site, kinds, does }, or undefined.
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   openSettings: () => ipcRenderer.send('open-settings'),
@@ -21,7 +21,8 @@ contextBridge.exposeInMainWorld('lit', {
   // 0–1, or null while none is running or one has no known size.
   onDownloads: (callback) => on('downloads', callback),
   // Answers a permission prompt: 'allow', 'block', or null to dismiss it.
-  answerPermission: (tabId, promptId, choice) => ipcRenderer.send('answer-permission', tabId, promptId, choice),
+  // `kinds` is what the prompt showed, so a stale answer is ignored.
+  answerPermission: (tabId, promptId, kinds, choice) => ipcRenderer.send('answer-permission', tabId, promptId, kinds, choice),
   // Puts the active page back at the default zoom.
   resetZoom: () => ipcRenderer.send('reset-zoom'),
   // Find in page, on the tab the toolbar shows (main ignores a tab that is

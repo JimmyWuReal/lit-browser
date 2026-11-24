@@ -104,11 +104,13 @@ function choosePermission(site, kinds, choice) {
 // it is the page in the address bar, so a choice always belongs to the site
 // people see. A frame from another site gets null, and is refused, as is a
 // page with no origin. Without a page (a service worker), the origin that
-// asked stands alone.
-function siteFor(contents, asking) {
+// asked stands alone. A check can also name the origin embedding the
+// frame (`embedding`), even without a page; it has to match too.
+function siteFor(contents, asking, embedding) {
   const site = permissions.originOf(asking)
   const page = contents && !contents.isDestroyed() ? contents.getURL() : ''
-  return site && (!page || permissions.originOf(page) === site) ? site : null
+  if (!site || (page && permissions.originOf(page) !== site)) return null
+  return embedding && permissions.originOf(embedding) !== site ? null : site
 }
 
 // Requests for a kind Lit asks about are answered from the saved choices,
@@ -134,7 +136,7 @@ function onPermissionCheck(contents, permission, requestingOrigin, details) {
   let kinds = permissions.kindsOf(permission)
   if (permission === 'media') kinds = details.mediaType === 'video' ? ['camera'] : details.mediaType === 'audio' ? ['microphone'] : ['camera', 'microphone']
   if (!kinds) return true
-  const site = siteFor(contents, requestingOrigin)
+  const site = siteFor(contents, requestingOrigin, details.embeddingOrigin)
   if (!site) return false
   return kinds.some((kind) => permissions.status(sitePermissions, site, [kind]) === 'allow')
 }
@@ -386,7 +388,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts }) => ({
         id, title, url, favicon, loading, started,
         // The tab's oldest unanswered permission request; the rest wait.
-        prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), does: permissions.describe(asking(prompts[0])) },
+        prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
         // default or the site has its own (which can match a later default).
         zoom: started && (!zoom.same(factor, settings.defaultZoom) || siteZooms.has(zoom.siteOf(page.isDestroyed() ? '' : page.getURL())))
@@ -676,30 +678,30 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
 
   // Allow or Block saves the choice for the site, which answers this
   // prompt and any other it settles; dismissing (null) refuses only this
-  // request, so the site can ask again.
-  function answerPrompt(tabId, promptId, choice) {
+  // request, so the site can ask again. `kinds` is what the row showed; an
+  // answer to a row that has since changed is ignored.
+  function answerPrompt(tabId, promptId, kinds, choice) {
     const tab = find(tabId)
     const prompt = tab?.prompts.find((each) => each.id === promptId)
-    if (!prompt) return
+    if (!prompt || !Array.isArray(kinds) || kinds.join() !== asking(prompt).join()) return
     if (choice) return choosePermission(prompt.site, asking(prompt), choice)
     tab.prompts.splice(tab.prompts.indexOf(prompt), 1)
     for (const callback of prompt.callbacks) callback(false)
     sync()
   }
 
-  // Answers every waiting request the saved choices now decide.
+  // Answers every waiting request the saved choices now decide. The rest
+  // are redrawn too, as what they ask about may have changed.
   function settlePrompts() {
-    let changed = false
     for (const tab of tabs) {
       for (const prompt of [...tab.prompts]) {
         const answer = permissions.status(sitePermissions, prompt.site, prompt.kinds)
         if (answer === 'ask') continue
         tab.prompts.splice(tab.prompts.indexOf(prompt), 1)
         for (const callback of prompt.callbacks) callback(answer === 'allow')
-        changed = true
       }
     }
-    if (changed) sync()
+    sync()
   }
 
   function navigate(input) {
@@ -1208,9 +1210,10 @@ ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 ipcMain.on('open-downloads', fromToolbar((c) => c.openPopup('downloads')))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
-// A prompt's answer: 'allow', 'block', or null to dismiss it.
-ipcMain.on('answer-permission', fromToolbar((c, tabId, promptId, choice) => {
-  if (choice === null || permissions.CHOICES.includes(choice)) c.answerPrompt(tabId, promptId, choice)
+// A prompt's answer: 'allow', 'block', or null to dismiss it, for the
+// kinds the row showed.
+ipcMain.on('answer-permission', fromToolbar((c, tabId, promptId, kinds, choice) => {
+  if (choice === null || permissions.CHOICES.includes(choice)) c.answerPrompt(tabId, promptId, kinds, choice)
 }))
 
 // Popup messages, answered only for the popup `name`.

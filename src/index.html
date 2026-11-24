@@ -582,22 +582,25 @@
     }
 
     // The active tab's permission request. The row slides in for each new
-    // request, and stays put while the same one is redrawn.
+    // request, and stays put while the same one is redrawn; its text
+    // follows what it asks about, which a choice made elsewhere can narrow.
     const promptRow = document.getElementById('prompt')
     const promptText = document.getElementById('prompt-text')
     let shownPrompt = null
     function drawPrompt(tab) {
       const prompt = tab?.started ? tab.prompt : null
       const key = prompt ? `${tab.id}:${prompt.id}` : null
+      if (prompt) {
+        const site = document.createElement('strong')
+        site.textContent = prompt.site
+        promptText.replaceChildren(site, ` wants to ${prompt.does}`)
+        promptRow.title = promptText.textContent
+      }
       if (key === shownPrompt) return
       shownPrompt = key
       if (!prompt && promptRow.contains(document.activeElement)) document.activeElement.blur()
       promptRow.classList.toggle('is-open', Boolean(prompt))
       if (!prompt) return
-      const site = document.createElement('strong')
-      site.textContent = prompt.site
-      promptText.replaceChildren(site, ` wants to ${prompt.does}`)
-      promptRow.title = promptText.textContent
       // Replays the slide-in.
       const box = promptRow.firstElementChild
       box.style.animation = 'none'
@@ -606,7 +609,7 @@
     }
     const answerPrompt = (choice) => {
       const tab = activeTab()
-      if (tab?.prompt) window.lit.answerPermission(tab.id, tab.prompt.id, choice)
+      if (tab?.prompt) window.lit.answerPermission(tab.id, tab.prompt.id, tab.prompt.kinds, choice)
     }
     document.getElementById('prompt-allow').addEventListener('click', () => answerPrompt('allow'))
     document.getElementById('prompt-block').addEventListener('click', () => answerPrompt('block'))
