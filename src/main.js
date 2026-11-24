@@ -19,6 +19,7 @@ const zoom = require('./zoom')
 const permissions = require('./permissions')
 const findState = require('./find')
 const { pageMenu, tabMenu } = require('./menus')
+const { createAdblock } = require('./adblock')
 
 // Keep in sync with .strip and .bar heights in index.html.
 const STRIP_HEIGHT = 38
@@ -355,6 +356,10 @@ function applyDoNotTrack() {
     : null)
 }
 
+// Ad and tracker blocking in the default session (src/adblock.js), made at
+// launch and switched with the Block ads and trackers setting.
+let adblock
+
 // After the closed list changes: the menu item is grayed out while there
 // is nothing to reopen, and an open History learns what Clear would forget.
 function refreshReopen() {
@@ -389,6 +394,7 @@ function reopenClosed(focused) {
 function applySettings() {
   Menu.setApplicationMenu(buildMenu())
   applyDoNotTrack()
+  adblock.set(settings.blockAds)
   if (!settings.saveHistory) {
     forgetClosed()
     for (const controls of openWindows) controls.forgetTabHistories()
@@ -1598,6 +1604,8 @@ app.whenReady().then(() => {
   historyFile = path.join(app.getPath('userData'), 'history.json')
   visited = historyStore.load(historyFile)
   applyDoNotTrack()
+  adblock = createAdblock(session.defaultSession, path.join(app.getPath('userData'), 'adblock.bin'))
+  adblock.set(settings.blockAds)
   session.defaultSession.on('will-download', (_event, item) => trackDownload(item))
   // The packaged app gets its icon from the bundle; in development, show it in the Dock too.
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '..', 'build', 'icon.png'))
