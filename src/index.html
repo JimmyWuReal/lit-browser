@@ -1008,7 +1008,16 @@
       shortcutLabels = labels
       document.querySelectorAll('[data-shortcut]').forEach(labelShortcut)
     })
-    window.lit.onFocusAddress(() => { address.focus(); address.select() })
+    window.lit.onFocusAddress(() => {
+      // Selects everything, so a chip goes back to being text too.
+      if (chip) {
+        const text = fieldText()
+        setChip(null)
+        address.value = text
+      }
+      address.focus()
+      address.select()
+    })
     window.lit.onFocusFind(() => { findInput.focus(); findInput.select() })
   </script>
 </body>
