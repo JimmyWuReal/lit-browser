@@ -140,4 +140,37 @@ function tabMenu({ index, count, started, keys = {} }) {
   ])
 }
 
-module.exports = { pageMenu, tabMenu }
+// The menu for a right-click on the bookmark bar or in one of its lists:
+// on a page, on a folder (`count` pages in it), or, with no `kind`, on the
+// bar itself. `key` is Show Bookmark Bar's accelerator.
+function bookmarkMenu({ kind, count = 0, key } = {}) {
+  const create = [
+    { label: 'Add Page…', command: 'addPage' },
+    { label: 'Add Folder…', command: 'addFolder' },
+  ]
+  const bar = [{ label: 'Hide Bookmark Bar', command: 'hideBar', accelerator: key }]
+  if (kind === 'page') {
+    return joinGroups([
+      [
+        { label: 'Open in New Tab', command: 'openInNewTab' },
+        { label: 'Open in New Window', command: 'openInNewWindow' },
+        { label: 'Open in Private Window', command: 'openInPrivateWindow' },
+      ],
+      [{ label: 'Copy Address', command: 'copyAddress' }],
+      [{ label: 'Edit…', command: 'edit' }, { label: 'Delete', command: 'delete' }],
+      create,
+      bar,
+    ])
+  }
+  if (kind === 'folder') {
+    return joinGroups([
+      [{ label: `Open All in New Tabs (${count})`, command: 'openAll', enabled: count > 0 }],
+      [{ label: 'Rename…', command: 'edit' }, { label: 'Delete', command: 'delete' }],
+      create,
+      bar,
+    ])
+  }
+  return joinGroups([create, bar])
+}
+
+module.exports = { pageMenu, tabMenu, bookmarkMenu }

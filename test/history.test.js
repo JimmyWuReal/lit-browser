@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { LIMIT, visit, unvisit, retitle, remove, suggest, load, save } = require('../src/history')
+const { LIMIT, visit, unvisit, retitle, remove, suggest, suggestWithBookmarks, load, save } = require('../src/history')
 
 test('a visit puts its page first, once', () => {
   let entries = visit([], { url: 'https://a.com/', title: 'A', time: 1 })
@@ -110,4 +110,14 @@ test('suggest puts addresses that start with the text first, then word starts', 
   // Typing the scheme or www. still finds the address.
   assert.equal(suggest(entries, 'https://www.git')[0].url, 'https://www.github.com/')
   assert.equal(suggest(entries, 'git', 2).length, 2)
+})
+
+test('bookmarks come first in suggestions, each address once', () => {
+  const bookmarks = [{ url: 'https://lit.dev/', title: 'Lit' }, { url: 'https://lit.dev/', title: 'Lit again' }, { url: 'https://other.com/', title: 'Other' }]
+  const visits = [{ url: 'https://lit.dev/', title: 'Lit', time: 2 }, { url: 'https://lithub.com/', title: 'Hub', time: 1 }]
+  assert.deepEqual(suggestWithBookmarks(bookmarks, visits, 'lit'), [
+    { url: 'https://lit.dev/', title: 'Lit', bookmarked: true },
+    { url: 'https://lithub.com/', title: 'Hub' },
+  ])
+  assert.equal(suggestWithBookmarks(bookmarks, visits, 'lit', 1).length, 1)
 })

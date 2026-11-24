@@ -35,8 +35,8 @@ contextBridge.exposeInMainWorld('lit', {
   onFocusFind: (callback) => ipcRenderer.on('focus-find', () => callback()),
   // Address bar suggestions. `suggest` shows what fits `text` under the
   // field and answers with it: quick search sites for a half-typed
-  // shortcut, [{ kind: 'site', id, name, alias, icon, shortcut }], else pages from
-  // history, [{ url, title }] ([] when none match or both are off); `rect` is { x, y, width },
+  // shortcut, [{ kind: 'site', id, name, alias, icon, shortcut }], else bookmarks and
+  // pages from history, [{ url, title, bookmarked? }] ([] when none match or both are off); `rect` is { x, y, width },
   // where the list goes. `selectSuggestion` highlights one (-1 for none).
   suggest: (text, rect) => ipcRenderer.invoke('suggest', text, rect),
   selectSuggestion: (index) => ipcRenderer.send('suggestions-select', index),
@@ -51,6 +51,31 @@ contextBridge.exposeInMainWorld('lit', {
   showTabMenu: (id) => ipcRenderer.send('tab-menu', id),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
   onShortcuts: (callback) => on('shortcuts', callback),
+  // The bookmark bar: { visible, items } (see src/bookmarks.js).
+  onBookmarks: (callback) => on('bookmarks', callback),
+  // Bookmarks the active page, or edits its bookmark.
+  bookmarkPage: () => ipcRenderer.send('bookmark-page'),
+  // Opens a bookmark here, or (`newTab`) in a new tab.
+  openBookmark: (id, newTab = false) => ipcRenderer.send('bookmark-open', id, newTab),
+  // The right-click menu for a bookmark or folder, or (null) the bar. `at`
+  // ({ x, y }, in the window) is where a form it opens goes.
+  showBookmarkMenu: (id, at) => ipcRenderer.send('bookmark-menu', id, at),
+  // Into a folder (null for the bar), before another item there or last.
+  moveBookmark: (id, folderId, beforeId) => ipcRenderer.send('bookmark-move', id, folderId, beforeId),
+  // Lists what is in a folder, or (an array of ids) the bookmarks that do
+  // not fit the bar, at `at`.
+  listBookmarks: (folderOrIds, at) => ipcRenderer.send('bookmark-list', folderOrIds, at),
+  // For the Bookmarks popup only: a list of bookmarks, or the form that
+  // edits one (see bookmarksState in main).
+  bookmarks: {
+    get: () => ipcRenderer.invoke('bookmarks-get'),
+    // { title, url?, folderId? }; answers { error } when it can't be saved.
+    save: (values) => ipcRenderer.invoke('bookmarks-save', values),
+    remove: () => ipcRenderer.send('bookmarks-remove'),
+    close: () => ipcRenderer.send('bookmarks-close'),
+    onOpen: (callback) => on('bookmarks-open', callback),
+    onChanged: (callback) => on('bookmarks-changed', callback),
+  },
   // For the Settings popup only; main ignores these from anywhere else.
   // State is { sections, values, labels, sitePermissions, error? } (see
   // settingsState in main).

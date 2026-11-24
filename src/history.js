@@ -51,6 +51,7 @@ const bare = (url) => url.toLowerCase().replace(/^[a-z]+:\/\/(www\.)?/, '')
 // where a word starts one of the title's or address's words, then the
 // rest; newest first within each.
 function suggest(entries, query, limit = SUGGESTIONS) {
+  if (limit <= 0) return []
   const text = query.trim().toLowerCase()
   const words = text.split(/\s+/).filter(Boolean)
   if (!words.length) return []
@@ -70,6 +71,18 @@ function suggest(entries, query, limit = SUGGESTIONS) {
   return ranked.flat().slice(0, limit)
 }
 
+// The address bar's list: bookmarks ({ url, title }) that match come first,
+// marked `bookmarked`, then visited pages, each address once.
+function suggestWithBookmarks(bookmarks, entries, query, limit = SUGGESTIONS) {
+  // Two bookmarks of one address (with different titles) show once.
+  const shown = new Set()
+  const first = suggest(bookmarks, query, bookmarks.length)
+    .filter((item) => !shown.has(item.url) && shown.add(item.url))
+    .slice(0, limit)
+    .map((item) => ({ ...item, bookmarked: true }))
+  return [...first, ...suggest(entries.filter((entry) => !shown.has(entry.url)), query, limit - first.length)]
+}
+
 // Only well-formed entries survive a hand-edited or older file.
 function load(file) {
   try {
@@ -85,4 +98,4 @@ function load(file) {
   }
 }
 
-module.exports = { LIMIT, recordable, visit, unvisit, retitle, remove, suggest, load, save }
+module.exports = { LIMIT, recordable, visit, unvisit, retitle, remove, suggest, suggestWithBookmarks, load, save }

@@ -21,6 +21,8 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | ⌘1–⌘8, ⌘9 | That tab, last tab |
 | ⌘R, ⌘[, ⌘] | Reload, back, forward |
 | ⌘= or ⌘+, ⌘-, ⌘0 | Zoom in, zoom out, reset zoom |
+| ⌘D | Bookmark the page, or edit its bookmark |
+| ⇧⌘B | Show or hide the bookmark bar |
 | ⌘F | Find in page |
 | ⌘G / ⇧⌘G | Next / previous match |
 | ⌘P | Print the page |
@@ -34,6 +36,14 @@ Middle-click closes a tab. In the tab strip, arrow keys move between tabs and De
 ⇧⌘T brings back the last tab you closed (⌘W, its close button, middle-click) as it was then, with its back/forward history, in its old place. A closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers up to 50 closed tabs by default (see Settings), counting each tab of a closed window. They are kept in memory only, so Lit forgets them when it quits; a page closing itself (such as a sign-in popup) is not remembered.
 
 When Lit opens again, it reopens the windows and tabs that were open when it quit, each window where it was and each tab with its back/forward history, the window that was in front last. Windows closed before quitting stay closed. The session is saved to `session.json` in the app's data folder as it changes, so a crash loses little. Turn this off in Settings to start with a new window instead.
+
+## Bookmarks
+
+The star at the end of the address bar, or ⌘D, adds the page to the bookmark bar, the row below the address bar (at the top of a new tab). A form then offers to change its name, address or folder, or delete it; the star stays filled on a bookmarked page, and pressing it again reopens the form. Click a bookmark to open it here, or ⌘-click or middle-click for a new tab. Drag bookmarks to reorder them, or onto a folder to put them in it. Those that don't fit are listed by the » button at the bar's end.
+
+Right-click a bookmark to open it in a new tab, window or private window, copy its address, edit it or delete it. Right-click the bar to add a page or a folder, or hide the bar. A folder's menu opens all its pages, renames or deletes it; folders hold pages, not other folders. Typing in the address bar lists matching bookmarks first, marked with a star.
+
+Bookmarks are saved to `bookmarks.json` in the app's data folder, each with a copy of its site's icon, so drawing the bar never contacts a site. A file Lit can't read is kept as `bookmarks.json.bad`. Private windows show the same bar, and a page bookmarked in one is kept after it closes.
 
 ## Quick search
 
@@ -70,7 +80,7 @@ The search goes straight to the site; your search engine never sees it. To add a
 
 ⇧⌘N (File › New Private Window) opens a private window. It looks a little different: a violet tint, a Private badge in the tab strip, and a note under the search box.
 
-Each private window, its toolbar and popups included, browses in a session of its own, kept in memory and never written to disk, so its cookies and site storage are seen by no other window, private or not. It keeps no HTTP cache, not even in memory. Lit keeps nothing from it:
+Each private window, its toolbar and popups included, browses in a session of its own, kept in memory and never written to disk, so its cookies and site storage are seen by no other window, private or not. It keeps no HTTP cache, not even in memory. Lit keeps nothing from it but the bookmarks you add there:
 
 - No history: its pages are not recorded, and its closed tabs, and the window itself, can't be reopened. Reopen Closed Tab from a private window brings a normal tab back into a normal window.
 - Show All History opens in a normal window.
@@ -80,7 +90,7 @@ Each private window, its toolbar and popups included, browses in a session of it
 - Downloads always ask where to save, whatever the Downloads setting, so no site there writes a file you didn't choose. They show only in the window's own Downloads list. Closing the window cancels those still on their way (or waiting in their save dialog) and drops the list; files already saved stay where they were saved.
 - It has no Developer Tools (the menu item does nothing there, and the right-click menu has no Inspect Element), since DevTools saves its state to disk; nor Add to Dictionary.
 
-The address bar suggests nothing from history or pinned tabs there, tabs can't be pinned, and pinned tabs of a closed normal window never move into it. Once the window's pages have closed, its session is cleared from memory: cookies, site storage, sign-ins and connections. Ads are blocked as in normal windows, and changes made in Settings are saved.
+The address bar suggests only bookmarks there, nothing from history. Once the window's pages have closed, its session is cleared from memory: cookies, site storage, sign-ins and connections. Ads are blocked as in normal windows, and changes made in Settings are saved.
 
 ## Site permissions
 
@@ -94,7 +104,7 @@ Electron has no "not asked yet" state, so before you answer, a site that only ch
 
 Like other browsers, History holds the pages you landed on, not every address a page passed through. A page is recorded once its tab stops loading, so redirects and addresses a page swaps while it loads never show, and a page you leave or close before it finishes loading is recorded then. A page that moves on by itself within 5 seconds of loading (loading another page, or replacing its own address), without you clicking, typing or scrolling on it, is redirecting, and takes its visit with it; a web app adding an address (`history.pushState`) keeps both. Moving within a page (`#section`) is not a new visit, and neither is a tab reopened, restored or duplicated.
 
-Typing in the address bar lists up to six visited pages whose title or address contains every word typed, addresses that start with what was typed first. ↓ and ↑ move through them, putting the page's address in the field, so Enter opens it; click one to open it, and Escape closes the list.
+Typing in the address bar lists up to six pages whose title or address contains every word typed: bookmarks first, then visited pages, addresses that start with what was typed first within each. ↓ and ↑ move through them, putting the page's address in the field, so Enter opens it; click one to open it, and Escape closes the list.
 
 ## Downloads
 
@@ -112,7 +122,7 @@ Right-clicking a tab offers Reload, Duplicate (which keeps the tab's back and fo
 
 ⌘, or the button at the right of the tab strip opens Settings as a popup over the window. Changes save right away, to `settings.json` in the app's data folder.
 
-- **General:** search engine (Google, DuckDuckGo or Bing), the page zoom for sites you have not zoomed, and whether the address bar suggests pages from history.
+- **General:** search engine (Google, DuckDuckGo or Bing), the page zoom for sites you have not zoomed, whether the address bar suggests bookmarks and pages from history, and whether the bookmark bar shows.
 - **Quick Search:** turn quick search shortcuts on or off, and the character that starts them (`!`, `@`, `#`, `:` or `/`). Also lists every site and its shortcuts.
 - **Tabs:** what new tabs open (the search box, or an address or search), where they go, whether ⌘-clicked links come to the front, whether closing the last tab closes the window, whether Lit reopens the windows and tabs from last time, and how many closed tabs Reopen Closed Tab remembers (10, 25, 50 or 100; a closed window counts each of its tabs, and one bigger than the limit keeps the tabs around its active one).
 - **Downloads:** ask where to save, or save straight to Downloads.
@@ -146,10 +156,10 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 
 - `src/main.js` opens windows and gives each tab its own Chromium `WebContentsView` under the toolbar (in a private window, in that window's in-memory session, from `session.fromPartition`); only the active tab's view is shown. It owns the tab list and sends it to the toolbar whenever it changes. The application menu holds every shortcut, so they work whether the toolbar or a page has focus.
 - `src/index.html` is the toolbar: the tab strip (also the window's title bar), the address bar and the find field. When the active tab has not loaded anything, the address bar fills the window as the centered search box and the tab's page view stays hidden.
-- `src/preload.js` is the bridge between Lit's own pages (the toolbar, the address bar's suggestions, and the Settings, History and Downloads popups) and the main process.
+- `src/preload.js` is the bridge between Lit's own pages (the toolbar, the address bar's suggestions, and the Settings, History, Downloads and Bookmarks popups) and the main process.
 - `src/settings.js` lists every setting, grouped in sections, with its type and default; it also loads, checks and saves them. `src/settings.html` is the Settings popup, drawn entirely from that list, so a new setting only needs an entry there (plus a control in `settings.html` if it brings a new type). Each window shows the popup in its own transparent view over the tabs. While a shortcut is recorded, main passes the key presses to it instead of the menu.
 - `src/shortcuts.js` turns key presses into Electron accelerators, checks them, and labels them (⇧⌘W). `src/downloads.js` picks a free file name in Downloads and words each download's progress and size; main follows each download from `will-download` to `done`, keeping this session's list, and `src/downloads.html` is the Downloads popup, a panel hanging from the toolbar button in the same kind of transparent view as Settings. `src/find.js` holds each tab's find state; main runs the searches with Chromium's `findInPage` and sends the counts to the toolbar with the tabs. `src/zoom.js` holds the zoom steps and loads and saves each site's zoom. `src/permissions.js` decides which permission requests Lit asks about and keeps each site's answers; main answers Chromium's permission requests and checks from them, or queues a prompt on the tab that asked, moving its page down while the toolbar shows it.
-- Closed tabs and windows go on a list in `src/main.js`, each with its `navigationHistory` entries, which Reopen Closed Tab restores. `src/session.js` loads and saves the open windows in the same shape, for the next launch. `src/history.js` keeps the pages visited (one entry per address) and finds the address bar's suggestions; main decides which navigations count as visits. `src/history.html` is the History popup, shown the same way as Settings. `src/suggestions.html` is the suggestions list, in a view of its own laid over the page under the address field, since the toolbar's page ends above the tabs; the toolbar keeps focus and handles the keys.
+- Closed tabs and windows go on a list in `src/main.js`, each with its `navigationHistory` entries, which Reopen Closed Tab restores. `src/session.js` loads and saves the open windows in the same shape, for the next launch. `src/history.js` keeps the pages visited (one entry per address) and finds the address bar's suggestions; main decides which navigations count as visits. `src/history.html` is the History popup, shown the same way as Settings. `src/bookmarks.js` keeps the bookmarks and their folders; the toolbar draws the bar, and `src/bookmarks.html` is the Bookmarks popup, which lists a folder (or what doesn't fit the bar) and holds the form that edits a bookmark. `src/suggestions.html` is the suggestions list, in a view of its own laid over the page under the address field, since the toolbar's page ends above the tabs; the toolbar keeps focus and handles the keys.
 - `src/adblock.js` blocks ads and trackers with Ghostery's engine (`@ghostery/adblocker-electron`) in the default session, which every tab shares: it reads the engine saved in `adblock.bin`, or builds one from freshly downloaded lists, and switches it on and off with the setting.
 - `src/menus.js` decides what each right-click menu holds, for a page (from Chromium's context-menu details) and for a tab; main turns those items into native menus and runs what is chosen.
-- `src/quicksearch.js` lists the quick search sites and turns a shortcut and search into the site's address, and a half-typed shortcut into the sites it could be; main tries it before `src/url.js`, and the toolbar draws a typed shortcut as its site's chip. `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab and window rules (which tab to show after closing one, next/previous, ⌘1–9, how many closed tabs to remember, where one reopens, whether a window is still on screen). `url.js`, `quicksearch.js`, `tabs.js`, `menus.js`, `settings.js`, `history.js`, `session.js`, `shortcuts.js`, `downloads.js`, `find.js`, `zoom.js`, `permissions.js` and `adblock.js` (with the engine replaced) are plain Node, tested in `test/`.
+- `src/quicksearch.js` lists the quick search sites and turns a shortcut and search into the site's address, and a half-typed shortcut into the sites it could be; main tries it before `src/url.js`, and the toolbar draws a typed shortcut as its site's chip. `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab and window rules (which tab to show after closing one, next/previous, ⌘1–9, how many closed tabs to remember, where one reopens, whether a window is still on screen). `url.js`, `quicksearch.js`, `tabs.js`, `menus.js`, `settings.js`, `history.js`, `bookmarks.js`, `session.js`, `shortcuts.js`, `downloads.js`, `find.js`, `zoom.js`, `permissions.js` and `adblock.js` (with the engine replaced) are plain Node, tested in `test/`.

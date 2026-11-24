@@ -226,8 +226,27 @@
       transition: color 200ms ease;
     }
     .address:focus-within svg { color: #fff; }
-    /* Room for the zoom button, only while it shows. */
-    .address.is-zoomed input { padding-right: 64px; }
+    /* Room for the star, and for the zoom button while it shows. */
+    .address.has-star input { padding-right: 38px; }
+    .address.is-zoomed input { padding-right: 92px; }
+
+    /* Bookmarks the page, filled once it is. Shown on pages that can be. */
+    .star {
+      position: absolute;
+      top: 50%;
+      right: 4px;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-50%) scale(.8);
+    }
+    .address.has-star .star { opacity: 1; visibility: visible; transform: translateY(-50%); }
+    .address.has-star .star:active { transform: translateY(-50%) scale(.94); }
+    .address .star svg { position: static; color: inherit; transform: none; fill: transparent; transition: fill 200ms ease, transform 240ms var(--settle); }
+    .star.is-on { color: #fff; }
+    .address .star.is-on svg { fill: currentColor; transform: scale(1.06); }
 
     /* Quick search: a typed shortcut (!yt) becomes a chip naming its site
        at the start of the field, and what follows searches that site.
@@ -267,7 +286,7 @@
     .zoom {
       position: absolute;
       top: 50%;
-      right: 5px;
+      right: 33px;
       height: 22px;
       padding: 0 7px;
       border-radius: 6px;
@@ -343,6 +362,57 @@
     .find-count:empty { display: none; }
     .find .icon-button { width: 24px; height: 24px; flex: 0 0 auto; border-radius: 6px; }
     .find .icon-button:disabled { opacity: .4; pointer-events: none; }
+
+    /* The bookmark bar: a row under the address row (over the home search
+       box, at its top). Its height matches BOOKMARKS_HEIGHT in main.js. What
+       doesn't fit is listed by the button at its end. */
+    .bookmarks { display: none; height: 34px; align-items: center; gap: 2px; padding: 0 10px 6px; }
+    .bookmarks.is-open { display: flex; }
+    .home .bookmarks { position: absolute; top: 38px; left: 0; right: 0; z-index: 1; }
+    .bookmark-list { position: relative; flex: 1; min-width: 0; height: 28px; display: flex; gap: 2px; overflow: hidden; }
+    .bookmark {
+      position: relative;
+      flex: 0 0 auto;
+      max-width: 160px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 9px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #a8a8a8;
+      font-size: 12px;
+      letter-spacing: -.01em;
+      transition: color 180ms ease-out, background-color 180ms ease-out, opacity 160ms ease-out, transform 140ms var(--settle);
+    }
+    .bookmark:hover, .bookmark.is-target { color: #fff; background: rgba(255, 255, 255, .07); }
+    .bookmark:active { transform: scale(.98); }
+    .bookmark.is-dragged { opacity: .4; }
+    .bookmark.is-over { visibility: hidden; }
+    .bookmark > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .bookmark img { width: 14px; height: 14px; flex: 0 0 auto; border-radius: 3px; }
+    .bookmark svg { flex: 0 0 auto; color: var(--dim); }
+    .bookmark.is-icon-only > span { display: none; }
+    /* Where a dragged bookmark would land. */
+    .drop-mark {
+      position: absolute;
+      top: 4px;
+      bottom: 4px;
+      left: 0;
+      width: 2px;
+      border-radius: 1px;
+      background: #fff;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(var(--drop-x, 0));
+      transition: opacity 120ms ease-out, transform 160ms var(--settle);
+    }
+    .drop-mark.is-on { opacity: 1; }
+    .bookmark-hint { align-self: center; padding: 0 4px; overflow: hidden; color: var(--dim); font-size: 12px; letter-spacing: -.01em; white-space: nowrap; text-overflow: ellipsis; }
+    .more-bookmarks { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; }
+    .more-bookmarks[hidden] { display: none; }
 
     /* A site's permission request: a row under the address row while the
        active tab asks. Its height matches PROMPT_HEIGHT in main.js, which
@@ -502,6 +572,10 @@
       <input id="address" type="text" placeholder="Search or enter address" aria-label="Search or enter address"
         aria-autocomplete="list" autocomplete="off" spellcheck="false" autofocus>
       <button class="icon-button zoom" id="zoom" type="button" tabindex="-1" title="Reset Zoom" data-shortcut="shortcuts.resetZoom"></button>
+      <button class="icon-button star" id="star" type="button" tabindex="-1" aria-label="Bookmark this page" title="Bookmark This Page" data-shortcut="shortcuts.bookmarkPage">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2.5 2.9 6.1 6.6.9-4.8 4.6 1.2 6.6-5.9-3.2-5.9 3.2 1.2-6.6L2.5 9.5l6.6-.9z"></path></svg>
+      </button>
       <p class="private-note">Private window. Lit forgets its pages, cookies and site data when you close it.</p>
     </form>
     <div class="find" id="find" role="search" aria-label="Find in page">
@@ -522,6 +596,14 @@
           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
       </button>
     </div>
+  </div>
+
+  <div class="bookmarks" id="bookmarks" role="toolbar" aria-label="Bookmarks">
+    <div class="bookmark-list" id="bookmark-list"><span class="drop-mark" id="drop-mark" aria-hidden="true"></span></div>
+    <button class="icon-button more-bookmarks" id="more-bookmarks" type="button" aria-label="More bookmarks" title="More Bookmarks" hidden>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 17 5-5-5-5"></path><path d="m13 17 5-5-5-5"></path></svg>
+    </button>
   </div>
 
   <!-- Allow and Block are remembered for the site; × only answers this time. -->
@@ -552,6 +634,12 @@
           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
       </button>
     </div>
+  </template>
+  <template id="folder-template">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
+    </svg>
   </template>
   <template id="globe-template">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -687,9 +775,169 @@
         zoomButton.textContent = zoom
         zoomButton.setAttribute('aria-label', `Zoom ${zoom}, reset zoom`)
       }
+      drawStar()
       drawFind(tab?.find, switched)
       drawPrompt(tab)
     }
+
+    // The bookmark bar ({ visible, items } from main; see src/bookmarks.js).
+    const star = document.getElementById('star')
+    const bookmarkBar = document.getElementById('bookmarks')
+    const bookmarkList = document.getElementById('bookmark-list')
+    const moreBookmarks = document.getElementById('more-bookmarks')
+    const dropMark = document.getElementById('drop-mark')
+    const folderTemplate = document.getElementById('folder-template')
+    let bookmarks = { visible: false, items: [] }
+    // The bar's buttons, in order: { item, root }.
+    let bookmarkButtons = []
+
+    function drawStar() {
+      const url = currentUrl()
+      const can = /^(https?|file):/i.test(url)
+      const on = can && bookmarks.items.some((item) => item.url === url || item.items?.some((each) => each.url === url))
+      addressForm.classList.toggle('has-star', can)
+      star.tabIndex = can ? 0 : -1
+      star.classList.toggle('is-on', on)
+      star.dataset.name = on ? 'Edit Bookmark' : 'Bookmark This Page'
+      star.setAttribute('aria-label', on ? 'Edit bookmark' : 'Bookmark this page')
+      labelShortcut(star)
+    }
+    star.addEventListener('click', () => window.lit.bookmarkPage())
+
+    const globe = () => globeTemplate.content.cloneNode(true)
+    function bookmarkIcon(item) {
+      if (item.items) return folderTemplate.content.cloneNode(true)
+      if (!item.icon) return globe()
+      const img = new Image()
+      img.alt = ''
+      img.draggable = false
+      img.onerror = () => img.replaceWith(globe())
+      img.src = item.icon
+      return img
+    }
+    // A list or form opens from the bar's bottom, under its button.
+    const below = (element) => ({ x: element.getBoundingClientRect().left, y: bookmarkBar.getBoundingClientRect().bottom })
+
+    function createBookmark(item) {
+      const root = document.createElement('button')
+      root.type = 'button'
+      root.className = 'bookmark'
+      root.draggable = true
+      const name = item.title || (item.items ? 'Folder' : '')
+      root.append(bookmarkIcon(item))
+      const label = document.createElement('span')
+      label.textContent = name
+      root.append(label)
+      root.classList.toggle('is-icon-only', !name)
+      root.title = item.items ? name : [name, item.url].filter(Boolean).join('\n')
+      root.setAttribute('aria-label', name || item.url)
+      if (item.items) root.setAttribute('aria-haspopup', 'menu')
+      root.addEventListener('click', (event) => {
+        if (item.items) window.lit.listBookmarks(item.id, below(root))
+        else window.lit.openBookmark(item.id, event.metaKey)
+      })
+      // Middle click opens a new tab, as in other browsers.
+      root.addEventListener('auxclick', (event) => { if (event.button === 1 && !item.items) window.lit.openBookmark(item.id, true) })
+      root.addEventListener('contextmenu', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        window.lit.showBookmarkMenu(item.id, below(root))
+      })
+      root.addEventListener('dragstart', (event) => {
+        dragged = item
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData('text/plain', item.url || name)
+        root.classList.add('is-dragged')
+      })
+      root.addEventListener('dragend', () => { root.classList.remove('is-dragged'); endDrag() })
+      return root
+    }
+
+    function drawBookmarks(next) {
+      const items = JSON.stringify(next.items)
+      const changed = items !== JSON.stringify(bookmarks.items) || !bookmarkList.querySelector('.bookmark, .bookmark-hint')
+      bookmarks = next
+      bookmarkBar.classList.toggle('is-open', next.visible)
+      if (changed) {
+        // Redrawn whole; focus stays on the same bookmark.
+        const focused = bookmarkButtons.find(({ root }) => root === document.activeElement)?.item.id
+        bookmarkButtons = next.items.map((item) => ({ item, root: createBookmark(item) }))
+        const hint = document.createElement('span')
+        hint.className = 'bookmark-hint'
+        hint.textContent = 'Bookmark a page with the star in the address bar to keep it here'
+        bookmarkList.replaceChildren(dropMark, ...(next.items.length ? bookmarkButtons.map(({ root }) => root) : [hint]))
+        bookmarkButtons.find(({ item }) => item.id === focused)?.root.focus()
+        endDrag()
+      }
+      fitBookmarks()
+      drawStar()
+    }
+
+    // Hides the bookmarks past the bar's end; the button there lists them.
+    const overflowing = () => bookmarkButtons.filter(({ root }) => root.classList.contains('is-over'))
+    function fitBookmarks() {
+      if (!bookmarks.visible) return
+      const fit = () => {
+        const end = bookmarkList.clientWidth
+        let over = false
+        for (const { root } of bookmarkButtons) {
+          over ||= root.offsetLeft + root.offsetWidth > end
+          root.classList.toggle('is-over', over)
+        }
+        return over
+      }
+      // The button takes room too, so it only shows when needed without it.
+      moreBookmarks.hidden = true
+      if (!fit()) return
+      moreBookmarks.hidden = false
+      fit()
+    }
+    window.addEventListener('resize', fitBookmarks)
+    document.fonts?.ready.then(fitBookmarks)
+    moreBookmarks.addEventListener('click', () => window.lit.listBookmarks(overflowing().map(({ item }) => item.id), below(moreBookmarks)))
+    bookmarkBar.addEventListener('contextmenu', (event) => {
+      event.preventDefault()
+      window.lit.showBookmarkMenu(null, { x: event.clientX, y: bookmarkBar.getBoundingClientRect().bottom })
+    })
+
+    // Dragging a bookmark reorders the bar, or drops it on a folder's
+    // middle to put it in there.
+    let dragged = null
+    // { folderId, beforeId } it would land at.
+    let drop = null
+    function endDrag() {
+      dragged = null
+      setDrop(null)
+    }
+    function setDrop(next, x = 0) {
+      drop = next
+      for (const { item, root } of bookmarkButtons) root.classList.toggle('is-target', Boolean(next?.folderId) && item.id === next.folderId)
+      dropMark.classList.toggle('is-on', Boolean(next) && !next.folderId)
+      if (next && !next.folderId) dropMark.style.setProperty('--drop-x', `${x}px`)
+    }
+    bookmarkList.addEventListener('dragover', (event) => {
+      if (!dragged) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      const shown = bookmarkButtons.filter(({ root }) => !root.classList.contains('is-over'))
+      const left = bookmarkList.getBoundingClientRect().left
+      for (const { item, root } of shown) {
+        const box = root.getBoundingClientRect()
+        const at = (event.clientX - box.left) / box.width
+        if (item.items && !dragged.items && at > .25 && at < .75) return setDrop({ folderId: item.id, beforeId: null })
+        if (at < .5) return setDrop({ folderId: null, beforeId: item.id }, Math.max(0, box.left - left - 2))
+      }
+      // After the last one shown, so before the first hidden one, if any.
+      const last = shown.at(-1)?.root.getBoundingClientRect()
+      setDrop({ folderId: null, beforeId: overflowing()[0]?.item.id ?? null }, last ? last.right - left : 0)
+    })
+    bookmarkList.addEventListener('dragleave', (event) => { if (!bookmarkList.contains(event.relatedTarget)) setDrop(null) })
+    bookmarkList.addEventListener('drop', (event) => {
+      if (!dragged) return
+      event.preventDefault()
+      if (drop) window.lit.moveBookmark(dragged.id, drop.folderId, drop.beforeId)
+      endDrag()
+    })
 
     // The active tab's permission request. The row slides in for each new
     // request, and stays put while the same one is redrawn; its text
@@ -1066,6 +1314,7 @@
     document.getElementById('find-close').addEventListener('click', () => window.lit.closeFind(state.activeId))
 
     window.lit.onTabs(render)
+    window.lit.onBookmarks(drawBookmarks)
     window.lit.onDownloads(drawDownloads)
     window.lit.onShortcuts((labels) => {
       shortcutLabels = labels

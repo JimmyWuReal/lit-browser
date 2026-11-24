@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { pageMenu, tabMenu } = require('../src/menus')
+const { pageMenu, tabMenu, bookmarkMenu } = require('../src/menus')
 
 const labels = (items) => items.map((item) => item.label || '—')
 const commands = (items) => items.filter((item) => item.command).map((item) => item.command)
@@ -123,4 +123,12 @@ test('a private window offers no Add to Dictionary or Inspect Element', () => {
   assert.ok(!items.includes('addToDictionary') && !items.includes('inspect'))
   assert.equal(items[0], 'replaceMisspelling')
   assert.deepEqual(labels(pageMenu({}, { isPrivate: true })), ['Back', 'Forward', 'Reload', '—', 'Print…'])
+})
+
+test('the bookmark menu fits what was clicked', () => {
+  const commands = (options) => bookmarkMenu(options).map((item) => item.command || '-').join(' ')
+  assert.equal(commands({ kind: 'page' }), 'openInNewTab openInNewWindow openInPrivateWindow - copyAddress - edit delete - addPage addFolder - hideBar')
+  assert.equal(commands({ kind: 'folder', count: 2 }), 'openAll - edit delete - addPage addFolder - hideBar')
+  assert.equal(bookmarkMenu({ kind: 'folder' })[0].enabled, false)
+  assert.equal(commands(), 'addPage addFolder - hideBar')
 })
