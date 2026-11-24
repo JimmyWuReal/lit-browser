@@ -327,7 +327,9 @@
     }
     @keyframes prompt-in { from { opacity: 0; transform: translateY(-4px); } }
     .prompt-box > svg { flex: 0 0 auto; color: var(--dim); }
-    /* A long site name shortens itself, so what it wants stays readable. */
+    /* A long site name shortens itself from the start, so what it wants,
+       and the end of its name (the domain and port that matter), stay
+       readable. */
     .prompt-text {
       flex: 1;
       min-width: 0;
@@ -338,7 +340,7 @@
       letter-spacing: -.01em;
       white-space: nowrap;
     }
-    .prompt-text strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: #ededed; font-weight: 500; }
+    .prompt-text strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; direction: rtl; color: #ededed; font-weight: 500; }
     .prompt-text span { flex: none; white-space: pre; }
     .home .prompt { display: none; }
     /* The kit's buttons, small: outline for Block, solid for Allow. */
@@ -595,12 +597,19 @@
       const key = prompt ? `${tab.id}:${prompt.id}` : null
       // Only a change of text touches the live region, so it is read once.
       if (prompt && promptText.textContent !== `${prompt.site} wants to ${prompt.does}`) {
+        // The name reads left to right inside its right-to-left box.
         const site = document.createElement('strong')
-        site.textContent = prompt.site
+        const name = document.createElement('bdi')
+        name.dir = 'ltr'
+        name.textContent = prompt.site
+        site.append(name)
         const does = document.createElement('span')
         does.textContent = ` wants to ${prompt.does}`
         promptText.replaceChildren(site, does)
         promptRow.title = promptText.textContent
+        // The buttons name the whole site, however short the row.
+        document.getElementById('prompt-allow').setAttribute('aria-label', `Allow ${prompt.site} to ${prompt.does}`)
+        document.getElementById('prompt-block').setAttribute('aria-label', `Block ${prompt.site} from being able to ${prompt.does}`)
       }
       // A different request, or a change in what it asks about, takes focus
       // off the buttons, so a repeated Enter never answers it unseen.

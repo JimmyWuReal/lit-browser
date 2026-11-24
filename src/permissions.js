@@ -13,7 +13,8 @@ const KINDS = {
   microphone: { label: 'Microphone', does: 'use your microphone' },
   location: { label: 'Location', does: 'know your location' },
   notifications: { label: 'Notifications', does: 'show notifications' },
-  clipboard: { label: 'Clipboard', does: 'see what you copy' },
+  // Chromium asks one permission for reading and for some writing.
+  clipboard: { label: 'Clipboard', does: 'read and change your clipboard' },
 }
 const CHOICES = ['allow', 'block']
 
