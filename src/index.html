@@ -328,10 +328,9 @@
     @keyframes prompt-in { from { opacity: 0; transform: translateY(-4px); } }
     .prompt-box > svg { flex: 0 0 auto; color: var(--dim); }
     /* A long site name shortens itself from the start, keeping the end of
-       its name (the domain and port that matter). It keeps up to 65% of the
-       room and what it wants gets the rest, so in a narrow window the site
-       stays the most readable part; the row's tooltip and the buttons'
-       labels hold the whole request. */
+       its name (the domain and port that matter). Side by side, what it
+       wants is never cut: the site takes the room left. In a narrow window
+       the two stack, each with the row's full width. */
     .prompt-text {
       flex: 1;
       min-width: 0;
@@ -342,8 +341,13 @@
       letter-spacing: -.01em;
       white-space: nowrap;
     }
-    .prompt-text strong { flex: none; max-width: 65%; overflow: hidden; text-overflow: ellipsis; direction: rtl; color: #ededed; font-weight: 500; }
-    .prompt-text span { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+    .prompt-text strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; direction: rtl; color: #ededed; font-weight: 500; }
+    .prompt-text span { flex: none; margin-left: .3em; }
+    @media (max-width: 720px) {
+      .prompt-text { flex-direction: column; justify-content: center; font-size: 12px; line-height: 15px; }
+      .prompt-text strong { align-self: flex-start; max-width: 100%; }
+      .prompt-text span { margin-left: 0; overflow: hidden; text-overflow: ellipsis; }
+    }
     .home .prompt { display: none; }
     /* The kit's buttons, small: outline for Block, solid for Allow. */
     .prompt-button {
@@ -606,9 +610,11 @@
         name.textContent = prompt.site
         site.append(name)
         const does = document.createElement('span')
-        does.textContent = ` wants to ${prompt.does}`
-        promptText.replaceChildren(site, does)
-        promptRow.title = promptText.textContent
+        does.textContent = `wants to ${prompt.does}`
+        // The space is for screen readers; flex layout drops it, and the
+        // margin spaces the two on screen.
+        promptText.replaceChildren(site, ' ', does)
+        promptRow.title = `${prompt.site} wants to ${prompt.does}`
         // The buttons name the whole site, however short the row.
         document.getElementById('prompt-allow').setAttribute('aria-label', `Allow ${prompt.site} to ${prompt.does}`)
         document.getElementById('prompt-block').setAttribute('aria-label', `Block ${prompt.site} from being able to ${prompt.does}`)

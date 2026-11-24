@@ -117,13 +117,13 @@ function siteFor(contents, asking, embedding) {
 
 // Requests for a kind Lit asks about are answered from the saved choices,
 // or by a prompt on the tab that asked, for the kinds not yet decided.
-// Only the page itself can prompt: Electron can't say when a frame is gone
-// (its prompt stale). A frame from the page's own site gets the saved
-// choice for the camera and microphone, whose requests carry the frame's
-// real origin (`securityOrigin`); other requests carry only its address,
-// which a sandboxed frame keeps without the origin, so frames are refused
-// those. Anything not from a tab (Lit's own pages, a service worker) is
-// refused too.
+// A frame from the page's own site is treated like the page for the camera
+// and microphone, whose requests carry the frame's real origin
+// (`securityOrigin`). Other requests carry only the frame's address, which a
+// sandboxed frame keeps without the origin, so frames are refused those.
+// The prompt names the site, not the frame, so its answer stays right even
+// if the frame has gone. Anything not from a tab (Lit's own pages, a
+// service worker) is refused too.
 function onPermissionRequest(contents, permission, callback, details) {
   const kinds = permissions.kindsOf(permission, details.mediaTypes)
   if (!kinds) return callback(true)
@@ -131,7 +131,7 @@ function onPermissionRequest(contents, permission, callback, details) {
   if (!site || !kinds.length) return callback(false)
   if (!details.isMainFrame && !details.securityOrigin) return callback(false)
   const answer = permissions.status(sitePermissions, site, kinds)
-  if (answer !== 'ask' || !details.isMainFrame) return callback(answer === 'allow')
+  if (answer !== 'ask') return callback(answer === 'allow')
   for (const controls of openWindows) {
     if (controls.askPermission(contents, site, kinds, callback)) return
   }
