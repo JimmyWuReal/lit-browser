@@ -193,17 +193,27 @@ function privateSession(key, store) {
   return ses
 }
 
-function forgetSession(ses) {
+// Closes the session's connections first, so nothing arrives while its
+// data is cleared, then clears every kind of data it holds, one step at a
+// time. A failure is logged without saying what the window visited.
+async function forgetSession(ses) {
   privateSessions.delete(ses)
   ses.webRequest.onBeforeSendHeaders(null)
   ses.removeAllListeners('will-download')
   ses.setPermissionRequestHandler(null)
   ses.setPermissionCheckHandler(null)
-  // Every kind of data the session holds, then its open connections.
-  ses.clearData().catch(() => {})
-  ses.clearAuthCache().catch(() => {})
-  ses.clearHostResolverCache().catch(() => {})
-  ses.closeAllConnections().catch(() => {})
+  for (const [step, run] of [
+    ['close connections', () => ses.closeAllConnections()],
+    ['clear data', () => ses.clearData()],
+    ['clear sign-ins', () => ses.clearAuthCache()],
+    ['clear host lookups', () => ses.clearHostResolverCache()],
+  ]) {
+    try {
+      await run()
+    } catch {
+      console.error(`Couldn’t ${step} of a closed private window.`)
+    }
+  }
 }
 
 // Pages visited (src/history.js), newest first. Loaded at launch, and saved
