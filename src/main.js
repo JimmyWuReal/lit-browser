@@ -142,13 +142,13 @@ function onPermissionRequest(contents, permission, callback, details) {
 // labels) say yes only once a site was allowed. Electron has no "not asked
 // yet", so until then they read as denied; asking still prompts. A frame
 // reads as its requests are answered: its site's camera and microphone
-// choices (by `securityOrigin`), and no for the rest. A service worker (no
-// page) reads its site's choice.
+// choices, and no for the rest. A check names the frame's real origin
+// (`requestingOrigin`). A service worker (no page) reads its site's choice.
 function onPermissionCheck(contents, permission, requestingOrigin, details) {
   const kinds = permissions.checkKindsOf(permission, details.mediaType)
   if (!kinds) return true
-  if (contents && !details.isMainFrame && !details.securityOrigin) return false
-  const site = siteFor(contents, details.securityOrigin ?? requestingOrigin, details.embeddingOrigin)
+  if (contents && !details.isMainFrame && permission !== 'media') return false
+  const site = siteFor(contents, requestingOrigin, details.embeddingOrigin)
   return Boolean(site) && kinds.length > 0 && permissions.status(sitePermissions, site, kinds) === 'allow'
 }
 

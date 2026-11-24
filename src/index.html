@@ -327,9 +327,11 @@
     }
     @keyframes prompt-in { from { opacity: 0; transform: translateY(-4px); } }
     .prompt-box > svg { flex: 0 0 auto; color: var(--dim); }
-    /* A long site name shortens itself from the start, so what it wants,
-       and the end of its name (the domain and port that matter), stay
-       readable. */
+    /* A long site name shortens itself from the start, keeping the end of
+       its name (the domain and port that matter). It keeps up to 65% of the
+       room and what it wants gets the rest, so in a narrow window the site
+       stays the most readable part; the row's tooltip and the buttons'
+       labels hold the whole request. */
     .prompt-text {
       flex: 1;
       min-width: 0;
@@ -340,8 +342,8 @@
       letter-spacing: -.01em;
       white-space: nowrap;
     }
-    .prompt-text strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; direction: rtl; color: #ededed; font-weight: 500; }
-    .prompt-text span { flex: none; white-space: pre; }
+    .prompt-text strong { flex: none; max-width: 65%; overflow: hidden; text-overflow: ellipsis; direction: rtl; color: #ededed; font-weight: 500; }
+    .prompt-text span { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
     .home .prompt { display: none; }
     /* The kit's buttons, small: outline for Block, solid for Allow. */
     .prompt-button {
