@@ -5,12 +5,14 @@ const { pageMenu, tabMenu } = require('../src/menus')
 const labels = (items) => items.map((item) => item.label || '—')
 const commands = (items) => items.filter((item) => item.command).map((item) => item.command)
 
-test('a right-click on nothing offers back, forward, reload and inspect', () => {
-  const items = pageMenu({}, { canGoBack: true, keys: { reload: 'CmdOrCtrl+R' } })
-  assert.deepEqual(labels(items), ['Back', 'Forward', 'Reload', '—', 'Inspect Element'])
+test('a right-click on nothing offers back, forward, reload, print and inspect', () => {
+  const items = pageMenu({}, { canGoBack: true, keys: { reload: 'CmdOrCtrl+R', print: 'CmdOrCtrl+P' } })
+  assert.deepEqual(labels(items), ['Back', 'Forward', 'Reload', '—', 'Print…', '—', 'Inspect Element'])
   assert.equal(items[0].enabled, true)
   assert.equal(items[1].enabled, false)
   assert.equal(items[2].accelerator, 'CmdOrCtrl+R')
+  assert.equal(items[4].command, 'print')
+  assert.equal(items[4].accelerator, 'CmdOrCtrl+P')
 })
 
 test('a web link can be opened, saved and copied', () => {
@@ -49,7 +51,7 @@ test('only web media opens in a new tab, and images copy by their pixels', () =>
     ['Save Image As…', 'Copy Image', 'Copy Image Address', '—', 'Inspect Element'])
   assert.deepEqual(labels(pageMenu({ mediaType: 'video', srcURL: 'blob:https://a.b/1', mediaFlags: { canSave: true } })),
     ['Save Video As…', 'Copy Video Address', '—', 'Inspect Element'])
-  assert.deepEqual(labels(pageMenu({ mediaType: 'video' })), ['Back', 'Forward', 'Reload', '—', 'Inspect Element'])
+  assert.deepEqual(labels(pageMenu({ mediaType: 'video' })), ['Back', 'Forward', 'Reload', '—', 'Print…', '—', 'Inspect Element'])
   assert.deepEqual(labels(pageMenu({ mediaType: 'image', srcURL: 'https://example.com/broken.png' })).slice(0, 3),
     ['Open Image in New Tab', 'Save Image As…', 'Copy Image Address'])
   assert.deepEqual(labels(pageMenu({ mediaType: 'video', srcURL: 'https://example.com/a.mp4', mediaFlags: { canSave: true } })).slice(0, 3),
