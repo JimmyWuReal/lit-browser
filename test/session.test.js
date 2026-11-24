@@ -75,15 +75,23 @@ test('the current page stays current when entries are dropped', () => {
   assert.deepEqual(clean({ windows: [{ tabs: [{ entries: [a, { url: 1 }, b], index: 1 }] }] })[0].tabs[0], { entries: [a, b], index: 0 })
 })
 
-test('pinned tabs are a run from the left, each with a page', () => {
+test('pinned tabs stay pinned when one of them has lost its page', () => {
   const a = { entries: [page('https://a.com/')], index: 0 }
-  const pinnedOf = (tabs, pinned) => clean({ windows: [{ tabs, pinned }] })[0].pinned
-  assert.equal(pinnedOf([a, a, a], 2), 2)
-  assert.equal(pinnedOf([a, a], 9), 2)
-  assert.equal(pinnedOf([a, a], -1), 0)
-  assert.equal(pinnedOf([a, a], '2'), 0)
-  // A pinned tab whose page is gone ends the pinned ones there.
-  assert.equal(pinnedOf([a, { entries: [{ url: '' }], index: 0 }, a], 3), 1)
+  const b = { entries: [page('https://b.com/')], index: 0 }
+  const broken = { entries: [{ url: '' }], index: 0 }
+  const cleaned = (win) => clean({ windows: [win] })[0]
+  assert.equal(cleaned({ tabs: [a, a, a], pinned: 2 }).pinned, 2)
+  assert.equal(cleaned({ tabs: [a, a], pinned: 9 }).pinned, 2)
+  assert.equal(cleaned({ tabs: [a, a], pinned: -1 }).pinned, 0)
+  assert.equal(cleaned({ tabs: [a, a], pinned: '2' }).pinned, 0)
+  // The broken pinned tab goes; the ones after it stay pinned, and the
+  // active tab is still the active one.
+  assert.deepEqual(cleaned({ tabs: [a, broken, b, null], pinned: 3, activeIndex: 3 }), {
+    tabs: [a, b, null], activeIndex: 2, pinned: 2, bounds: undefined, maximized: false, fullScreen: false,
+  })
+  // A blank unpinned tab stays; a window left with no tabs goes.
+  assert.equal(cleaned({ tabs: [broken], pinned: 1 }), undefined)
+  assert.equal(cleaned({ tabs: [broken, a], pinned: 1, activeIndex: 0 }).activeIndex, 0)
 })
 
 test("pinnedWindow gathers every window's pinned tabs where the front one was", () => {

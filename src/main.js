@@ -238,12 +238,26 @@ let sessionFile
 let sessionSave = null
 let quitting = false
 
+// The pinned tabs of the last window closed while Lit keeps running (a
+// window spec, as in session.js), so closing every window never loses
+// them: the next window opened takes them in, and if Lit quits first they
+// are saved with the session. Only kept while no window is open.
+let strayPins = null
+
+// Hands the stray pinned tabs to a new window, unless it is the window
+// they came from coming back (Reopen Closed Tab), which has them already.
+function takeStrayPins(key) {
+  const tabs = strayPins && strayPins.key !== key ? strayPins.tabs : []
+  strayPins = null
+  return tabs
+}
+
 function saveSession() {
   clearTimeout(sessionSave)
   sessionSave = null
   if (!sessionFile) return
   try {
-    const windows = [...openWindows].map((controls) => controls.snapshot()).filter(Boolean)
+    const windows = [...(strayPins ? [strayPins] : []), ...[...openWindows].map((controls) => controls.snapshot()).filter(Boolean)]
     if (settings.restoreSession) return sessionStore.save(sessionFile, windows)
     // Pinned tabs open at every launch, even with Reopen windows off.
     const pinned = sessionStore.pinnedWindow(windows)
@@ -1364,15 +1378,21 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // reopened whole. A window closed by its last tab was remembered in
   // removeTab. Its tabs are read while it is still there, and remembered
   // only once it is really gone, in case the close is cancelled.
+  // Its pinned tabs are read too, as a launch would reopen them, in case it
+  // is the last window (see strayPins).
   let closingWindow = null
+  let closingPins = null
   win.on('close', () => {
     const histories = tabs.map((tab) => (tab.started ? saveHistory(tab) : null))
     closingWindow = histories.length ? closedWindow(histories, Math.max(tabs.indexOf(active()), 0)) : null
+    const pins = tabs.filter((tab) => tab.pinned).map(sessionHistory).filter(Boolean)
+    closingPins = pins.length ? closedWindow(pins, 0, pins.length) : null
   })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
   win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendDownloads() })
   win.on('closed', () => {
     openWindows.delete(controls)
+    if (!quitting && !openWindows.size && closingPins) strayPins = closingPins
     sessionChanged()
     if (closingWindow) rememberClosed(closingWindow)
     for (const tab of tabs.splice(0)) {
@@ -1388,6 +1408,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   win.loadFile(path.join(__dirname, 'index.html'))
   if (maximized) win.maximize()
   if (fullScreen) win.setFullScreen(true)
+  // Pinned tabs left by the last window closed join this one's.
+  for (const history of takeStrayPins(key)) addTab({ history, background: true, pinned: true })
   if (restored.length) {
     restored.forEach((history, i) => addTab(history ? { history, background: true, pinned: i < pinned } : { background: true }))
     activate(tabs[Math.min(activeIndex, tabs.length - 1)].id)
@@ -1657,14 +1679,13 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(buildMenu())
   sessionFile = path.join(app.getPath('userData'), 'session.json')
   // The windows open when Lit last quit, the one in front opened last.
-  // With Reopen windows off, a new window with the pinned tabs (if any)
-  // and a new tab in front.
+  // With Reopen windows off, a new window with the pinned tabs (if any,
+  // through strayPins) and a new tab in front.
   const saved = sessionStore.load(sessionFile)
   if (settings.restoreSession && saved.length) for (const win of saved) createWindow(win)
   else {
-    const pinned = sessionStore.pinnedWindow(saved)
-    const controls = createWindow(pinned || {})
-    if (pinned) controls.newTab()
+    strayPins = sessionStore.pinnedWindow(saved)
+    createWindow()
   }
   // Like other Mac browsers, Lit keeps running with no windows open;
   // clicking the Dock icon opens a fresh one. Registered after the first

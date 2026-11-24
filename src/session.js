@@ -46,30 +46,27 @@ const cleanBounds = (bounds) => (bounds && ['x', 'y', 'width', 'height'].every((
   ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
   : undefined)
 
-// How many of `tabs` are pinned: up to `pinned` from the left, ending at
-// the first one with no page left, as a pinned tab always has one.
-function cleanPinned(pinned, tabs) {
-  const most = Number.isInteger(pinned) ? Math.min(Math.max(pinned, 0), tabs.length) : 0
-  const blank = tabs.slice(0, most).indexOf(null)
-  return blank === -1 ? most : blank
-}
-
-// Only well-formed windows survive a hand-edited or older file.
+// Only well-formed windows survive a hand-edited or older file. A pinned
+// tab whose page is gone is dropped, as a pinned tab always has one; the
+// rest stay pinned, and the active tab stays active (or the first does).
 function clean(saved) {
   if (!saved || !Array.isArray(saved.windows)) return []
   return saved.windows
     .filter((win) => win && Array.isArray(win.tabs) && win.tabs.length)
     .map((win) => {
-      const tabs = win.tabs.map(cleanHistory)
+      const most = Number.isInteger(win.pinned) ? Math.min(Math.max(win.pinned, 0), win.tabs.length) : 0
+      const active = isIndex(win.activeIndex, win.tabs.length) ? win.activeIndex : 0
+      const kept = win.tabs.map((tab, i) => ({ history: cleanHistory(tab), i })).filter(({ history, i }) => history || i >= most)
       return {
-        tabs,
-        activeIndex: isIndex(win.activeIndex, win.tabs.length) ? win.activeIndex : 0,
-        pinned: cleanPinned(win.pinned, tabs),
+        tabs: kept.map(({ history }) => history),
+        activeIndex: Math.max(kept.findIndex(({ i }) => i === active), 0),
+        pinned: kept.filter(({ i }) => i < most).length,
         bounds: cleanBounds(win.bounds),
         maximized: win.maximized === true,
         fullScreen: win.fullScreen === true,
       }
     })
+    .filter((win) => win.tabs.length)
 }
 
 // Every window's pinned tabs together in one window, in window order,
