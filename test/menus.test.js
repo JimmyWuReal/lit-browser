@@ -134,3 +134,12 @@ test('a pinned tab unpins, and closing others leaves pinned tabs', () => {
   // A tab without a real page (a popup on about:blank) can't be pinned.
   assert.equal(enabled(tabMenu({ index: 0, count: 1, started: true, pinnable: false }), 'Pin Tab'), false)
 })
+
+test('a private window offers no Add to Dictionary or Inspect Element', () => {
+  const params = { isEditable: true, misspelledWord: 'teh', dictionarySuggestions: ['the'] }
+  assert.ok(commands(pageMenu(params)).includes('addToDictionary'))
+  const items = commands(pageMenu(params, { isPrivate: true }))
+  assert.ok(!items.includes('addToDictionary') && !items.includes('inspect'))
+  assert.equal(items[0], 'replaceMisspelling')
+  assert.deepEqual(labels(pageMenu({}, { isPrivate: true })), ['Back', 'Forward', 'Reload', '—', 'Print…'])
+})

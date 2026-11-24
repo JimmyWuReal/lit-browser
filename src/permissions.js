@@ -106,6 +106,19 @@ function choose(sites, site, kinds, choice) {
   return next
 }
 
+// What a private window goes by: its own choices (`own`), with the saved
+// Blocks over them, so a site blocked everywhere stays blocked, even after
+// the window allowed it, while one only allowed outside has to ask again,
+// as in Chrome's Incognito.
+function privateView(saved, own) {
+  const next = new Map(own)
+  for (const [site, choices] of saved) {
+    const blocked = Object.fromEntries(Object.entries(choices).filter(([, choice]) => choice === 'block'))
+    if (Object.keys(blocked).length) next.set(site, { ...next.get(site), ...blocked })
+  }
+  return next
+}
+
 // What Settings lists: sites by name, each kind in KINDS order.
 function list(sites) {
   return [...sites]
@@ -147,4 +160,4 @@ function save(file, sites) {
   fs.renameSync(temporary, file)
 }
 
-module.exports = { KINDS, CHOICES, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, list, load, save }
+module.exports = { KINDS, CHOICES, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, privateView, list, load, save }

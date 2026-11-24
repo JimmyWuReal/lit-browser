@@ -39,8 +39,11 @@ function quote(text) {
 //   keys           { reload, back, forward, print }: the current accelerators, shown
 //                  next to those items
 //   inSubframe     whether the right-click was inside an iframe
+//   isPrivate      a private window: no Add to Dictionary, whose words
+//                  would outlast it, and no Inspect Element, as DevTools
+//                  saves its state to disk
 function pageMenu(params, context = {}) {
-  const { isPage = true, canGoBack = false, canGoForward = false, engineName = 'Google', askWhereToSave = true, keys = {}, inSubframe = false } = context
+  const { isPage = true, canGoBack = false, canGoForward = false, engineName = 'Google', askWhereToSave = true, keys = {}, inSubframe = false, isPrivate = false } = context
   const flags = params.editFlags || {}
   const selection = (params.selectionText || '').trim()
   const groups = []
@@ -50,7 +53,7 @@ function pageMenu(params, context = {}) {
     const suggestions = (params.dictionarySuggestions || []).map((word) => ({ label: word, command: 'replaceMisspelling', arg: word }))
     groups.push([
       ...(suggestions.length ? suggestions : [{ label: 'No Guesses Found', enabled: false }]),
-      { label: 'Add to Dictionary', command: 'addToDictionary', arg: params.misspelledWord },
+      ...(!isPrivate ? [{ label: 'Add to Dictionary', command: 'addToDictionary', arg: params.misspelledWord }] : []),
     ])
   }
 
@@ -115,7 +118,7 @@ function pageMenu(params, context = {}) {
     ])
   }
 
-  if (isPage) groups.push([{ label: 'Inspect Element', command: 'inspect' }])
+  if (isPage && !isPrivate) groups.push([{ label: 'Inspect Element', command: 'inspect' }])
   return joinGroups(groups)
 }
 

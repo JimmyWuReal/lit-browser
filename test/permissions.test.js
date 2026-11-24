@@ -117,3 +117,21 @@ test('save and load round-trip, keeping only valid sites, kinds and choices', ()
   assert.deepEqual(load(file), new Map())
   fs.rmSync(dir, { recursive: true })
 })
+
+test('a private window goes by its own choices, under the saved Blocks', () => {
+  const { privateView } = require('../src/permissions')
+  const saved = new Map([
+    ['https://a.com', { camera: 'allow', location: 'block' }],
+    ['https://b.com', { microphone: 'allow' }],
+  ])
+  assert.deepEqual(privateView(saved, new Map()), new Map([['https://a.com', { location: 'block' }]]))
+  // A Block saved outside wins over the window's own Allow.
+  const own = new Map([['https://a.com', { location: 'allow', camera: 'allow' }], ['https://c.com', { clipboard: 'block' }]])
+  assert.deepEqual(privateView(saved, own), new Map([
+    ['https://a.com', { location: 'block', camera: 'allow' }],
+    ['https://c.com', { clipboard: 'block' }],
+  ]))
+  // Neither map is changed.
+  assert.deepEqual(saved.get('https://a.com'), { camera: 'allow', location: 'block' })
+  assert.deepEqual(own.get('https://a.com'), { location: 'allow', camera: 'allow' })
+})

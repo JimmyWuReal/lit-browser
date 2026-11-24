@@ -9,6 +9,7 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | Shortcut | Action |
 | --- | --- |
 | ⌘T / ⌘N | New tab / new window |
+| ⇧⌘N | New private window |
 | ⇧⌘T | Reopen the last closed tab or window |
 | ⌘Y | History |
 | ⌥⌘L | Downloads |
@@ -71,6 +72,22 @@ Typing `!` lists the sites under the address bar, narrowing as you type (`!y` li
 
 The search goes straight to the site; your search engine never sees it. To add a site, add it to `SITES` in `src/quicksearch.js` with its icon in `src/sites/`. The icons come from [SVGL](https://svgl.app/), [Simple Icons](https://simpleicons.org/) and the sites' brand pages, as in the [QuickSearch](https://github.com/JimmyWuReal/quick-search) extension this comes from.
 
+## Private windows
+
+⇧⌘N (File › New Private Window) opens a private window. It looks a little different: a violet tint, a Private badge in the tab strip, and a note under the search box.
+
+Each private window, its toolbar and popups included, browses in a session of its own, kept in memory and never written to disk, so its cookies and site storage are seen by no other window, private or not. It keeps no HTTP cache, not even in memory. Lit keeps nothing from it:
+
+- No history: its pages are not recorded, and its closed tabs, and the window itself, can't be reopened. Reopen Closed Tab from a private window brings a normal tab back into a normal window.
+- Show All History opens in a normal window.
+- It is left out of the windows reopened at the next launch.
+- Sites start at the default zoom, not the one saved for them, and zooming one there lasts only until the window closes.
+- Site permissions: a site you blocked stays blocked (even if you block it while the window is open), and one you allowed asks again. Answers there last only until the window closes.
+- Downloads always ask where to save, whatever the Downloads setting, so no site there writes a file you didn't choose. They show only in the window's own Downloads list. Closing the window cancels those still on their way (or waiting in their save dialog) and drops the list; files already saved stay where they were saved.
+- It has no Developer Tools (the menu item does nothing there, and the right-click menu has no Inspect Element), since DevTools saves its state to disk; nor Add to Dictionary.
+
+The address bar suggests nothing from history or pinned tabs there, tabs can't be pinned, and pinned tabs of a closed normal window never move into it. Once the window's pages have closed, its session is cleared from memory: cookies, site storage, sign-ins and connections. Ads are blocked as in normal windows, and changes made in Settings are saved.
+
 ## Site permissions
 
 When a site asks to use your camera or microphone, move and zoom your camera, know your location, show notifications or read your clipboard, a row appears below the address bar: "example.com wants to use your camera". Allow or Block is remembered for that site (its scheme, host and port, as in Chrome), in `permissions.json` in the app's data folder, so it is not asked again; × answers no just this time. A request for both camera and microphone only asks about the one you have not answered yet. The question belongs to the tab that asked: switching tabs hides it until you come back, and leaving the page drops it. Only the page in the address bar can ask, and a frame from the same site for its camera and microphone (asked as the site); frames from other sites, and local files, are refused. A change in Settings applies the next time a site asks, so reload a page to stop a camera or microphone it is already using. Other permissions, such as full screen, keep Electron's default and are allowed.
@@ -91,7 +108,7 @@ Once a file starts downloading, a button appears at the right of the tab strip, 
 
 ## Right-click menus
 
-Right-clicking a page shows what fits the spot: a link can be opened in a new tab, saved or copied; an image, video or audio can be saved or have its address copied, and opened in a new tab when it has a web address (an image can also be copied); selected text can be copied or searched with your search engine; a text field gets spelling suggestions and Undo, Cut, Copy, Paste and Select All. Anywhere else the menu has Back, Forward, Reload and Print. Every page menu ends with Inspect Element.
+Right-clicking a page shows what fits the spot: a link can be opened in a new tab, saved or copied; an image, video or audio can be saved or have its address copied, and opened in a new tab when it has a web address (an image can also be copied); selected text can be copied or searched with your search engine; a text field gets spelling suggestions and Undo, Cut, Copy, Paste and Select All. Anywhere else the menu has Back, Forward, Reload and Print. Every page menu ends with Inspect Element, except in a private window.
 
 New tabs from the menu follow the Tabs settings like ⌘-clicked links: they open next to their page, in the background unless Lit is set to switch to them. Save follows the Downloads setting. Only web (http and https) links can be opened or saved from the menu.
 
@@ -133,7 +150,7 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 
 ## How it works
 
-- `src/main.js` opens windows and gives each tab its own Chromium `WebContentsView` under the toolbar; only the active tab's view is shown. It owns the tab list and sends it to the toolbar whenever it changes. The application menu holds every shortcut, so they work whether the toolbar or a page has focus.
+- `src/main.js` opens windows and gives each tab its own Chromium `WebContentsView` under the toolbar (in a private window, in that window's in-memory session, from `session.fromPartition`); only the active tab's view is shown. It owns the tab list and sends it to the toolbar whenever it changes. The application menu holds every shortcut, so they work whether the toolbar or a page has focus.
 - `src/index.html` is the toolbar: the tab strip (also the window's title bar), the address bar and the find field. When the active tab has not loaded anything, the address bar fills the window as the centered search box and the tab's page view stays hidden.
 - `src/preload.js` is the bridge between Lit's own pages (the toolbar, the address bar's suggestions, and the Settings, History and Downloads popups) and the main process.
 - `src/settings.js` lists every setting, grouped in sections, with its type and default; it also loads, checks and saves them. `src/settings.html` is the Settings popup, drawn entirely from that list, so a new setting only needs an entry there (plus a control in `settings.html` if it brings a new type). Each window shows the popup in its own transparent view over the tabs. While a shortcut is recorded, main passes the key presses to it instead of the menu.

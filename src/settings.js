@@ -172,6 +172,7 @@ const SECTIONS = [
     settings: [
       shortcut('newTab', 'New Tab', 'CmdOrCtrl+T'),
       shortcut('newWindow', 'New Window', 'CmdOrCtrl+N'),
+      shortcut('newPrivateWindow', 'New Private Window', 'Shift+CmdOrCtrl+N'),
       shortcut('reopenTab', 'Reopen Closed Tab', 'Shift+CmdOrCtrl+T'),
       shortcut('history', 'Show History', 'CmdOrCtrl+Y'),
       shortcut('downloads', 'Show Downloads', 'Alt+CmdOrCtrl+L'),

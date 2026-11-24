@@ -135,3 +135,23 @@ test('blocking still works when the engine cannot be saved', async () => {
   assert.equal(adblock.current().isBlockingEnabled(session), true)
   assert.equal(log.warned.length, 1)
 })
+
+test('a private session is blocked only while on, and let go when removed', async () => {
+  const { adblock } = setup({ saved: 'lists' })
+  const live = new Set()
+  const ses = {
+    registerPreloadScript: () => { live.add('preload'); return 'id' },
+    unregisterPreloadScript: () => live.delete('preload'),
+    webRequest: Object.fromEntries(['onBeforeRequest', 'onHeadersReceived'].map((name) => [name, (filter, listener) => (listener ? live.add(name) : live.delete(name))])),
+  }
+  adblock.add(ses)
+  assert.equal(live.size, 0)
+  await adblock.set(true)
+  assert.equal(live.size, 3)
+  await adblock.set(false)
+  assert.equal(live.size, 0)
+  await adblock.set(true)
+  adblock.remove(ses)
+  assert.equal(live.size, 0)
+  await adblock.set(false)
+})
