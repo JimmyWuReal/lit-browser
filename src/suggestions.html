@@ -25,6 +25,9 @@
       display: flex;
       flex-direction: column;
       padding: 5px;
+      /* Only when the window is too short for the whole list. */
+      overflow: hidden auto;
+      scrollbar-width: none;
       border-radius: 12px;
       background: #1c1c1c;
       box-shadow: inset 0 0 0 1px var(--line);
@@ -146,6 +149,7 @@
       for (const [i, row] of [...menu.children].entries()) {
         row.classList.toggle('is-selected', i === index)
         row.setAttribute('aria-selected', String(i === index))
+        if (i === index) row.scrollIntoView({ block: 'nearest' })
       }
     }
 

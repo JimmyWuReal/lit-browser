@@ -846,12 +846,13 @@
       address.setAttribute('aria-label', label)
     }
     // Shows the chip with `search` in the field after it.
-    function enterChip(site, alias, search = '') {
+    // `caret` is where in the search the caret goes.
+    function enterChip(site, alias, search = '', caret = search.length) {
       closeSuggestions()
       editing = true
       setChip({ site, alias })
       address.value = search
-      address.setSelectionRange(search.length, search.length)
+      address.setSelectionRange(caret, caret)
     }
     // The shortcut typed in full and followed by a space or a search, as
     // `!yt` and what follows, or null.
@@ -914,7 +915,9 @@
         const found = typedShortcut()
         const pasted = event.inputType === 'insertFromPaste' || event.inputType === 'insertFromDrop'
         if (found && (pasted || (/^\s$/.test(event.data ?? '') && address.selectionStart === found.end))) {
-          return enterChip(found.site, found.alias, found.search)
+          // The caret stays where it was in the search.
+          const caret = found.search.length - (address.value.length - address.selectionStart)
+          return enterChip(found.site, found.alias, found.search, Math.max(0, caret))
         }
       }
       // The site's search lists nothing under the field.
@@ -925,7 +928,7 @@
     address.addEventListener('compositionend', (event) => {
       if (chip) return
       const found = /\s/.test(event.data ?? '') && typedShortcut()
-      if (found) enterChip(found.site, found.alias, found.search)
+      if (found) enterChip(found.site, found.alias, found.search, Math.max(0, found.search.length - (address.value.length - address.selectionStart)))
       else suggest()
     })
     address.addEventListener('keydown', (event) => {
