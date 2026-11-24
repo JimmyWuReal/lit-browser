@@ -18,7 +18,9 @@ const KINDS = {
 const CHOICES = ['allow', 'block']
 
 // Chromium permission names -> kinds. A camera or microphone request is
-// `media`, with its devices in `mediaTypes`.
+// `media`, with its devices in `mediaTypes`; one without them is camera
+// pan, tilt and zoom, which Electron also calls `media`, so it counts as
+// the camera.
 const BY_PERMISSION = {
   geolocation: 'location',
   'geolocation-approximate': 'location',
@@ -32,7 +34,10 @@ const BY_MEDIA = { video: 'camera', audio: 'microphone' }
 // about, which keeps Electron's default (allowed): fullscreen, pointer
 // lock, protected video and the like.
 function kindsOf(permission, mediaTypes = []) {
-  if (permission === 'media') return [...new Set(mediaTypes.filter((type) => Object.hasOwn(BY_MEDIA, type)).map((type) => BY_MEDIA[type]))]
+  if (permission === 'media') {
+    const kinds = [...new Set(mediaTypes.filter((type) => Object.hasOwn(BY_MEDIA, type)).map((type) => BY_MEDIA[type]))]
+    return kinds.length ? kinds : ['camera']
+  }
   return Object.hasOwn(BY_PERMISSION, permission) ? [BY_PERMISSION[permission]] : null
 }
 
@@ -59,7 +64,7 @@ function describe(kinds) {
 }
 
 // 'allow' when the site was allowed every kind, 'block' when it was
-// blocked any of them, else 'ask'. No kinds needs no answer.
+// blocked any of them, else 'ask'.
 function status(sites, site, kinds) {
   const saved = sites.get(site) || {}
   if (kinds.some((kind) => saved[kind] === 'block')) return 'block'

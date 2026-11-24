@@ -8,8 +8,9 @@ const { kindsOf, originOf, label, describe, status, undecided, choose, list, loa
 test('kindsOf maps the requests Lit asks about, and leaves the rest alone', () => {
   assert.deepEqual(kindsOf('media', ['video', 'audio']), ['camera', 'microphone'])
   assert.deepEqual(kindsOf('media', ['audio']), ['microphone'])
-  assert.deepEqual(kindsOf('media', []), [])
-  assert.deepEqual(kindsOf('media'), [])
+  // Pan, tilt and zoom come without devices; they are the camera's.
+  assert.deepEqual(kindsOf('media', []), ['camera'])
+  assert.deepEqual(kindsOf('media'), ['camera'])
   assert.deepEqual(kindsOf('geolocation'), ['location'])
   assert.deepEqual(kindsOf('notifications'), ['notifications'])
   assert.deepEqual(kindsOf('clipboard-read'), ['clipboard'])
@@ -39,7 +40,6 @@ test('status: any block blocks, every kind allowed allows, else ask', () => {
   const site = 'https://example.com'
   let sites = new Map()
   assert.equal(status(sites, site, ['camera']), 'ask')
-  assert.equal(status(sites, site, []), 'allow')
   sites = choose(sites, site, ['camera'], 'allow')
   assert.equal(status(sites, site, ['camera']), 'allow')
   assert.equal(status(sites, site, ['camera', 'microphone']), 'ask')

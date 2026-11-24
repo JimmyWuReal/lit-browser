@@ -509,6 +509,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
         if (tab.id === activeId) findAgain(next.queued)
       }
     })
+    // A crashed page's requests went with it.
+    page.on('render-process-gone', () => dropPrompts(tab))
     // Every tab leaves through here: after closeTab's request, or when a
     // page closes itself (window.close() on a popup it opened).
     page.on('destroyed', () => removeTab(tab))
