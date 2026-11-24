@@ -8,9 +8,10 @@ const { kindsOf, checkKindsOf, originOf, label, describe, status, undecided, cho
 test('kindsOf maps the requests Lit asks about, and leaves the rest alone', () => {
   assert.deepEqual(kindsOf('media', ['video', 'audio']), ['camera', 'microphone'])
   assert.deepEqual(kindsOf('media', ['audio']), ['microphone'])
-  // Pan, tilt and zoom come without devices; they are the camera's.
-  assert.deepEqual(kindsOf('media', []), ['camera'])
-  assert.deepEqual(kindsOf('media'), ['camera'])
+  // Pan, tilt and zoom come without devices, and are refused (no kinds).
+  assert.deepEqual(kindsOf('media', []), [])
+  assert.deepEqual(kindsOf('media'), [])
+  assert.deepEqual(kindsOf('deprecated-sync-clipboard-read'), [])
   assert.deepEqual(kindsOf('geolocation'), ['location'])
   assert.deepEqual(kindsOf('notifications'), ['notifications'])
   assert.deepEqual(kindsOf('clipboard-read'), ['clipboard'])
@@ -19,16 +20,16 @@ test('kindsOf maps the requests Lit asks about, and leaves the rest alone', () =
   assert.equal(kindsOf('constructor'), null)
 })
 
-test('checkKindsOf names one device, and an untyped media check is the camera', () => {
+test('checkKindsOf names one device, and refuses an untyped media check', () => {
   assert.deepEqual(checkKindsOf('media', 'audio'), ['microphone'])
   assert.deepEqual(checkKindsOf('media', 'video'), ['camera'])
   assert.deepEqual(checkKindsOf('media', 'unknown'), ['camera'])
-  assert.deepEqual(checkKindsOf('media'), ['camera'])
+  assert.deepEqual(checkKindsOf('media'), [])
   assert.deepEqual(checkKindsOf('notifications'), ['notifications'])
   assert.equal(checkKindsOf('fullscreen'), null)
   // Allowing only the microphone never lets a camera check through.
   const sites = choose(new Map(), 'https://a.com', ['microphone'], 'allow')
-  assert.equal(status(sites, 'https://a.com', checkKindsOf('media')), 'ask')
+  assert.equal(status(sites, 'https://a.com', checkKindsOf('media', 'unknown')), 'ask')
 })
 
 test('a site is an origin; local files and pages without one have none', () => {

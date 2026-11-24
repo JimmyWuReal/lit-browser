@@ -18,36 +18,34 @@ const KINDS = {
 const CHOICES = ['allow', 'block']
 
 // Chromium permission names -> kinds. A camera or microphone request is
-// `media`, with its devices in `mediaTypes`; one without them is camera
-// pan, tilt and zoom, which Electron also calls `media`, so it counts as
-// the camera.
+// `media`, with its devices in `mediaTypes`.
 const BY_PERMISSION = {
   geolocation: 'location',
   'geolocation-approximate': 'location',
   notifications: 'notifications',
   'clipboard-read': 'clipboard',
+  // document.execCommand('paste') reads the clipboard with no prompt of
+  // its own; Electron refuses it by default, and so does Lit (no kinds).
+  'deprecated-sync-clipboard-read': null,
 }
-// Always refused, as Electron does by default: document.execCommand('paste')
-// reads the clipboard with no prompt of its own.
-const REFUSED = ['deprecated-sync-clipboard-read']
 const BY_MEDIA = { video: 'camera', audio: 'microphone' }
 
-// The kinds a request needs, or null for a permission Lit does not ask
-// about, which keeps Electron's default (allowed): fullscreen, pointer
-// lock, protected video and the like.
+// The kinds a request needs: [] for one that is always refused, or null
+// for a permission Lit does not ask about, which keeps Electron's default
+// (allowed): fullscreen, pointer lock, protected video and the like.
+// A `media` request without devices is camera pan, tilt and zoom, which
+// the prompt has no words for yet, so it is refused.
 function kindsOf(permission, mediaTypes = []) {
-  if (permission === 'media') {
-    const kinds = [...new Set(mediaTypes.filter((type) => Object.hasOwn(BY_MEDIA, type)).map((type) => BY_MEDIA[type]))]
-    return kinds.length ? kinds : ['camera']
-  }
-  return Object.hasOwn(BY_PERMISSION, permission) ? [BY_PERMISSION[permission]] : null
+  if (permission === 'media') return [...new Set(mediaTypes.filter((type) => Object.hasOwn(BY_MEDIA, type)).map((type) => BY_MEDIA[type]))]
+  if (!Object.hasOwn(BY_PERMISSION, permission)) return null
+  return BY_PERMISSION[permission] ? [BY_PERMISSION[permission]] : []
 }
 
 // The kinds a check (Notification.permission, navigator.permissions.query)
-// is about, or null as in kindsOf. A media check names one device; one
-// without (pan, tilt and zoom) is the camera's, as for requests.
+// is about, as in kindsOf. A media check names one device, or 'unknown'
+// for the camera's other streams; one without is pan, tilt and zoom.
 function checkKindsOf(permission, mediaType) {
-  if (permission === 'media') return [mediaType === 'audio' ? 'microphone' : 'camera']
+  if (permission === 'media') return mediaType === undefined ? [] : [mediaType === 'audio' ? 'microphone' : 'camera']
   return kindsOf(permission)
 }
 
@@ -143,4 +141,4 @@ function save(file, sites) {
   fs.renameSync(temporary, file)
 }
 
-module.exports = { KINDS, CHOICES, REFUSED, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, list, load, save }
+module.exports = { KINDS, CHOICES, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, list, load, save }

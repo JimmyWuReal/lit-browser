@@ -122,11 +122,10 @@ function siteFor(contents, asking, embedding) {
 // and its prompt stale. Anything not from a tab (Lit's own pages, a service
 // worker) is refused.
 function onPermissionRequest(contents, permission, callback, details) {
-  if (permissions.REFUSED.includes(permission)) return callback(false)
   const kinds = permissions.kindsOf(permission, details.mediaTypes)
   if (!kinds) return callback(true)
   const site = siteFor(contents, details.requestingUrl)
-  if (!site) return callback(false)
+  if (!site || !kinds.length) return callback(false)
   const answer = permissions.status(sitePermissions, site, kinds)
   if (answer !== 'ask' || !details.isMainFrame) return callback(answer === 'allow')
   for (const controls of openWindows) {
@@ -139,11 +138,10 @@ function onPermissionRequest(contents, permission, callback, details) {
 // labels) say yes only once a site was allowed. Electron has no "not asked
 // yet", so until then they read as denied; asking still prompts.
 function onPermissionCheck(contents, permission, requestingOrigin, details) {
-  if (permissions.REFUSED.includes(permission)) return false
   const kinds = permissions.checkKindsOf(permission, details.mediaType)
   if (!kinds) return true
   const site = siteFor(contents, requestingOrigin, details.embeddingOrigin)
-  return Boolean(site) && permissions.status(sitePermissions, site, kinds) === 'allow'
+  return Boolean(site) && kinds.length > 0 && permissions.status(sitePermissions, site, kinds) === 'allow'
 }
 
 // Pages visited (src/history.js), newest first. Loaded at launch, and saved
@@ -689,8 +687,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // answer to a row that has since changed is ignored.
   function answerPrompt(tabId, promptId, kinds, choice) {
     const tab = find(tabId)
-    const prompt = tab?.prompts.find((each) => each.id === promptId)
-    if (!prompt || !Array.isArray(kinds) || kinds.join() !== asking(prompt).join()) return
+    // Only the prompt on show: the active tab's first.
+    const prompt = tabId === activeId ? tab?.prompts[0] : null
+    if (prompt?.id !== promptId || !Array.isArray(kinds) || kinds.join() !== asking(prompt).join()) return
     if (choice) {
       const kinds = asking(prompt)
       if (choosePermission(prompt.site, kinds, choice) || win.isDestroyed()) return
