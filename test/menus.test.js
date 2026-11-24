@@ -107,11 +107,30 @@ test("Lit's own fields get only editing items, and nothing elsewhere", () => {
 
 test('tab menu enables what fits the tab', () => {
   const only = tabMenu({ index: 0, count: 1, started: false })
-  assert.deepEqual(labels(only), ['Reload', 'Duplicate', '—', 'Close Tab', 'Close Other Tabs', 'Close Tabs to the Right'])
-  assert.deepEqual(only.filter((item) => item.enabled === false).map((item) => item.label), ['Reload', 'Close Other Tabs', 'Close Tabs to the Right'])
+  assert.deepEqual(labels(only), ['Reload', 'Duplicate', 'Pin Tab', '—', 'Close Tab', 'Close Other Tabs', 'Close Tabs to the Right'])
+  assert.deepEqual(only.filter((item) => item.enabled === false).map((item) => item.label), ['Reload', 'Pin Tab', 'Close Other Tabs', 'Close Tabs to the Right'])
   const middle = tabMenu({ index: 1, count: 3, started: true })
   assert.ok(middle.every((item) => item.enabled !== false))
   assert.equal(tabMenu({ index: 2, count: 3, started: true }).at(-1).enabled, false)
-  const keys = { reload: 'R', duplicateTab: 'D', closeTab: 'W', closeOtherTabs: 'O', closeTabsToRight: 'T' }
-  assert.deepEqual(tabMenu({ index: 0, count: 1, started: true, keys }).map((item) => item.accelerator), ['R', 'D', undefined, 'W', 'O', 'T'])
+  const keys = { reload: 'R', duplicateTab: 'D', pinTab: 'P', closeTab: 'W', closeOtherTabs: 'O', closeTabsToRight: 'T' }
+  assert.deepEqual(tabMenu({ index: 0, count: 1, started: true, keys }).map((item) => item.accelerator), ['R', 'D', 'P', undefined, 'W', 'O', 'T'])
+})
+
+test('a pinned tab unpins, and closing others leaves pinned tabs', () => {
+  const enabled = (items, label) => items.find((item) => item.label === label).enabled
+  // Two pinned tabs and one other.
+  const pinned = tabMenu({ index: 1, count: 3, started: true, pinnedCount: 2 })
+  assert.equal(pinned[2].label, 'Unpin Tab')
+  assert.equal(enabled(pinned, 'Close Other Tabs'), true)
+  assert.equal(enabled(pinned, 'Close Tabs to the Right'), true)
+  const other = tabMenu({ index: 2, count: 3, started: true, pinnedCount: 2 })
+  assert.equal(other[2].label, 'Pin Tab')
+  assert.equal(enabled(other, 'Close Other Tabs'), false)
+  assert.equal(enabled(other, 'Close Tabs to the Right'), false)
+  // Only pinned tabs: there is nothing else to close.
+  const allPinned = tabMenu({ index: 0, count: 2, started: true, pinnedCount: 2 })
+  assert.equal(enabled(allPinned, 'Close Other Tabs'), false)
+  assert.equal(enabled(allPinned, 'Close Tabs to the Right'), false)
+  // A tab without a real page (a popup on about:blank) can't be pinned.
+  assert.equal(enabled(tabMenu({ index: 0, count: 1, started: true, pinnable: false }), 'Pin Tab'), false)
 })

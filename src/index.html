@@ -187,7 +187,16 @@
       .tab.is-active .tab-icon { display: none; }
       .tab.is-active .tab-close { left: 50%; right: auto; transform: translateX(-50%); }
       .tab.is-active .tab-close:active { transform: translateX(-50%) scale(.94); }
+      /* A pinned tab always shows its icon, even when active. */
+      .tab.is-pinned.is-active .tab-icon { display: grid; }
     }
+
+    /* Pinned tabs: just their icon, at the left of the strip, with no close
+       button (⌘W and middle-click still close them). A little space sets
+       them apart from the other tabs. */
+    .tab.is-pinned { width: 36px; min-width: 36px; flex: 0 0 auto; }
+    .tab.is-pinned .tab-close { display: none; }
+    .tab.is-pinned + .tab:not(.is-pinned) { margin-left: 6px; }
 
     /* The address row. With the strip, it matches BAR_HEIGHT in main.js. */
     .bar {
@@ -579,6 +588,8 @@
 
     function render(next) {
       const switched = next.activeId !== state.activeId
+      // Pinning or unpinning the active tab moves it along the strip.
+      const moved = Boolean(activeTab()?.pinned) !== Boolean(next.tabs.find((tab) => tab.id === next.activeId)?.pinned)
       state = next
 
       const ids = new Set(state.tabs.map((tab) => tab.id))
@@ -592,18 +603,19 @@
         const isActive = tab.id === state.activeId
         const label = tabLabel(tab)
         elements.root.classList.toggle('is-active', isActive)
+        elements.root.classList.toggle('is-pinned', Boolean(tab.pinned))
         elements.select.setAttribute('aria-selected', String(isActive))
         elements.select.tabIndex = isActive ? 0 : -1
         elements.close.tabIndex = isActive ? 0 : -1
         elements.title.textContent = label
         elements.select.title = label
         // Narrow tabs hide their title text, so name the tab directly.
-        elements.select.setAttribute('aria-label', label)
+        elements.select.setAttribute('aria-label', tab.pinned ? `${label}, pinned` : label)
         drawIcon(elements, tab)
       })
       placeThumb()
       if (refocusTabs) { refocusTabs = false; tabElements.get(state.activeId)?.select.focus() }
-      if (switched) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      if (switched || moved) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 
       const tab = activeTab()
       document.body.classList.toggle('home', !tab?.started)
@@ -779,7 +791,7 @@
     }
     zoomButton.addEventListener('click', () => window.lit.resetZoom())
 
-    // Pages from history matching what is typed, listed under the field
+    // Pinned tabs and pages from history matching what is typed, listed under the field
     // by main (in a view over the page, src/suggestions.html). Arrow keys
     // move through them and put the page's address in the field, so Enter
     // opens it; going back past the first puts back what was typed. The

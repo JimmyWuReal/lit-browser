@@ -119,20 +119,25 @@ function pageMenu(params, context = {}) {
   return joinGroups(groups)
 }
 
-// The menu for a right-click on a tab, the `index`th of `count`.
-// `started` is false for a tab still showing the search box. `keys`
-// ({ reload, duplicateTab, closeTab, closeOtherTabs, closeTabsToRight })
-// are the current accelerators, shown next to their items.
-function tabMenu({ index, count, started, keys = {} }) {
+// The menu for a right-click on a tab, the `index`th of `count`, the
+// first `pinnedCount` of which are pinned. `started` is false for a tab
+// still showing the search box; `pinnable` says whether the tab is on a
+// page it could be pinned with. Closing other tabs,
+// or those to the right, leaves pinned tabs open. `keys` ({ reload,
+// duplicateTab, pinTab, closeTab, closeOtherTabs, closeTabsToRight }) are
+// the current accelerators, shown next to their items.
+function tabMenu({ index, count, started, pinnable = started, pinnedCount = 0, keys = {} }) {
+  const pinned = index < pinnedCount
   return joinGroups([
     [
       { label: 'Reload', command: 'reload', enabled: Boolean(started), accelerator: keys.reload },
       { label: 'Duplicate', command: 'duplicate', accelerator: keys.duplicateTab },
+      { label: pinned ? 'Unpin Tab' : 'Pin Tab', command: 'pin', enabled: pinned || Boolean(pinnable), accelerator: keys.pinTab },
     ],
     [
       { label: 'Close Tab', command: 'close', accelerator: keys.closeTab },
-      { label: 'Close Other Tabs', command: 'closeOthers', enabled: count > 1, accelerator: keys.closeOtherTabs },
-      { label: 'Close Tabs to the Right', command: 'closeToRight', enabled: index < count - 1, accelerator: keys.closeTabsToRight },
+      { label: 'Close Other Tabs', command: 'closeOthers', enabled: count - pinnedCount - (pinned ? 0 : 1) > 0, accelerator: keys.closeOtherTabs },
+      { label: 'Close Tabs to the Right', command: 'closeToRight', enabled: count > Math.max(index + 1, pinnedCount), accelerator: keys.closeTabsToRight },
     ],
   ])
 }
