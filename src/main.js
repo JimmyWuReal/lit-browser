@@ -421,7 +421,18 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     page.on('did-stop-loading', () => { tab.loading = false; settle(tab); sync() })
     // The address being opened, before it commits: a tab duplicated or
     // closed before its first page commits gets it.
-    page.on('did-start-navigation', ({ url, isMainFrame }) => { if (isMainFrame) tab.pendingUrl = url })
+    // Whether the page started it (a link, a script) or Lit did (the
+    // address bar, Back, a reload), for `committed`.
+    page.on('did-start-navigation', ({ url, isMainFrame, initiator }) => {
+      if (!isMainFrame) return
+      tab.pendingUrl = url
+      tab.startedByPage = Boolean(initiator)
+    })
+    // A click, key press or touch on the page since its last page committed,
+    // for `committed`: a page moving on with none is redirecting.
+    page.on('input-event', (_event, input) => {
+      if (['mouseDown', 'rawKeyDown', 'keyDown', 'touchStart'].includes(input.type)) tab.touched = true
+    })
     // Each new page opens at its site's zoom. A new page has no title yet; a restored one keeps its entry's title,
     // as Chromium does not announce a title it already had.
     page.on('did-navigate', (_event, url) => {
@@ -442,7 +453,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // visit takes the tab's latest title when it is.
     page.on('page-title-updated', (_event, title) => {
       tab.title = title
-      if (tab.visit && !tab.unrecorded) setVisited(historyStore.retitle(visited, tab.visit.url, title))
+      if (tab.visit && !tab.toRecord) setVisited(historyStore.retitle(visited, tab.visit.url, title))
       sync()
     })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
@@ -584,38 +595,50 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   //   has loaded (a web app's pushState) is recorded right away.
   // - A page that replaces its tab's current entry (location.replace,
   //   history.replaceState) takes back the visit that entry recorded, so
-  //   the address it left is not kept either.
+  //   the address it left is not kept either. So does a page that loads
+  //   another by itself, with no click or key press since it committed (a
+  //   redirect after loading), like Chromium's history manipulation
+  //   intervention. Electron names no initiator for a pushState, so a web
+  //   app's new address always counts.
   // - A jump within the page (#section) is not a new visit.
   // - A restored page (a reopened or restored tab, a duplicate) is not
   //   one either.
-  // tab.visit is the visit this tab's page recorded; tab.unrecorded says
-  // its current page is still waiting to be.
+  // tab.visit is the visit this tab's page recorded; tab.toRecord is the
+  // address still waiting to be.
   function committed(tab, url, sameDocument) {
     const list = tab.page.navigationHistory
     const position = { length: list.length(), index: list.getActiveIndex() }
-    const replaced = tab.position?.length === position.length && tab.position.index === position.index
+    const before = tab.position
     const left = tab.url
+    const unprompted = tab.startedByPage && !tab.touched
     tab.position = position
     tab.url = url
+    tab.startedByPage = false
     if (tab.restoring) {
       tab.restoring = false
-      tab.unrecorded = false
+      tab.touched = false
+      tab.toRecord = null
       tab.visit = null
       return
     }
     if (sameDocument && withoutHash(url) === withoutHash(left)) return
-    if (replaced && url !== left && tab.visit?.url === left) {
+    tab.touched = false
+    const replaced = before?.length === position.length && before.index === position.index
+    // A new entry after the current one; going Forward looks the same, but
+    // the page did not start that (unless its script did, as history.forward()).
+    const added = before && position.index === before.index + 1 && position.length === position.index + 1
+    if ((replaced || (added && unprompted)) && url !== left && tab.visit && withoutHash(tab.visit.url) === withoutHash(left)) {
       setVisited(historyStore.unvisit(visited, tab.visit))
       tab.visit = null
     }
-    tab.unrecorded = true
+    tab.toRecord = url
     if (!tab.page.isLoading()) settle(tab)
   }
 
   function settle(tab) {
-    if (!tab.unrecorded) return
-    tab.unrecorded = false
-    tab.visit = recordVisit(tab.url, tab.title)
+    if (!tab.toRecord) return
+    tab.visit = recordVisit(tab.toRecord, tab.title)
+    tab.toRecord = null
   }
 
   // What Reopen Closed Tab needs to bring this window back.

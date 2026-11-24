@@ -64,3 +64,11 @@ test('clean keeps only well-formed windows and tabs', () => {
   assert.equal(win.maximized, false)
   assert.equal(win.fullScreen, false)
 })
+
+test('the current page stays current when entries are dropped', () => {
+  const a = page('https://a.com/'), b = page('https://b.com/')
+  // The same address twice: the later one is still the current one.
+  assert.equal(clean({ windows: [{ tabs: [{ entries: [a, b, a], index: 2 }] }] })[0].tabs[0].index, 2)
+  // A broken current entry falls back to the page before it.
+  assert.deepEqual(clean({ windows: [{ tabs: [{ entries: [a, { url: 1 }, b], index: 1 }] }] })[0].tabs[0], { entries: [a, b], index: 0 })
+})

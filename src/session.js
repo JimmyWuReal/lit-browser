@@ -23,14 +23,19 @@ function cleanEntry(entry) {
 }
 
 // A back/forward list, or null (a blank tab) when nothing usable is left.
+// Dropping a broken entry moves the ones after it; the current page stays
+// current, or the closest page before it does.
 function cleanHistory(history) {
   if (!history || !Array.isArray(history.entries)) return null
-  const current = history.entries[history.index]
-  const entries = history.entries.map(cleanEntry).filter(Boolean)
-  if (!entries.length) return null
-  // Dropping a broken entry moves the ones after it; the current page stays current.
-  const index = entries.findIndex((entry) => entry.url === current?.url)
-  return { entries, index: index === -1 ? entries.length - 1 : index }
+  const entries = []
+  let index = 0
+  history.entries.forEach((entry, i) => {
+    const kept = cleanEntry(entry)
+    if (!kept) return
+    if (i <= history.index) index = entries.length
+    entries.push(kept)
+  })
+  return entries.length ? { entries, index } : null
 }
 
 const cleanBounds = (bounds) => (bounds && ['x', 'y', 'width', 'height'].every((key) => Number.isFinite(bounds[key])) && bounds.width > 0 && bounds.height > 0
