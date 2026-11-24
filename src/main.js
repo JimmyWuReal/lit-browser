@@ -606,7 +606,9 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   // from a page sends it.
   function addTab({ url, webContents, history, referrer, background = false, index = tabs.length } = {}) {
     // A page a tab opened is already in its session.
-    const view = new WebContentsView(webContents ? { webContents } : { webPreferences: { session: ses } })
+    // Private pages get no DevTools, which saves its state (breakpoints and
+    // the like) to the profile on disk, whatever the session.
+    const view = new WebContentsView(webContents ? { webContents } : { webPreferences: { session: ses, devTools: !isPrivate } })
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
@@ -721,6 +723,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     // keeps the link's tab.
     page.setWindowOpenHandler(({ disposition }) => ({
       action: 'allow',
+      overrideBrowserWindowOptions: { webPreferences: { devTools: !isPrivate } },
       outlivesOpener: true,
       createWindow: (options) => addTab({
         webContents: options.webContents,
@@ -1078,7 +1081,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
       askWhereToSave: askWhereToSave(ses),
       keys: { reload: settings['shortcuts.reload'], back: settings['shortcuts.back'], forward: settings['shortcuts.forward'], print: settings['shortcuts.print'] },
       inSubframe: Boolean(params.frame && params.frame !== contents.mainFrame),
-      learnWords: !isPrivate,
+      isPrivate,
     })
     popup(items, (command, arg) => {
       if (contents.isDestroyed()) return
@@ -1587,7 +1590,8 @@ function buildMenu() {
           ? [hidden('Zoom In', 'CmdOrCtrl+Plus', inFocused((c) => c.zoomBy(1)))]
           : []),
         { type: 'separator' },
-        { label: 'Developer Tools', accelerator: key('devTools'), click: pageAction((page) => page.toggleDevTools()) },
+        // Private windows have none (see addTab).
+        { label: 'Developer Tools', accelerator: key('devTools'), click: inFocused((c) => { const page = c.page(); if (page && !c.isPrivate) page.toggleDevTools() }) },
         { role: 'togglefullscreen' },
       ],
     },

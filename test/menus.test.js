@@ -116,8 +116,11 @@ test('tab menu enables what fits the tab', () => {
   assert.deepEqual(tabMenu({ index: 0, count: 1, started: true, keys }).map((item) => item.accelerator), ['R', 'D', undefined, 'W', 'O', 'T'])
 })
 
-test('a private window offers no Add to Dictionary', () => {
+test('a private window offers no Add to Dictionary or Inspect Element', () => {
   const params = { isEditable: true, misspelledWord: 'teh', dictionarySuggestions: ['the'] }
   assert.ok(commands(pageMenu(params)).includes('addToDictionary'))
-  assert.deepEqual(commands(pageMenu(params, { learnWords: false })).slice(0, 2), ['replaceMisspelling', 'undo'])
+  const items = commands(pageMenu(params, { isPrivate: true }))
+  assert.ok(!items.includes('addToDictionary') && !items.includes('inspect'))
+  assert.equal(items[0], 'replaceMisspelling')
+  assert.deepEqual(labels(pageMenu({}, { isPrivate: true })), ['Back', 'Forward', 'Reload', '—', 'Print…'])
 })
