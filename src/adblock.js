@@ -52,35 +52,43 @@ function createAdblock(session, file, deps = {}) {
     }
   }
 
-  async function load() {
-    const cached = await saved()
-    if (cached) use(cached.engine)
-    if (cached?.fresh) return
-    const built = await Blocker.fromPrebuiltAdsAndTracking(fetch)
-    use(built)
-    try {
-      await write(file, built.serialize())
-    } catch (error) {
-      warn('Couldn’t save the ad blocking lists:', error)
-    }
+  // Starts loading: `restored` settles once a saved engine is in use (or
+  // there is none), and `loading` once fresh lists are in too.
+  let restored = null
+  function load() {
+    restored = saved().then((cached) => {
+      if (cached) use(cached.engine)
+      return cached
+    })
+    loading = restored.then(async (cached) => {
+      if (cached?.fresh) return
+      const built = await Blocker.fromPrebuiltAdsAndTracking(fetch)
+      use(built)
+      try {
+        await write(file, built.serialize())
+      } catch (error) {
+        warn('Couldn’t save the ad blocking lists:', error)
+      }
+    }).catch((error) => {
+      warn('Couldn’t load the ad blocking lists:', error)
+      loading = null
+    })
   }
 
   return {
     // The engine in use, or null before one loads.
     current: () => engine,
+    // The load in progress or done (null while never on), for tests.
+    loaded: () => loading,
     // Turns blocking on or off. The first time on loads the engine; a load
     // that fails (offline with nothing saved) is tried again next time on.
-    set(value) {
+    // Resolves once the saved engine, if any, is blocking, so pages opened
+    // after it are covered; downloading fresh lists goes on in the background.
+    async set(value) {
       on = value
       apply()
-      if (on && !loading) {
-        loading = load().catch((error) => {
-          warn('Couldn’t load the ad blocking lists:', error)
-          loading = null
-        })
-      }
-      // The load in progress or done, for tests; null while never on.
-      return loading
+      if (on && !loading) load()
+      if (on) await restored
     },
   }
 }

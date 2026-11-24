@@ -129,7 +129,7 @@ const SECTIONS = [
       {
         key: 'blockAds',
         label: 'Block ads and trackers',
-        description: 'Stops requests to ad and tracking servers and hides the space ads leave, using Ghostery’s lists. The lists download the first time, then refresh weekly.',
+        description: 'Stops requests to ad and tracking servers and hides the space ads leave, using Ghostery’s lists, which download the first time and refresh weekly. Reload open pages to show or hide their ads.',
         type: 'toggle',
         default: true,
       },

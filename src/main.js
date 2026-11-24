@@ -1592,7 +1592,7 @@ ipcMain.on('downloads-clear', fromDownloads((c) => {
 }))
 ipcMain.on('downloads-close', fromDownloads((c) => c.closePopup()))
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   settingsFile = path.join(app.getPath('userData'), 'settings.json')
   settings = settingsStore.load(settingsFile)
   zoomFile = path.join(app.getPath('userData'), 'zoom.json')
@@ -1605,7 +1605,9 @@ app.whenReady().then(() => {
   visited = historyStore.load(historyFile)
   applyDoNotTrack()
   adblock = createAdblock(session.defaultSession, path.join(app.getPath('userData'), 'adblock.bin'))
-  adblock.set(settings.blockAds)
+  // A saved engine is in use before any tab loads; first-time lists
+  // download in the background.
+  await adblock.set(settings.blockAds)
   session.defaultSession.on('will-download', (_event, item) => trackDownload(item))
   // The packaged app gets its icon from the bundle; in development, show it in the Dock too.
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '..', 'build', 'icon.png'))

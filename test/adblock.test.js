@@ -45,13 +45,15 @@ function setup({ saved, savedAge = 0, fetchFails = false, writeFails = false, fe
 
 test('nothing loads or downloads while off', async () => {
   const { adblock, log } = setup()
-  assert.equal(adblock.set(false), null)
+  await adblock.set(false)
+  assert.equal(adblock.loaded(), null)
   assert.equal(log.fetched, 0)
 })
 
 test('with nothing saved, the lists download, block, and are saved', async () => {
   const { session, adblock, log } = setup()
   await adblock.set(true)
+  await adblock.loaded()
   assert.equal(log.fetched, 1)
   assert.deepEqual(log.written, ['fresh'])
   assert.equal(adblock.current().name, 'fresh')
@@ -61,6 +63,7 @@ test('with nothing saved, the lists download, block, and are saved', async () =>
 test('a fresh saved engine is used without downloading', async () => {
   const { session, adblock, log } = setup({ saved: 'cached', savedAge: MAX_AGE - 1 })
   await adblock.set(true)
+  await adblock.loaded()
   assert.equal(log.fetched, 0)
   assert.equal(adblock.current().name, 'cached')
   assert.equal(adblock.current().isBlockingEnabled(session), true)
@@ -70,8 +73,8 @@ test('a stale saved engine blocks until fresh lists replace it', async () => {
   let release
   const fetchGate = new Promise((resolve) => { release = resolve })
   const { session, adblock, log } = setup({ saved: 'cached', savedAge: MAX_AGE + 1, fetchGate })
-  const loading = adblock.set(true)
-  while (!log.fetched) await new Promise(setImmediate)
+  await adblock.set(true)
+  const loading = adblock.loaded()
   const cached = adblock.current()
   assert.equal(cached.name, 'cached')
   assert.equal(cached.isBlockingEnabled(session), true)
@@ -86,6 +89,7 @@ test('a stale saved engine blocks until fresh lists replace it', async () => {
 test('an engine saved by another version is rebuilt', async () => {
   const { adblock, log } = setup({ saved: 'old format' })
   await adblock.set(true)
+  await adblock.loaded()
   assert.equal(log.fetched, 1)
   assert.equal(adblock.current().name, 'fresh')
 })
@@ -93,17 +97,20 @@ test('an engine saved by another version is rebuilt', async () => {
 test('turning off and on again switches the same engine', async () => {
   const { session, adblock, log } = setup()
   await adblock.set(true)
+  await adblock.loaded()
   const engine = adblock.current()
   adblock.set(false)
   assert.equal(engine.isBlockingEnabled(session), false)
   await adblock.set(true)
+  await adblock.loaded()
   assert.equal(engine.isBlockingEnabled(session), true)
   assert.equal(log.fetched, 1)
 })
 
 test('turned off while loading, the engine arrives without blocking', async () => {
   const { session, adblock } = setup()
-  const loading = adblock.set(true)
+  adblock.set(true)
+  const loading = adblock.loaded()
   adblock.set(false)
   await loading
   assert.equal(adblock.current().isBlockingEnabled(session), false)
@@ -112,16 +119,19 @@ test('turned off while loading, the engine arrives without blocking', async () =
 test('a failed download is tried again the next time it is turned on', async () => {
   const state = setup({ fetchFails: true })
   await state.adblock.set(true)
+  await state.adblock.loaded()
   assert.equal(state.adblock.current(), null)
   assert.equal(state.log.warned.length, 1)
   state.adblock.set(false)
   await state.adblock.set(true)
+  await state.adblock.loaded()
   assert.equal(state.log.fetched, 2)
 })
 
 test('blocking still works when the engine cannot be saved', async () => {
   const { session, adblock, log } = setup({ writeFails: true })
   await adblock.set(true)
+  await adblock.loaded()
   assert.equal(adblock.current().isBlockingEnabled(session), true)
   assert.equal(log.warned.length, 1)
 })
