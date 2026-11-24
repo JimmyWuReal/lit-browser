@@ -127,6 +127,13 @@ const SECTIONS = [
         default: true,
       },
       {
+        key: 'blockAds',
+        label: 'Block ads and trackers',
+        description: 'Stops requests to ad and tracking servers and hides the space ads leave, using Ghostery’s lists, which download the first time and refresh weekly. Reload open pages to show or hide their ads.',
+        type: 'toggle',
+        default: true,
+      },
+      {
         key: 'doNotTrack',
         label: 'Ask sites not to track me',
         description: 'Sends Do Not Track and Global Privacy Control with every request.',
