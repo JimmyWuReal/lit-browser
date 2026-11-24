@@ -426,7 +426,8 @@ function trackDownload(item, ses) {
     read(state === 'interrupted' ? 'failed' : state)
     // Done with Electron's item; the list keeps what it last said.
     download.item = null
-    if (state === 'completed') app.dock?.downloadFinished(download.path)
+    // The Dock's Downloads stack is shared, so a private one doesn't bounce it.
+    if (state === 'completed' && ses === session.defaultSession) app.dock?.downloadFinished(download.path)
     downloadsChanged(true)
   })
   unfinished.add(download)
@@ -1623,7 +1624,14 @@ const inFocused = (action) => (_item, win) => {
 // Settings and History open in the focused window, or a new one, and the
 // same command closes them again.
 const togglePopup = (name) => (_item, win) => {
-  const c = controlsOf(win) || createWindow()
+  let c = controlsOf(win) || createWindow()
+  // A private window has no history: the normal window used last shows it.
+  if (name === 'history' && c.isPrivate) {
+    c = [...openWindows].filter((each) => !each.isPrivate).at(-1) || createWindow()
+    if (c.win.isMinimized()) c.win.restore()
+    c.win.focus()
+    return c.openPopup(name)
+  }
   if (c.popupOpen() === name) c.closePopup()
   else c.openPopup(name)
 }

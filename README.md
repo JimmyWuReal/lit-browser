@@ -79,6 +79,7 @@ The search goes straight to the site; your search engine never sees it. To add a
 Each private window, its toolbar and popups included, browses in a session of its own, kept in memory and never written to disk, so its cookies and site storage are seen by no other window, private or not. It keeps no HTTP cache, not even in memory. Lit keeps nothing from it:
 
 - No history: its pages are not recorded, and its closed tabs, and the window itself, can't be reopened. Reopen Closed Tab from a private window brings a normal tab back into a normal window.
+- Show All History opens in a normal window.
 - It is left out of the windows reopened at the next launch.
 - Sites start at the default zoom, not the one saved for them, and zooming one there lasts only until the window closes.
 - Site permissions: a site you blocked stays blocked (even if you block it while the window is open), and one you allowed asks again. Answers there last only until the window closes.
