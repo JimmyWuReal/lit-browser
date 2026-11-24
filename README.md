@@ -22,6 +22,7 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | ⌘= or ⌘+, ⌘-, ⌘0 | Zoom in, zoom out, reset zoom |
 | ⌘F | Find in page |
 | ⌘G / ⇧⌘G | Next / previous match |
+| ⌘P | Print the page |
 
 Zoom is per site, as in Chrome: zooming a page zooms every tab on that site, and Lit remembers it for next time (in `zoom.json` in the app's data folder). A page that is not at the default zoom, or whose site has a zoom of its own, shows its zoom at the right of the address bar; click it, or press ⌘0, to go back to the default zoom set in Settings.
 
@@ -53,7 +54,7 @@ Once a file starts downloading, a button appears at the right of the tab strip, 
 
 ## Right-click menus
 
-Right-clicking a page shows what fits the spot: a link can be opened in a new tab, saved or copied; an image, video or audio can be saved or have its address copied, and opened in a new tab when it has a web address (an image can also be copied); selected text can be copied or searched with your search engine; a text field gets spelling suggestions and Undo, Cut, Copy, Paste and Select All. Anywhere else the menu has Back, Forward and Reload. Every page menu ends with Inspect Element.
+Right-clicking a page shows what fits the spot: a link can be opened in a new tab, saved or copied; an image, video or audio can be saved or have its address copied, and opened in a new tab when it has a web address (an image can also be copied); selected text can be copied or searched with your search engine; a text field gets spelling suggestions and Undo, Cut, Copy, Paste and Select All. Anywhere else the menu has Back, Forward, Reload and Print. Every page menu ends with Inspect Element.
 
 New tabs from the menu follow the Tabs settings like ⌘-clicked links: they open next to their page, in the background unless Lit is set to switch to them. Save follows the Downloads setting. Only web (http and https) links can be opened or saved from the menu.
 

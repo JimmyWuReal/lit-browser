@@ -150,6 +150,7 @@ const SECTIONS = [
       shortcut('duplicateTab', 'Duplicate Tab', ''),
       shortcut('closeOtherTabs', 'Close Other Tabs', 'Alt+CmdOrCtrl+W'),
       shortcut('closeTabsToRight', 'Close Tabs to the Right', ''),
+      shortcut('print', 'Print', 'CmdOrCtrl+P'),
       shortcut('reload', 'Reload', 'CmdOrCtrl+R'),
       shortcut('back', 'Back', 'CmdOrCtrl+['),
       shortcut('forward', 'Forward', 'CmdOrCtrl+]'),
