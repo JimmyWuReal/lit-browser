@@ -133,6 +133,10 @@ function recordVisit(url, title) {
   return { url, time, previous }
 }
 
+// How soon after loading a page that loads another by itself, untouched,
+// counts as redirecting rather than as a page someone read.
+const REDIRECT_AFTER = 5000
+
 // A page's address without its #fragment, to tell a jump within a page
 // from a new page.
 const withoutHash = (url) => url.split('#')[0]
@@ -430,10 +434,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       tab.pendingUrl = url
       tab.startedByPage = Boolean(initiator)
     })
-    // A click, key press or touch on the page since its last page committed,
-    // for `committed`: a page moving on with none is redirecting.
+    // A click, key press, touch or scroll on the page since its last page
+    // committed, for `committed`: a page moving on with none is redirecting.
     page.on('input-event', (_event, input) => {
-      if (['mouseDown', 'rawKeyDown', 'keyDown', 'touchStart'].includes(input.type)) tab.touched = true
+      if (['mouseDown', 'rawKeyDown', 'keyDown', 'touchStart', 'mouseWheel', 'gestureScrollBegin'].includes(input.type)) tab.touched = true
     })
     // Each new page opens at its site's zoom. A new page has no title yet; a restored one keeps its entry's title,
     // as Chromium does not announce a title it already had.
@@ -455,7 +459,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // visit takes the tab's latest title when it is.
     page.on('page-title-updated', (_event, title) => {
       tab.title = title
-      if (tab.visit && !tab.toRecord) setVisited(historyStore.retitle(visited, tab.visit.url, title))
+      if (tab.toRecord) tab.toRecord.title = title
+      else if (tab.visit) setVisited(historyStore.retitle(visited, tab.visit.url, title))
       sync()
     })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
@@ -585,8 +590,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (!tab.started) return null
     const history = liveHistory(tab) || tab.history || pendingHistory(tab)
     if (!history || settings.saveHistory) return history
+    // Without its page state, which holds form values and scroll position.
     const current = history.entries[history.index]
-    return current ? { entries: [current], index: 0 } : null
+    return current ? { entries: [{ url: current.url, title: current.title }], index: 0 } : null
   }
 
   // History follows the back/forward list, as in other browsers, and
@@ -598,15 +604,16 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // - A page that replaces its tab's current entry (location.replace,
   //   history.replaceState) takes back the visit that entry recorded, so
   //   the address it left is not kept either. So does a page that loads
-  //   another by itself, with no click or key press since it committed (a
-  //   redirect after loading), like Chromium's history manipulation
-  //   intervention. Electron names no initiator for a pushState, so a web
-  //   app's new address always counts.
+  //   another by itself within REDIRECT_AFTER of loading, with no click,
+  //   key press or scroll on it (a redirect after loading). Electron names
+  //   no initiator for a pushState, so a web app's new address always counts.
+  // - A page left before it finished loading is recorded when you left it
+  //   (a link clicked, an address typed, Back), as you saw it.
   // - A jump within the page (#section) is not a new visit.
   // - A restored page (a reopened or restored tab, a duplicate) is not
   //   one either.
   // tab.visit is the visit this tab's page recorded; tab.toRecord is the
-  // address still waiting to be.
+  // page ({ url, title }) still waiting to be.
   function committed(tab, url, sameDocument) {
     const list = tab.page.navigationHistory
     const position = { length: list.length(), index: list.getActiveIndex() }
@@ -629,17 +636,20 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // A new entry after the current one, which had none after it, so this
     // cannot be going Forward (history.forward() from the page's script).
     const added = before && before.length === before.index + 1 && position.index === before.index + 1 && position.length === position.index + 1
-    if ((replaced || (added && unprompted)) && url !== left && tab.visit && withoutHash(tab.visit.url) === withoutHash(left)) {
+    const redirected = added && unprompted && Date.now() - (tab.visit?.time ?? 0) < REDIRECT_AFTER
+    if ((replaced || redirected) && url !== left && tab.visit && withoutHash(tab.visit.url) === withoutHash(left)) {
       setVisited(historyStore.unvisit(visited, tab.visit))
       tab.visit = null
     }
-    tab.toRecord = url
+    // A page left while loading, other than by its own doing, still counts.
+    if (!replaced && !unprompted) settle(tab)
+    tab.toRecord = { url, title: tab.title }
     if (!tab.page.isLoading()) settle(tab)
   }
 
   function settle(tab) {
     if (!tab.toRecord) return
-    tab.visit = recordVisit(tab.toRecord, tab.title)
+    tab.visit = recordVisit(tab.toRecord.url, tab.toRecord.title)
     tab.toRecord = null
   }
 
@@ -1090,7 +1100,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     forgetVisits(url) {
       for (const tab of tabs) {
         if (!url || tab.visit?.url === url) tab.visit = null
-        if (!url || tab.toRecord === url) tab.toRecord = null
+        if (!url || tab.toRecord?.url === url) tab.toRecord = null
       }
     },
     // Save history was turned off: drop what each tab kept to reopen.

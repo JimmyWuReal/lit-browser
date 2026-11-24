@@ -56,12 +56,18 @@ test('lowering the limit keeps only the newest closed entries', () => {
   assert.deepEqual(closed, [3, 4])
 })
 
-test('a closed window counts each of its tabs, and the newest always stays', () => {
+test('a closed window counts each of its tabs', () => {
   const tab = { history: null }
-  const closed = [tab, tab, { tabs: [null, null, null] }, tab]
+  const closed = [tab, tab, { tabs: [null, null, null], activeIndex: 0 }, tab]
   keepNewest(closed, 4)
-  assert.deepEqual(closed, [{ tabs: [null, null, null] }, tab])
-  const big = [tab, { tabs: [null, null, null, null, null] }]
+  assert.deepEqual(closed, [{ tabs: [null, null, null], activeIndex: 0 }, tab])
+})
+
+test('a window bigger than the limit keeps its active tab and its neighbors', () => {
+  const big = [{ history: null }, { tabs: [0, 1, 2, 3, 4, 5, 6], activeIndex: 5 }]
   keepNewest(big, 3)
-  assert.deepEqual(big, [{ tabs: [null, null, null, null, null] }])
+  assert.deepEqual(big, [{ tabs: [4, 5, 6], activeIndex: 1 }])
+  const start = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 0 }]
+  keepNewest(start, 2)
+  assert.deepEqual(start, [{ tabs: [0, 1], activeIndex: 0 }])
 })

@@ -32,14 +32,20 @@ function remember(closed, entry, limit) {
 }
 
 // Drops the oldest entries until the tabs left fit `limit`; a window
-// ({ tabs }) counts each of its tabs. The newest entry always stays, so a
-// window with more tabs than the limit can still come back whole.
+// ({ tabs, activeIndex }) counts each of its tabs. The newest entry always
+// stays, and a window with more tabs than the limit keeps its active tab
+// and the ones around it.
 function keepNewest(closed, limit) {
+  const newest = closed.at(-1)
+  if (newest?.tabs?.length > limit) {
+    const start = Math.min(Math.max(newest.activeIndex - Math.floor(limit / 2), 0), newest.tabs.length - limit)
+    closed[closed.length - 1] = { ...newest, tabs: newest.tabs.slice(start, start + limit), activeIndex: newest.activeIndex - start }
+  }
   let count = 0
   let keep = 0
   for (let i = closed.length - 1; i >= 0; i--) {
     count += closed[i].tabs?.length || 1
-    if (count > limit && keep) break
+    if (count > limit) break
     keep++
   }
   closed.splice(0, closed.length - keep)

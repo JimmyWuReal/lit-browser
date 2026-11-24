@@ -117,7 +117,7 @@ const SECTIONS = [
       {
         key: 'saveHistory',
         label: 'Save history',
-        description: 'Pages you visit, and closed tabs to reopen. When off, neither is kept, and reopened windows keep only each tab’s page, not its back and forward history.',
+        description: 'Pages you visit, and closed tabs to reopen. When off, neither is kept, and reopened windows keep only each tab’s page, not its back and forward history or what was typed into it.',
         type: 'toggle',
         default: true,
       },
