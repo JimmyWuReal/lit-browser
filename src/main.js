@@ -971,7 +971,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       canGoForward: contents.navigationHistory.canGoForward(),
       engineName: engineOf(settings.searchEngine).name,
       askWhereToSave: settings.downloadLocation !== 'downloads',
-      keys: { reload: settings['shortcuts.reload'], back: settings['shortcuts.back'], forward: settings['shortcuts.forward'] },
+      keys: { reload: settings['shortcuts.reload'], back: settings['shortcuts.back'], forward: settings['shortcuts.forward'], print: settings['shortcuts.print'] },
       inSubframe: Boolean(params.frame && params.frame !== contents.mainFrame),
     })
     popup(items, (command, arg) => {
@@ -998,6 +998,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
         case 'back': return contents.navigationHistory.goBack()
         case 'forward': return contents.navigationHistory.goForward()
         case 'reload': return contents.reload()
+        case 'print': return print(contents)
         case 'inspect': return contents.inspectElement(params.x, params.y)
         // undo, redo, cut, copy, paste, selectAll
         default: return contents[command]()
@@ -1346,6 +1347,14 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
 
 // Menu actions go to the focused window, which Electron passes to `click`.
 const controlsOf = (win) => (win && !win.isDestroyed() ? windowsByToolbar.get(win.webContents) : undefined)
+// Opens the system print dialog for a page. Cancelling it is not a failure
+// worth reporting; anything else is logged.
+function print(page) {
+  page.print({}, (printed, reason) => {
+    if (!printed && reason && !/cancel/i.test(reason)) console.error(`Print failed: ${reason}`)
+  })
+}
+
 const inFocused = (action) => (_item, win) => {
   const controls = controlsOf(win)
   if (controls) action(controls)
@@ -1404,6 +1413,8 @@ function buildMenu() {
         { label: 'Close Window', accelerator: key('closeWindow'), click: inFocused((c) => c.win.close()) },
         { label: 'Close Other Tabs', accelerator: key('closeOtherTabs'), click: inFocused((c) => { c.closePopup(); c.closeOtherTabs() }) },
         { label: 'Close Tabs to the Right', accelerator: key('closeTabsToRight'), click: inFocused((c) => { c.closePopup(); c.closeTabsToRight() }) },
+        { type: 'separator' },
+        { label: 'Print…', accelerator: key('print'), click: inFocused((c) => { const page = c.page(); if (page) { c.closePopup(); print(page) } }) },
       ],
     },
     {
