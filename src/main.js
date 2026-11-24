@@ -238,16 +238,14 @@ let sessionFile
 let sessionSave = null
 let quitting = false
 
-// The pinned tabs of the last window closed while Lit keeps running (a
-// window spec, as in session.js), so closing every window never loses
-// them: the next window opened takes them in, and if Lit quits first they
-// are saved with the session. Only kept while no window is open.
+// Closing a window never closes its pinned tabs: they move to the window
+// used last, or, with no window left open, wait here (a window spec, as in
+// session.js) for the next window opened, and are saved with the session
+// in case Lit quits first. Only kept while no window is open.
 let strayPins = null
 
-// Hands the stray pinned tabs to a new window, unless it is the window
-// they came from coming back (Reopen Closed Tab), which has them already.
-function takeStrayPins(key) {
-  const tabs = strayPins && strayPins.key !== key ? strayPins.tabs : []
+function takeStrayPins() {
+  const tabs = strayPins ? strayPins.tabs : []
   strayPins = null
   return tabs
 }
@@ -1319,6 +1317,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     duplicateTab: () => duplicateTab(activeId),
     togglePin: () => setPinned(activeId, !active()?.pinned),
     activePinned: () => Boolean(active()?.pinned),
+    // Pinned tabs moving in from a closed window, in the background.
+    adoptPins(histories) {
+      for (const history of histories) addTab({ history, background: true, pinned: true })
+    },
     // Each pinned tab's page, once it has one, for suggestions.
     pinnedPages: () => tabs.filter((tab) => tab.pinned && tab.url).map((tab) => ({ url: tab.url, title: tab.title })),
     closeOtherTabs: () => closeOtherTabs(activeId),
@@ -1378,13 +1380,15 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // reopened whole. A window closed by its last tab was remembered in
   // removeTab. Its tabs are read while it is still there, and remembered
   // only once it is really gone, in case the close is cancelled.
-  // Its pinned tabs are read too, as a launch would reopen them, in case it
-  // is the last window (see strayPins).
+  // Its pinned tabs are not closed with it but move on (see strayPins), so
+  // they are read as a launch would reopen them, and left out of what
+  // Reopen Closed Tab brings back.
   let closingWindow = null
   let closingPins = null
   win.on('close', () => {
-    const histories = tabs.map((tab) => (tab.started ? saveHistory(tab) : null))
-    closingWindow = histories.length ? closedWindow(histories, Math.max(tabs.indexOf(active()), 0)) : null
+    const closing = tabs.filter((tab) => !tab.pinned)
+    const histories = closing.map((tab) => (tab.started ? saveHistory(tab) : null))
+    closingWindow = histories.length ? closedWindow(histories, Math.max(closing.indexOf(active()), 0), 0) : null
     const pins = tabs.filter((tab) => tab.pinned).map(sessionHistory).filter(Boolean)
     closingPins = pins.length ? closedWindow(pins, 0, pins.length) : null
   })
@@ -1392,7 +1396,12 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendDownloads() })
   win.on('closed', () => {
     openWindows.delete(controls)
-    if (!quitting && !openWindows.size && closingPins) strayPins = closingPins
+    // While quitting, the session already holds them in this window.
+    if (!quitting && closingPins) {
+      const heir = [...openWindows].at(-1)
+      if (heir) heir.adoptPins(closingPins.tabs)
+      else strayPins = closingPins
+    }
     sessionChanged()
     if (closingWindow) rememberClosed(closingWindow)
     for (const tab of tabs.splice(0)) {
@@ -1409,10 +1418,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   if (maximized) win.maximize()
   if (fullScreen) win.setFullScreen(true)
   // Pinned tabs left by the last window closed join this one's.
-  for (const history of takeStrayPins(key)) addTab({ history, background: true, pinned: true })
+  controls.adoptPins(takeStrayPins())
   if (restored.length) {
-    restored.forEach((history, i) => addTab(history ? { history, background: true, pinned: i < pinned } : { background: true }))
-    activate(tabs[Math.min(activeIndex, tabs.length - 1)].id)
+    const added = restored.map((history, i) => addTab(history ? { history, background: true, pinned: i < pinned } : { background: true }))
+    activate(added[Math.min(activeIndex, added.length - 1)].id)
   } else newTab()
   return controls
 }

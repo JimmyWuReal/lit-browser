@@ -82,3 +82,10 @@ test('a window bigger than the limit keeps its active tab and its neighbors', ()
   keepNewest(start, 2)
   assert.deepEqual(start, [{ tabs: [0, 1], activeIndex: 0 }])
 })
+
+test('trimming a closed window keeps the pinned count of the tabs it keeps', () => {
+  const win = (pinned) => ({ tabs: [1, 2, 3, 4, 5, 6], activeIndex: 5, pinned })
+  assert.equal(keepNewest([win(2)], 3)[0].pinned, 0)
+  assert.deepEqual(keepNewest([win(5)], 3)[0], { tabs: [4, 5, 6], activeIndex: 2, pinned: 2 })
+  assert.equal(keepNewest([{ tabs: [1, 2, 3], activeIndex: 0, pinned: 3 }], 2)[0].pinned, 2)
+})

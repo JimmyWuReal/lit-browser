@@ -39,7 +39,13 @@ function keepNewest(closed, limit) {
   const newest = closed.at(-1)
   if (newest?.tabs?.length > limit) {
     const start = Math.min(Math.max(newest.activeIndex - Math.floor(limit / 2), 0), newest.tabs.length - limit)
-    closed[closed.length - 1] = { ...newest, tabs: newest.tabs.slice(start, start + limit), activeIndex: newest.activeIndex - start }
+    closed[closed.length - 1] = {
+      ...newest,
+      tabs: newest.tabs.slice(start, start + limit),
+      activeIndex: newest.activeIndex - start,
+      // The pinned tabs (the first ones) that are kept.
+      ...(newest.pinned && { pinned: Math.min(Math.max(newest.pinned - start, 0), limit) }),
+    }
   }
   let count = 0
   let keep = 0
