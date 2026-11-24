@@ -330,7 +330,9 @@ function changeBookmarks(win, next) {
 
 // A site's icon as a data: URL, from its address: pictures Electron can
 // read are scaled to 32px, others (SVG, ICO) kept if small. '' if it can't
-// be had.
+// be had. A bigger file is dropped as it arrives, so a page can't fill
+// memory with its icon.
+const ICON_DOWNLOAD_LIMIT = 1024 * 1024
 const ICON_LIMIT = 64 * 1024
 async function fetchIcon(url, ses) {
   try {
@@ -338,9 +340,16 @@ async function fetchIcon(url, ses) {
     const response = await ses.fetch(url, { credentials: 'omit', signal: AbortSignal.timeout(10000) })
     const type = (response.headers.get('content-type') || '').split(';')[0].trim()
     if (!response.ok || !/^image\/[\w.+-]+$/.test(type)) return ''
-    const data = Buffer.from(await response.arrayBuffer())
+    const chunks = []
+    let size = 0
+    for await (const chunk of response.body) {
+      size += chunk.length
+      if (size > ICON_DOWNLOAD_LIMIT) return ''
+      chunks.push(chunk)
+    }
+    const data = Buffer.concat(chunks)
     const image = nativeImage.createFromBuffer(data)
-    if (!image.isEmpty()) return (image.getSize().width > 32 ? image.resize({ width: 32 }) : image).toDataURL()
+    if (!image.isEmpty()) return image.resize({ width: 32, height: 32 }).toDataURL()
     return data.length <= ICON_LIMIT ? `data:${type};base64,${data.toString('base64')}` : ''
   } catch {
     return ''
@@ -1459,7 +1468,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     if (view.kind === 'list') {
       const folder = view.folderId && bookmarkStore.get(bookmarks, view.folderId)
       const items = folder ? folder.items : bookmarks.filter((item) => view.ids?.includes(item.id))
-      return { kind: 'list', at: view.at, title: folder ? folder.title : 'More bookmarks', items }
+      return { kind: 'list', at: view.at, folderId: folder ? folder.id : null, title: folder ? folder.title : 'More bookmarks', items }
     }
     const { kind, at, id, folder, heading, values } = view
     return { kind, at, id, folder, heading, values, folders: bookmarkStore.folders(bookmarks).map(({ id, title }) => ({ id, title })) }
@@ -1514,6 +1523,8 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     const folderId = values?.folderId || null
     let next
     let url
+    // Removed in another window while it was edited here.
+    if (view.id && !bookmarkStore.get(bookmarks, view.id)) return { error: `This ${view.folder ? 'folder' : 'bookmark'} was removed.` }
     if (view.folder) {
       if (!title) return { error: 'Give the folder a name.' }
       next = view.id ? bookmarkStore.update(bookmarks, view.id, { title }) : bookmarkStore.add(bookmarks, bookmarkStore.folder(title))
@@ -1521,8 +1532,6 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
       url = bookmarkStore.address(values?.url)
       if (!url) return { error: 'Enter a web address.' }
       const old = view.id && bookmarkStore.get(bookmarks, view.id)
-      // Removed in another window while it was edited here.
-      if (view.id && !old) return { error: 'This bookmark was removed.' }
       const target = bookmarkStore.folders(bookmarks).some((each) => each.id === folderId) ? folderId : null
       if (!old) next = bookmarkStore.add(bookmarks, bookmarkStore.page({ title, url }), target)
       else {
@@ -1972,7 +1981,7 @@ const fromBookmarks = (handler) => (event, ...args) => {
 const isPoint = (at) => Number.isFinite(at?.x) && Number.isFinite(at?.y)
 const isId = (id) => typeof id === 'string'
 ipcMain.on('bookmark-page', fromToolbar((c) => c.bookmarkPage()))
-ipcMain.on('bookmark-move', fromToolbar((c, id, folderId, beforeId) => isId(id) && c.moveBookmark(id, isId(folderId) ? folderId : null, isId(beforeId) ? beforeId : null)))
+ipcMain.on('bookmark-move', fromBookmarks((c, id, folderId, beforeId) => isId(id) && c.moveBookmark(id, isId(folderId) ? folderId : null, isId(beforeId) ? beforeId : null)))
 ipcMain.on('bookmark-open', fromBookmarks((c, id, newTab) => isId(id) && c.openBookmark(id, newTab === true)))
 ipcMain.on('bookmark-menu', fromBookmarks((c, id, at) => (id === null || isId(id)) && isPoint(at) && c.showBookmarkMenu(id, { x: at.x, y: at.y })))
 ipcMain.on('bookmark-list', fromBookmarks((c, what, at) => {

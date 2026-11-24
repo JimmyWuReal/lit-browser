@@ -39,7 +39,7 @@ When Lit opens again, it reopens the windows and tabs that were open when it qui
 
 ## Bookmarks
 
-The star at the end of the address bar, or ⌘D, adds the page to the bookmark bar, the row below the address bar (at the top of a new tab). A form then offers to change its name, address or folder, or delete it; the star stays filled on a bookmarked page, and pressing it again reopens the form. Click a bookmark to open it here, or ⌘-click or middle-click for a new tab. Drag bookmarks to reorder them, or onto a folder to put them in it. Those that don't fit are listed by the » button at the bar's end.
+The star at the end of the address bar, or ⌘D, adds the page to the bookmark bar, the row below the address bar (at the top of a new tab). A form then offers to change its name, address or folder, or delete it; the star stays filled on a bookmarked page, and pressing it again reopens the form. Click a bookmark to open it here, or ⌘-click or middle-click for a new tab. Drag bookmarks to reorder them, on the bar or in its lists, or onto a folder to put them in it. Those that don't fit are listed by the » button at the bar's end.
 
 Right-click a bookmark to open it in a new tab, window or private window, copy its address, edit it or delete it. Right-click the bar to add a page or a folder, or hide the bar. A folder's menu opens all its pages, renames or deletes it; folders hold pages, not other folders. Typing in the address bar lists matching bookmarks first, marked with a star.
 

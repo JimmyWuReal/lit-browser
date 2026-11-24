@@ -66,6 +66,23 @@
     .row span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .row img { width: 14px; height: 14px; flex: 0 0 auto; border-radius: 3px; }
     .row svg { flex: 0 0 auto; color: var(--dim); }
+    .row.is-target { color: #fff; background: rgba(255, 255, 255, .07); }
+    .row.is-dragged { opacity: .4; }
+    /* Where a dragged bookmark would land. */
+    .drop-mark {
+      position: absolute;
+      top: 0;
+      left: 10px;
+      right: 10px;
+      height: 2px;
+      border-radius: 1px;
+      background: #fff;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(var(--drop-y, 0));
+      transition: opacity 120ms ease-out, transform 160ms var(--settle);
+    }
+    .drop-mark.is-on { opacity: 1; }
     .empty { margin: 0; padding: 10px; color: var(--dim); font-size: 12.5px; }
 
     .form { --width: min(320px, calc(100vw - 20px)); margin: 0; padding: 14px; }
@@ -174,6 +191,7 @@
       if (!item.icon) return globe()
       const img = new Image()
       img.alt = ''
+      img.draggable = false
       img.onerror = () => img.replaceWith(globe())
       img.src = item.icon
       return img
@@ -183,6 +201,7 @@
       const row = document.createElement('button')
       row.type = 'button'
       row.className = 'row'
+      row.draggable = true
       row.setAttribute('role', 'menuitem')
       const name = document.createElement('span')
       name.textContent = item.title || item.url || 'Folder'
@@ -196,8 +215,55 @@
       })
       row.addEventListener('auxclick', (event) => { if (event.button === 1 && !item.items) window.lit.openBookmark(item.id, true) })
       row.addEventListener('contextmenu', (event) => { event.preventDefault(); window.lit.showBookmarkMenu(item.id, view.at) })
+      row.addEventListener('dragstart', (event) => {
+        dragged = item
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData('text/plain', item.url || item.title)
+        row.classList.add('is-dragged')
+      })
+      row.addEventListener('dragend', () => { row.classList.remove('is-dragged'); endDrag() })
       return row
     }
+
+    // Dragging reorders the list as it does the bar (see index.html).
+    const dropMark = document.createElement('span')
+    dropMark.className = 'drop-mark'
+    dropMark.setAttribute('aria-hidden', 'true')
+    let dragged = null
+    // { folderId, beforeId } it would land at.
+    let drop = null
+    function endDrag() {
+      dragged = null
+      setDrop(null)
+    }
+    // `into` is the folder row under the pointer, if it would go in there.
+    function setDrop(next, y = 0, into = null) {
+      drop = next
+      for (const row of list.querySelectorAll('.row')) row.classList.toggle('is-target', row === into)
+      dropMark.classList.toggle('is-on', Boolean(next) && !into)
+      if (next && !into) dropMark.style.setProperty('--drop-y', `${y - 1}px`)
+    }
+    list.addEventListener('dragover', (event) => {
+      if (!dragged) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      const rows = [...list.querySelectorAll('.row')]
+      for (const [i, row] of rows.entries()) {
+        const box = row.getBoundingClientRect()
+        const at = (event.clientY - box.top) / box.height
+        const item = view.items[i]
+        if (item.items && !dragged.items && at > .25 && at < .75) return setDrop({ folderId: item.id, beforeId: null }, 0, row)
+        if (at < .5) return setDrop({ folderId: view.folderId, beforeId: item.id }, row.offsetTop)
+      }
+      setDrop({ folderId: view.folderId, beforeId: null }, rows.at(-1).offsetTop + rows.at(-1).offsetHeight)
+    })
+    list.addEventListener('dragleave', (event) => { if (!list.contains(event.relatedTarget)) setDrop(null) })
+    list.addEventListener('drop', (event) => {
+      if (!dragged) return
+      event.preventDefault()
+      if (drop) window.lit.moveBookmark(dragged.id, drop.folderId, drop.beforeId)
+      endDrag()
+    })
 
     function drawList(state) {
       view = state
@@ -206,7 +272,8 @@
       const empty = document.createElement('p')
       empty.className = 'empty'
       empty.textContent = 'This folder is empty'
-      list.replaceChildren(...(state.items.length ? state.items.map(createRow) : [empty]))
+      endDrag()
+      list.replaceChildren(dropMark, ...(state.items.length ? state.items.map(createRow) : [empty]))
       ;(focused && [...list.children].find((row) => row.dataset.id === focused))?.focus()
     }
 
