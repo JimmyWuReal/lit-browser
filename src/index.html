@@ -350,7 +350,7 @@
         <circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path>
       </svg>
       <input id="address" type="text" placeholder="Search or enter address" aria-label="Search or enter address"
-        autocomplete="off" spellcheck="false" autofocus>
+        aria-autocomplete="list" autocomplete="off" spellcheck="false" autofocus>
       <button class="icon-button zoom" id="zoom" type="button" tabindex="-1" title="Reset Zoom" data-shortcut="shortcuts.resetZoom"></button>
     </form>
     <div class="find" id="find" role="search" aria-label="Find in page">
@@ -498,7 +498,7 @@
       // follows the page's address when it changes, unless the user is
       // typing; so a sent address stays until the new page commits.
       const url = currentUrl()
-      if (switched) editing = false
+      if (switched) { editing = false; closeSuggestions() }
       if (switched || (!editing && url !== shownUrl)) address.value = url
       shownUrl = url
 
@@ -605,9 +605,45 @@
     }
     zoomButton.addEventListener('click', () => window.lit.resetZoom())
 
+    // Pages from history matching what is typed, listed under the field
+    // by main (in a view over the page, src/suggestions.html). Arrow keys
+    // move through them and put the page's address in the field, so Enter
+    // opens it; going back past the first puts back what was typed. The
+    // list closes with Escape, on sending, and when the field loses focus.
+    let suggestions = []
+    let selected = -1
+    let typed = ''
+    // Answers can arrive out of order; only the latest request's counts.
+    let suggestRequest = 0
+    async function suggest() {
+      const request = ++suggestRequest
+      typed = address.value
+      selected = -1
+      const box = address.getBoundingClientRect()
+      const items = await window.lit.suggest(typed, { x: box.left, y: box.bottom + 6, width: box.width })
+      if (request === suggestRequest) suggestions = items
+    }
+    // `blur` lets a click on the list, which takes focus from the field,
+    // still open its page.
+    function closeSuggestions(blur = false) {
+      suggestRequest++
+      suggestions = []
+      selected = -1
+      window.lit.closeSuggestions(blur === true)
+    }
+    function moveSelection(delta) {
+      // -1 is the typed text itself, between the last page and the first.
+      const count = suggestions.length + 1
+      selected = ((selected + 1 + delta + count) % count) - 1
+      address.value = selected === -1 ? typed : suggestions[selected].url
+      window.lit.selectSuggestion(selected)
+    }
+    window.addEventListener('resize', () => closeSuggestions())
+
     addressForm.addEventListener('submit', (event) => {
       event.preventDefault()
       if (!address.value.trim()) return
+      closeSuggestions()
       document.body.classList.remove('home')
       // What was typed stays until the page's real address arrives.
       editing = false
@@ -616,11 +652,31 @@
     })
 
     // Escape, or leaving the field unsent, puts back the current address.
-    address.addEventListener('input', () => { editing = true })
+    // While an input method composes, its half-typed text is not looked up.
+    address.addEventListener('input', (event) => {
+      editing = true
+      if (!event.isComposing) suggest()
+    })
+    address.addEventListener('compositionend', suggest)
     address.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') { editing = false; address.value = currentUrl(); address.select() }
+      if (event.isComposing || event.keyCode === 229) return
+      if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && suggestions.length) {
+        event.preventDefault()
+        moveSelection(event.key === 'ArrowDown' ? 1 : -1)
+      } else if (event.key === 'Escape' && suggestions.length) {
+        // The first Escape only closes the list and puts back what was typed.
+        address.value = typed
+        closeSuggestions()
+      } else if (event.key === 'Escape') {
+        // Also drops a lookup still on its way.
+        closeSuggestions()
+        editing = false
+        address.value = currentUrl()
+        address.select()
+      }
     })
     address.addEventListener('blur', () => {
+      closeSuggestions(true)
       if (editing) { editing = false; address.value = currentUrl() }
     })
     address.addEventListener('focus', () => address.select())

@@ -24,20 +24,32 @@ function byNumber(ids, number) {
   return number === 9 ? ids[ids.length - 1] : ids[number - 1] ?? null
 }
 
-// Closed tabs and windows, for Reopen Closed Tab: newest last, and only
-// the `limit` newest are kept.
-function remember(closed, entry, limit = 25) {
+// Closed tabs and windows, for Reopen Closed Tab: newest last, holding
+// at most `limit` tabs (the Closed tabs to remember setting).
+function remember(closed, entry, limit) {
   closed.push(entry)
-  if (closed.length > limit) closed.splice(0, closed.length - limit)
-  return closed
+  return keepNewest(closed, limit)
 }
 
-// Drops entries closed `keepFor` ms or more before `now` (each has `time`).
-// Returns when the next one expires, or null when none are left.
-function forgetOlder(closed, now, keepFor) {
-  const kept = closed.filter((entry) => now - entry.time < keepFor)
-  closed.splice(0, closed.length, ...kept)
-  return kept.length ? Math.min(...kept.map((entry) => entry.time)) + keepFor : null
+// Drops the oldest entries until the tabs left fit `limit`; a window
+// ({ tabs, activeIndex }) counts each of its tabs. The newest entry always
+// stays, and a window with more tabs than the limit keeps its active tab
+// and the ones around it.
+function keepNewest(closed, limit) {
+  const newest = closed.at(-1)
+  if (newest?.tabs?.length > limit) {
+    const start = Math.min(Math.max(newest.activeIndex - Math.floor(limit / 2), 0), newest.tabs.length - limit)
+    closed[closed.length - 1] = { ...newest, tabs: newest.tabs.slice(start, start + limit), activeIndex: newest.activeIndex - start }
+  }
+  let count = 0
+  let keep = 0
+  for (let i = closed.length - 1; i >= 0; i--) {
+    count += closed[i].tabs?.length || 1
+    if (count > limit) break
+    keep++
+  }
+  closed.splice(0, closed.length - keep)
+  return closed
 }
 
 // Where a reopened tab goes: back at its old place, or at the end if the
@@ -51,4 +63,4 @@ const onScreen = (bounds, areas) => areas.some((area) =>
   bounds.x < area.x + area.width && bounds.x + bounds.width > area.x &&
   bounds.y < area.y + area.height && bounds.y + bounds.height > area.y)
 
-module.exports = { afterClose, step, byNumber, remember, forgetOlder, reopenIndex, onScreen }
+module.exports = { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen }

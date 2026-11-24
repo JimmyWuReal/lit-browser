@@ -1,5 +1,6 @@
-// The only bridge between Lit's own pages (the toolbar, and the Settings,
-// History and Downloads popups) and the main process.
+// The only bridge between Lit's own pages (the toolbar, the address bar's
+// suggestions, and the Settings, History and Downloads popups) and the
+// main process.
 const { contextBridge, ipcRenderer } = require('electron')
 
 const on = (channel, callback) => ipcRenderer.on(channel, (_event, value) => callback(value))
@@ -28,6 +29,14 @@ contextBridge.exposeInMainWorld('lit', {
   findAgain: (tabId, forward = true) => ipcRenderer.send('find-again', tabId, forward),
   closeFind: (tabId) => ipcRenderer.send('close-find', tabId),
   onFocusFind: (callback) => ipcRenderer.on('focus-find', () => callback()),
+  // Address bar suggestions from history. `suggest` shows the pages that
+  // match `text` under the field and answers with them, [{ url, title }]
+  // ([] when none match or the setting is off); `rect` is { x, y, width },
+  // where the list goes. `selectSuggestion` highlights one (-1 for none).
+  suggest: (text, rect) => ipcRenderer.invoke('suggest', text, rect),
+  selectSuggestion: (index) => ipcRenderer.send('suggestions-select', index),
+  // `blur` when the field lost focus, maybe to a click on the list.
+  closeSuggestions: (blur = false) => ipcRenderer.send('suggestions-close', blur),
   // The right-click menu for a tab.
   showTabMenu: (id) => ipcRenderer.send('tab-menu', id),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
@@ -58,6 +67,15 @@ contextBridge.exposeInMainWorld('lit', {
     close: () => ipcRenderer.send('history-close'),
     onOpen: (callback) => on('history-open', callback),
     onChanged: (callback) => on('history-changed', callback),
+  },
+  // For the address bar's suggestions list only: it shows the pages
+  // (onShow, { items: [{ url, title }], generation }), highlights the one
+  // the toolbar selects, and says which one was clicked, on which list.
+  suggestions: {
+    pick: (index, generation) => ipcRenderer.send('suggestions-pick', index, generation),
+    onShow: (callback) => on('suggestions-show', callback),
+    onSelect: (callback) => on('suggestions-select', callback),
+    onHide: (callback) => ipcRenderer.on('suggestions-hide', () => callback()),
   },
   // For the Downloads popup only. State is { downloads: [{ id, name, state,
   // progress, status }] }, newest first (see row in src/downloads.js).
