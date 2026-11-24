@@ -52,9 +52,13 @@ function keepNewest(closed, limit) {
   return closed
 }
 
-// Where a reopened tab goes: back at its old place, or at the end if the
-// window now has fewer tabs.
-const reopenIndex = (index, count) => Math.min(Math.max(index, 0), count)
+// Where a tab asked to go at `index` lands in a strip of `count` tabs whose
+// first `pinnedCount` are pinned. Pinned tabs always stay together at the
+// left: a pinned tab goes among them, any other after them. A reopened tab
+// goes back to its old place, or as near as the window allows now.
+const placeIndex = (index, count, pinnedCount, pinned = false) => (pinned
+  ? Math.min(Math.max(index, 0), pinnedCount)
+  : Math.min(Math.max(index, pinnedCount), count))
 
 // Whether a window at `bounds` would show on any of the displays' work
 // areas (all { x, y, width, height }), so a reopened window never lands
@@ -63,4 +67,4 @@ const onScreen = (bounds, areas) => areas.some((area) =>
   bounds.x < area.x + area.width && bounds.x + bounds.width > area.x &&
   bounds.y < area.y + area.height && bounds.y + bounds.height > area.y)
 
-module.exports = { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen }
+module.exports = { afterClose, step, byNumber, remember, keepNewest, placeIndex, onScreen }

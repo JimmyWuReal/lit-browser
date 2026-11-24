@@ -9,7 +9,7 @@ const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, s
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl, searchUrl, engineOf } = require('./url')
-const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
+const { afterClose, step, byNumber, remember, keepNewest, placeIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const sessionStore = require('./session')
@@ -49,9 +49,10 @@ let nextWindowKey = 1
 // Only closes people make count (⌘W, the close button, closing a window),
 // not a page closing itself; a blank tab has a null history and comes
 // back blank. Nothing is kept while Save history is off.
-// A tab: { windowKey, index, history }, back in its window if that is open.
-// A window: { key, tabs: [history], activeIndex, bounds, maximized,
-// fullScreen }, so tab order, the active tab and its place come back as they were.
+// A tab: { windowKey, index, history, pinned }, back in its window if that
+// is open, pinned again if it was. A window: { key, tabs: [history],
+// activeIndex, pinned, bounds, maximized, fullScreen }, so tab order, the
+// active tab, its pinned tabs and its place come back as they were.
 // A history is { entries, index } from navigationHistory, so back and
 // forward come back too. Kept in memory only, so Lit forgets them when it
 // quits; the Closed tabs to remember setting caps how many.
@@ -242,8 +243,12 @@ function saveSession() {
   sessionSave = null
   if (!sessionFile) return
   try {
-    if (!settings.restoreSession) return sessionStore.forget(sessionFile)
-    sessionStore.save(sessionFile, [...openWindows].map((controls) => controls.snapshot()).filter(Boolean))
+    const windows = [...openWindows].map((controls) => controls.snapshot()).filter(Boolean)
+    if (settings.restoreSession) return sessionStore.save(sessionFile, windows)
+    // Pinned tabs open at every launch, even with Reopen windows off.
+    const pinned = sessionStore.pinnedWindow(windows)
+    if (pinned) sessionStore.save(sessionFile, [pinned])
+    else sessionStore.forget(sessionFile)
   } catch {
     // Unsaved, the session saved last reopens instead.
   }
@@ -382,12 +387,31 @@ function reopenClosed(focused) {
     if (target.win.isMinimized()) target.win.restore()
     target.win.focus()
   }
-  target.reopenTab(entry.history, entry.index)
+  target.reopenTab(entry.history, entry.index, entry.pinned)
+}
+
+// Every pinned tab's page, in every window, once each, for the address
+// bar's suggestions.
+function pinnedPages() {
+  const pages = new Map()
+  for (const controls of openWindows) for (const page of controls.pinnedPages()) if (!pages.has(page.url)) pages.set(page.url, page)
+  return [...pages.values()]
+}
+
+// The File menu's Pin Tab is checked while the focused window's tab is
+// pinned, and only enabled for a tab that has a page.
+function refreshPinItem() {
+  const item = Menu.getApplicationMenu()?.getMenuItemById('pinTab')
+  const controls = controlsOf(BrowserWindow.getFocusedWindow())
+  if (!item) return
+  item.checked = Boolean(controls?.activePinned())
+  item.enabled = Boolean(controls?.page())
 }
 
 // After a change: rebuild the menu for new shortcuts, and tell every window.
 function applySettings() {
   Menu.setApplicationMenu(buildMenu())
+  refreshPinItem()
   applyDoNotTrack()
   if (!settings.saveHistory) {
     forgetClosed()
@@ -402,10 +426,10 @@ function applySettings() {
   saveSession()
 }
 
-// `key`, `tabs`, `activeIndex`, `bounds`, `maximized` and `fullScreen` reopen
-// a closed window (see `closed`). Its old position is used only while it is
-// still on a connected display; otherwise only its size.
-function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex = 0, bounds, maximized, fullScreen } = {}) {
+// `key`, `tabs`, `activeIndex`, `pinned`, `bounds`, `maximized` and
+// `fullScreen` reopen a closed window (see `closed`). Its old position is
+// used only while it is still on a connected display; otherwise only its size.
+function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex = 0, pinned = 0, bounds, maximized, fullScreen } = {}) {
   const place = bounds && onScreen(bounds, screen.getAllDisplays().map((display) => display.workArea))
     ? bounds
     : { width: bounds?.width || 1200, height: bounds?.height || 800 }
@@ -424,6 +448,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   const find = (id) => tabs.find((tab) => tab.id === id)
   const active = () => find(activeId)
   const ids = () => tabs.map((tab) => tab.id)
+  // Pinned tabs are always the first ones (see placeIndex).
+  const pinnedCount = () => tabs.filter((tab) => tab.pinned).length
   // Popup views by name, each made on first open (see openPopup), and the
   // name of the one open, if any.
   const popups = {}
@@ -445,8 +471,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     win.setTitle(current?.title || (current?.started ? current.url : '') || 'New Tab')
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts }) => ({
-        id, title, url, favicon, loading, started,
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, pinned, find, zoom: factor, page, prompts }) => ({
+        id, title, url, favicon, loading, started, pinned,
         // The tab's oldest unanswered permission request; the rest wait.
         prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
@@ -457,6 +483,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
         find: find && { text: find.text, active: find.active, matches: find.matches },
       })),
     })
+    if (win.isFocused()) refreshPinItem()
     sessionChanged()
   }
 
@@ -500,8 +527,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // `history` ({ entries, index }) restores a back/forward list, of a closed
   // tab or of the tab being duplicated; `url` is then loaded only if that
   // fails. `referrer` ({ url, policy }) is sent with `url`, as a link opened
-  // from a page sends it.
-  function addTab({ url, webContents, history, referrer, background = false, index = tabs.length } = {}) {
+  // from a page sends it. A `pinned` tab goes among the pinned ones, any
+  // other after them, whatever `index` says.
+  function addTab({ url, webContents, history, referrer, background = false, pinned = false, index = tabs.length } = {}) {
     const view = new WebContentsView(webContents ? { webContents } : {})
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
@@ -509,8 +537,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: settings.defaultZoom, prompts: [] }
-    tabs.splice(index, 0, tab)
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), pinned, history: null, find: null, zoom: settings.defaultZoom, prompts: [] }
+    tabs.splice(placeIndex(index, tabs.length, pinnedCount(), pinned), 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
     // Re-adding a view moves it to the top, so popups stay over new tabs.
@@ -758,9 +786,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     tab.toRecord = null
   }
 
-  // What Reopen Closed Tab needs to bring this window back.
-  function closedWindow(histories, activeIndex) {
-    return { key, tabs: histories, activeIndex, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen() }
+  // What Reopen Closed Tab needs to bring this window back. Its first
+  // `pinned` histories are pinned tabs.
+  function closedWindow(histories, activeIndex, pinned = pinnedCount()) {
+    return { key, tabs: histories, activeIndex, pinned, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen() }
   }
 
   // A tab's first load turns it from the search box into its page.
@@ -799,7 +828,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // unless Settings says to keep it open with a new tab. Then the window
     // is what reopens.
     const closesWindow = nextId === null && settings.closeWindowWithLastTab
-    if (tab.closedByUser) rememberClosed(closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
+    if (tab.closedByUser) rememberClosed(closesWindow ? closedWindow([history], 0, tab.pinned && history ? 1 : 0) : { windowKey: key, index, history, pinned: tab.pinned })
     if (nextId === null) return closesWindow ? win.close() : newTab()
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
@@ -1021,20 +1050,35 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     addTab({ url, index })
   }
 
-  // The kept tab comes to the front first, so closing the others never
-  // shows one of them on the way.
+  // Pinned tabs stay open through both, as in Chrome. The kept tab comes
+  // to the front first when the active one is closing, so closing the
+  // others never shows one of them on the way.
   function closeOtherTabs(id) {
     const tab = find(id)
     if (!tab) return
-    activate(id)
-    for (const other of tabs.filter((each) => each !== tab)) closeTab(other.id)
+    closeTabs(id, tabs.filter((each) => each !== tab && !each.pinned))
   }
 
   function closeTabsToRight(id) {
     const index = tabs.indexOf(find(id))
     if (index === -1) return
-    if (index < tabs.indexOf(active())) activate(id)
-    for (const other of tabs.slice(index + 1)) closeTab(other.id)
+    closeTabs(id, tabs.slice(index + 1).filter((each) => !each.pinned))
+  }
+
+  function closeTabs(keptId, closing) {
+    if (closing.includes(active())) activate(keptId)
+    for (const other of closing) closeTab(other.id)
+  }
+
+  // Pinning moves a tab to the end of the pinned ones, unpinning to just
+  // after them. A tab on the search box has nothing to pin.
+  function setPinned(id, pinned) {
+    const tab = find(id)
+    if (!tab || tab.pinned === pinned || (pinned && !tab.started)) return
+    tabs.splice(tabs.indexOf(tab), 1)
+    tab.pinned = pinned
+    tabs.splice(pinnedCount(), 0, tab)
+    sync()
   }
 
   // The right-click menu for a tab in the strip. Tabs are looked up again
@@ -1042,13 +1086,14 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   function showTabMenu(id) {
     const tab = find(id)
     if (!tab) return
-    const keys = Object.fromEntries(['reload', 'duplicateTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
+    const keys = Object.fromEntries(['reload', 'duplicateTab', 'pinTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
       .map((command) => [command, settings[`shortcuts.${command}`]]))
-    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, keys }), (command) => {
+    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, pinnedCount: pinnedCount(), keys }), (command) => {
       if (!find(id)) return
       switch (command) {
         case 'reload': return tab.page.isDestroyed() ? undefined : tab.page.reload()
         case 'duplicate': return duplicateTab(id)
+        case 'pin': return setPinned(id, !tab.pinned)
         case 'close': return closeTab(id)
         case 'closeOthers': return closeOtherTabs(id)
         case 'closeToRight': return closeTabsToRight(id)
@@ -1182,12 +1227,13 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     }, SUGGESTIONS_FADE)
   }
 
-  // Pages from history matching what is typed, shown under the field at
-  // `rect` ({ x, y, width }, in the window). Answers with the pages shown.
+  // Pinned tabs' and visited pages matching what is typed, pinned tabs
+  // first, shown under the field at `rect` ({ x, y, width }, in the
+  // window). Answers with the pages shown.
   function suggest(text, rect) {
     const fits = rect && ['x', 'y', 'width'].every((key) => Number.isFinite(rect[key]))
     const items = settings.addressSuggestions && fits && !popupOpen && typeof text === 'string' && text.length <= 2048
-      ? historyStore.suggest(visited, text)
+      ? historyStore.suggestWithPinned(pinnedPages(), visited, text)
       : []
     if (items.length) showSuggestions(items, rect)
     else hideSuggestions()
@@ -1217,9 +1263,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     key,
     newTab,
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
-    reopenTab(history, index) {
+    reopenTab(history, index, pinned = false) {
       closePopup()
-      addTab({ history, index: reopenIndex(index, tabs.length) })
+      addTab({ history, index, pinned: pinned && Boolean(history) })
     },
     activate,
     navigate,
@@ -1257,6 +1303,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     pickSuggestion,
     showTabMenu,
     duplicateTab: () => duplicateTab(activeId),
+    togglePin: () => setPinned(activeId, !active()?.pinned),
+    activePinned: () => Boolean(active()?.pinned),
+    // Each pinned tab's page, once it has one, for suggestions.
+    pinnedPages: () => tabs.filter((tab) => tab.pinned && tab.url).map((tab) => ({ url: tab.url, title: tab.title })),
     closeOtherTabs: () => closeOtherTabs(activeId),
     closeTabsToRight: () => closeTabsToRight(activeId),
     setRecording: (on, keys) => {
@@ -1306,6 +1356,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   win.on('focus', () => {
     openWindows.delete(controls)
     openWindows.add(controls)
+    refreshPinItem()
     sessionChanged()
   })
   win.webContents.on('context-menu', (_event, params) => showPageMenu(win.webContents, params, false))
@@ -1338,7 +1389,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   if (maximized) win.maximize()
   if (fullScreen) win.setFullScreen(true)
   if (restored.length) {
-    for (const history of restored) addTab(history ? { history, background: true } : { background: true })
+    restored.forEach((history, i) => addTab(history ? { history, background: true, pinned: i < pinned } : { background: true }))
     activate(tabs[Math.min(activeIndex, tabs.length - 1)].id)
   } else newTab()
   return controls
@@ -1397,6 +1448,8 @@ function buildMenu() {
         { label: 'New Window', accelerator: key('newWindow'), click: () => createWindow() },
         { type: 'separator' },
         { label: 'Duplicate Tab', accelerator: key('duplicateTab'), click: inFocused((c) => { c.closePopup(); c.duplicateTab() }) },
+        // Checked while the tab is pinned (see refreshPinItem).
+        { id: 'pinTab', label: 'Pin Tab', type: 'checkbox', accelerator: key('pinTab'), click: inFocused((c) => { c.closePopup(); c.togglePin() }) },
         { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closePopup(); c.focusAddress() }) },
         { type: 'separator' },
         // With a popup open, Close Tab closes the popup instead.
@@ -1604,9 +1657,15 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(buildMenu())
   sessionFile = path.join(app.getPath('userData'), 'session.json')
   // The windows open when Lit last quit, the one in front opened last.
-  const restored = settings.restoreSession ? sessionStore.load(sessionFile) : []
-  if (restored.length) for (const saved of restored) createWindow(saved)
-  else createWindow()
+  // With Reopen windows off, a new window with the pinned tabs (if any)
+  // and a new tab in front.
+  const saved = sessionStore.load(sessionFile)
+  if (settings.restoreSession && saved.length) for (const win of saved) createWindow(win)
+  else {
+    const pinned = sessionStore.pinnedWindow(saved)
+    const controls = createWindow(pinned || {})
+    if (pinned) controls.newTab()
+  }
   // Like other Mac browsers, Lit keeps running with no windows open;
   // clicking the Dock icon opens a fresh one. Registered after the first
   // window so a launch-time activate cannot open a second.

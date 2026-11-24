@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { clean, load, save, forget } = require('../src/session')
+const { clean, pinnedWindow, load, save, forget } = require('../src/session')
 
 const page = (url, title = '') => ({ url, title })
 
@@ -14,6 +14,7 @@ test('a saved session loads back as it was', () => {
       key: 3,
       tabs: [{ entries: [page('https://a.com/', 'A'), { ...page('https://b.com/', 'B'), pageState: 'xyz' }], index: 1 }, null],
       activeIndex: 1,
+      pinned: 1,
       bounds: { x: 10, y: 20, width: 800, height: 600 },
       maximized: false,
       fullScreen: true,
@@ -60,6 +61,7 @@ test('clean keeps only well-formed windows and tabs', () => {
   assert.equal(win.tabs[1], null)
   assert.equal(win.tabs[2], null)
   assert.equal(win.activeIndex, 0)
+  assert.equal(win.pinned, 0)
   assert.equal(win.bounds, undefined)
   assert.equal(win.maximized, false)
   assert.equal(win.fullScreen, false)
@@ -71,4 +73,35 @@ test('the current page stays current when entries are dropped', () => {
   assert.equal(clean({ windows: [{ tabs: [{ entries: [a, b, a], index: 2 }] }] })[0].tabs[0].index, 2)
   // A broken current entry falls back to the page before it.
   assert.deepEqual(clean({ windows: [{ tabs: [{ entries: [a, { url: 1 }, b], index: 1 }] }] })[0].tabs[0], { entries: [a, b], index: 0 })
+})
+
+test('pinned tabs are a run from the left, each with a page', () => {
+  const a = { entries: [page('https://a.com/')], index: 0 }
+  const pinnedOf = (tabs, pinned) => clean({ windows: [{ tabs, pinned }] })[0].pinned
+  assert.equal(pinnedOf([a, a, a], 2), 2)
+  assert.equal(pinnedOf([a, a], 9), 2)
+  assert.equal(pinnedOf([a, a], -1), 0)
+  assert.equal(pinnedOf([a, a], '2'), 0)
+  // A pinned tab whose page is gone ends the pinned ones there.
+  assert.equal(pinnedOf([a, { entries: [{ url: '' }], index: 0 }, a], 3), 1)
+})
+
+test("pinnedWindow gathers every window's pinned tabs where the front one was", () => {
+  const tab = (url) => ({ entries: [page(url)], index: 0 })
+  const bounds = { x: 1, y: 2, width: 800, height: 600 }
+  const windows = [
+    { tabs: [tab('https://a.com/'), tab('https://x.com/')], activeIndex: 1, pinned: 1, maximized: false, fullScreen: false },
+    { tabs: [tab('https://y.com/')], activeIndex: 0, pinned: 0, maximized: false, fullScreen: false },
+    { tabs: [tab('https://b.com/'), tab('https://c.com/'), null], activeIndex: 2, pinned: 2, bounds, maximized: true, fullScreen: false },
+  ]
+  assert.deepEqual(pinnedWindow(windows), {
+    tabs: [tab('https://a.com/'), tab('https://b.com/'), tab('https://c.com/')],
+    activeIndex: 0,
+    pinned: 3,
+    bounds,
+    maximized: true,
+    fullScreen: false,
+  })
+  assert.equal(pinnedWindow([windows[1]]), null)
+  assert.equal(pinnedWindow([]), null)
 })
