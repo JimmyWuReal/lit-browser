@@ -117,7 +117,10 @@ function siteFor(contents, asking, embedding) {
 
 // Requests for a kind Lit asks about are answered from the saved choices,
 // or by a prompt on the tab that asked, for the kinds not yet decided.
-// Anything not from a tab (Lit's own pages, a service worker) is refused.
+// Only the page itself can prompt: a frame (even from the same site) gets
+// the saved choice, or no, since Electron can't say when the frame is gone
+// and its prompt stale. Anything not from a tab (Lit's own pages, a service
+// worker) is refused.
 function onPermissionRequest(contents, permission, callback, details) {
   if (permissions.REFUSED.includes(permission)) return callback(false)
   const kinds = permissions.kindsOf(permission, details.mediaTypes)
@@ -125,7 +128,7 @@ function onPermissionRequest(contents, permission, callback, details) {
   const site = siteFor(contents, details.requestingUrl)
   if (!site) return callback(false)
   const answer = permissions.status(sitePermissions, site, kinds)
-  if (answer !== 'ask') return callback(answer === 'allow')
+  if (answer !== 'ask' || !details.isMainFrame) return callback(answer === 'allow')
   for (const controls of openWindows) {
     if (controls.askPermission(contents, site, kinds, callback)) return
   }

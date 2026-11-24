@@ -617,13 +617,21 @@
       box.getBoundingClientRect()
       box.style.animation = ''
     }
-    const answerPrompt = (choice) => {
+    // A click answers the prompt that was showing when it began: the one
+    // under the pointer at pointer-down, or for a key, the one shown now.
+    // A prompt replaced mid-click is left unanswered.
+    const promptKey = () => { const tab = activeTab(); return tab?.prompt && `${tab.id}:${tab.prompt.id}:${tab.prompt.kinds}` }
+    let pressed = null
+    promptRow.addEventListener('pointerdown', () => { pressed = promptKey() })
+    const answerPrompt = (choice) => (event) => {
       const tab = activeTab()
-      if (tab?.prompt) window.lit.answerPermission(tab.id, tab.prompt.id, tab.prompt.kinds, choice)
+      const started = event.detail === 0 ? promptKey() : pressed
+      pressed = null
+      if (tab?.prompt && started === promptKey()) window.lit.answerPermission(tab.id, tab.prompt.id, tab.prompt.kinds, choice)
     }
-    document.getElementById('prompt-allow').addEventListener('click', () => answerPrompt('allow'))
-    document.getElementById('prompt-block').addEventListener('click', () => answerPrompt('block'))
-    document.getElementById('prompt-dismiss').addEventListener('click', () => answerPrompt(null))
+    document.getElementById('prompt-allow').addEventListener('click', answerPrompt('allow'))
+    document.getElementById('prompt-block').addEventListener('click', answerPrompt('block'))
+    document.getElementById('prompt-dismiss').addEventListener('click', answerPrompt(null))
 
     // The find field shows the active tab's find. Its text comes from main
     // only on opening or switching tabs; otherwise the field is the source.
