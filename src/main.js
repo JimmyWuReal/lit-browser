@@ -137,12 +137,10 @@ function onPermissionRequest(contents, permission, callback, details) {
 // yet", so until then they read as denied; asking still prompts.
 function onPermissionCheck(contents, permission, requestingOrigin, details) {
   if (permissions.REFUSED.includes(permission)) return false
-  let kinds = permissions.kindsOf(permission)
-  if (permission === 'media') kinds = details.mediaType === 'video' ? ['camera'] : details.mediaType === 'audio' ? ['microphone'] : ['camera', 'microphone']
+  const kinds = permissions.checkKindsOf(permission, details.mediaType)
   if (!kinds) return true
   const site = siteFor(contents, requestingOrigin, details.embeddingOrigin)
-  if (!site) return false
-  return kinds.some((kind) => permissions.status(sitePermissions, site, [kind]) === 'allow')
+  return Boolean(site) && permissions.status(sitePermissions, site, kinds) === 'allow'
 }
 
 // Pages visited (src/history.js), newest first. Loaded at launch, and saved

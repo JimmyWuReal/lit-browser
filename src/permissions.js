@@ -43,6 +43,14 @@ function kindsOf(permission, mediaTypes = []) {
   return Object.hasOwn(BY_PERMISSION, permission) ? [BY_PERMISSION[permission]] : null
 }
 
+// The kinds a check (Notification.permission, navigator.permissions.query)
+// is about, or null as in kindsOf. A media check names one device; one
+// without (pan, tilt and zoom) is the camera's, as for requests.
+function checkKindsOf(permission, mediaType) {
+  if (permission === 'media') return [mediaType === 'audio' ? 'microphone' : 'camera']
+  return kindsOf(permission)
+}
+
 // "https://example.com". Pages with no origin of their own (data:,
 // about:blank) have none, and neither do local files: one origin would
 // cover every file on disk, so they are refused instead of asked.
@@ -135,4 +143,4 @@ function save(file, sites) {
   fs.renameSync(temporary, file)
 }
 
-module.exports = { KINDS, CHOICES, REFUSED, kindsOf, originOf, label, describe, status, undecided, choose, list, load, save }
+module.exports = { KINDS, CHOICES, REFUSED, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, list, load, save }

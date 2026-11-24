@@ -589,6 +589,7 @@
     const promptRow = document.getElementById('prompt')
     const promptText = document.getElementById('prompt-text')
     let shownPrompt = null
+    let shownKinds = null
     function drawPrompt(tab) {
       const prompt = tab?.started ? tab.prompt : null
       const key = prompt ? `${tab.id}:${prompt.id}` : null
@@ -601,9 +602,13 @@
         promptText.replaceChildren(site, does)
         promptRow.title = promptText.textContent
       }
+      // A different request, or a change in what it asks about, takes focus
+      // off the buttons, so a repeated Enter never answers it unseen.
+      const shown = prompt ? `${key}:${prompt.kinds}` : null
+      if (shown !== shownKinds && promptRow.contains(document.activeElement)) document.activeElement.blur()
+      shownKinds = shown
       if (key === shownPrompt) return
       shownPrompt = key
-      if (!prompt && promptRow.contains(document.activeElement)) document.activeElement.blur()
       promptRow.classList.toggle('is-open', Boolean(prompt))
       if (!prompt) return
       // Replays the slide-in.

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { kindsOf, originOf, label, describe, status, undecided, choose, list, load, save } = require('../src/permissions')
+const { kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, list, load, save } = require('../src/permissions')
 
 test('kindsOf maps the requests Lit asks about, and leaves the rest alone', () => {
   assert.deepEqual(kindsOf('media', ['video', 'audio']), ['camera', 'microphone'])
@@ -17,6 +17,18 @@ test('kindsOf maps the requests Lit asks about, and leaves the rest alone', () =
   assert.equal(kindsOf('fullscreen'), null)
   assert.equal(kindsOf('clipboard-sanitized-write'), null)
   assert.equal(kindsOf('constructor'), null)
+})
+
+test('checkKindsOf names one device, and an untyped media check is the camera', () => {
+  assert.deepEqual(checkKindsOf('media', 'audio'), ['microphone'])
+  assert.deepEqual(checkKindsOf('media', 'video'), ['camera'])
+  assert.deepEqual(checkKindsOf('media', 'unknown'), ['camera'])
+  assert.deepEqual(checkKindsOf('media'), ['camera'])
+  assert.deepEqual(checkKindsOf('notifications'), ['notifications'])
+  assert.equal(checkKindsOf('fullscreen'), null)
+  // Allowing only the microphone never lets a camera check through.
+  const sites = choose(new Map(), 'https://a.com', ['microphone'], 'allow')
+  assert.equal(status(sites, 'https://a.com', checkKindsOf('media')), 'ask')
 })
 
 test('a site is an origin; local files and pages without one have none', () => {
