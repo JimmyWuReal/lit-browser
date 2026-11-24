@@ -5,6 +5,8 @@
 // everything, shown only while open. Find in page lives in the toolbar; each tab keeps its own
 // search (src/find.js). A site asking for the camera, location and the like
 // gets a prompt in the toolbar, below the address row (src/permissions.js).
+// A private window (⇧⌘N) browses in an in-memory session of its own and
+// keeps nothing once it closes (see privateSession).
 const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, screen, session, shell } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
@@ -93,6 +95,14 @@ function zoomSite(url, factor) {
 let permissionsFile
 let sitePermissions = new Map()
 
+// Where a session's permission choices live: `sites` to read them, and
+// `choose` to change one, which returns whether it was saved. Normal windows
+// share this one; each private window has its own (see createWindow).
+const savedPermissions = {
+  get sites() { return sitePermissions },
+  choose: (site, kinds, choice) => choosePermission(site, kinds, choice),
+}
+
 // Saves `choice` ('allow', 'block', or null to forget) for the kinds, then
 // answers every prompt it settles, in every window. Unsaved, a choice still
 // holds until Lit quits; returns whether it was saved.
@@ -129,14 +139,14 @@ function siteFor(contents, asking, embedding) {
 // sandboxed frame keeps without the origin, so frames are refused those.
 // The prompt names the site, not the frame, so its answer stays right even
 // if the frame has gone. Anything not from a tab (Lit's own pages, a
-// service worker) is refused too.
-function onPermissionRequest(contents, permission, callback, details) {
+// service worker) is refused too. `store` is the session's choices.
+function onPermissionRequest(store, contents, permission, callback, details) {
   const kinds = permissions.kindsOf(permission, details.mediaTypes)
   if (!kinds) return callback(true)
   const site = siteFor(contents, details.securityOrigin ?? details.requestingUrl)
   if (!site || !kinds.length) return callback(false)
   if (!details.isMainFrame && !details.securityOrigin) return callback(false)
-  const answer = permissions.status(sitePermissions, site, kinds)
+  const answer = permissions.status(store.sites, site, kinds)
   if (answer !== 'ask') return callback(answer === 'allow')
   for (const controls of openWindows) {
     if (controls.askPermission(contents, site, kinds, callback)) return
@@ -150,12 +160,48 @@ function onPermissionRequest(contents, permission, callback, details) {
 // reads as its requests are answered: its site's camera and microphone
 // choices, and no for the rest. A check names the frame's real origin
 // (`requestingOrigin`). A service worker (no page) reads its site's choice.
-function onPermissionCheck(contents, permission, requestingOrigin, details) {
+function onPermissionCheck(store, contents, permission, requestingOrigin, details) {
   const kinds = permissions.checkKindsOf(permission, details.mediaType)
   if (!kinds) return true
   if (contents && !details.isMainFrame && permission !== 'media') return false
   const site = siteFor(contents, requestingOrigin, details.embeddingOrigin)
-  return Boolean(site) && kinds.length > 0 && permissions.status(sitePermissions, site, kinds) === 'allow'
+  return Boolean(site) && kinds.length > 0 && permissions.status(store.sites, site, kinds) === 'allow'
+}
+
+// What every session browsing pages needs: Lit's permission prompts, Do
+// Not Track, and downloads followed into the Downloads list.
+function setUpSession(ses, store) {
+  ses.setPermissionRequestHandler((...args) => onPermissionRequest(store, ...args))
+  ses.setPermissionCheckHandler((...args) => onPermissionCheck(store, ...args))
+  ses.on('will-download', (_event, item) => trackDownload(item, ses))
+  applyDoNotTrack(ses)
+}
+
+// Private windows' sessions, while their windows are open.
+const privateSessions = new Set()
+
+// Each private window browses in a session of its own, in memory only (a
+// partition without "persist:"), so its cookies, cache and site storage
+// never reach disk, and no other window, private or not, sees them.
+// Closing the window clears it (see forgetSession), as Electron keeps a
+// session object around until Lit quits.
+function privateSession(key, store) {
+  const ses = session.fromPartition(`private-${key}`)
+  setUpSession(ses, store)
+  privateSessions.add(ses)
+  return ses
+}
+
+function forgetSession(ses) {
+  privateSessions.delete(ses)
+  ses.webRequest.onBeforeSendHeaders(null)
+  ses.removeAllListeners('will-download')
+  ses.setPermissionRequestHandler(null)
+  ses.setPermissionCheckHandler(null)
+  ses.clearStorageData().catch(() => {})
+  ses.clearCache().catch(() => {})
+  ses.clearAuthCache().catch(() => {})
+  ses.clearHostResolverCache().catch(() => {})
 }
 
 // Pages visited (src/history.js), newest first. Loaded at launch, and saved
@@ -265,10 +311,12 @@ function forgetClosed() {
   refreshReopen()
 }
 
-// This session's downloads, newest first, in memory only: { id, item,
+// This run's downloads, newest first, in memory only: { id, item, session,
 // path, state, received, total, speed } (see src/downloads.js). One joins
 // the list once it has somewhere to go, so a save dialog someone cancels
-// never shows. Every window's toolbar shows them, as they share a session.
+// never shows. A window shows the downloads of its browsing session: every
+// normal window the same ones, a private window only its own, which go
+// (cancelled if still on their way) when it closes.
 const downloads = []
 let nextDownloadId = 1
 // Progress arrives many times a second; windows hear about it at most
@@ -287,13 +335,14 @@ function downloadsChanged(now = false) {
   else downloadsTimer = setTimeout(send, DOWNLOADS_EVERY)
 }
 
-const downloadsSummary = () => downloadsStore.summary(downloads)
+const downloadsOf = (ses) => downloads.filter((download) => download.session === ses)
+const downloadsSummary = (ses) => downloadsStore.summary(downloadsOf(ses))
 
 // What the Downloads popup draws. A finished file someone has since moved
 // or deleted says so, and can no longer be shown in Finder.
-function downloadsState() {
+function downloadsState(ses) {
   return {
-    downloads: downloads.map((download) => downloadsStore.row({
+    downloads: downloadsOf(ses).map((download) => downloadsStore.row({
       ...download,
       missing: download.state === 'completed' && !fs.existsSync(download.path),
     })),
@@ -305,22 +354,28 @@ function downloadsState() {
 // Paths of unfinished downloads count as taken, so two same-name downloads
 // never share one.
 const downloading = new Set()
-function trackDownload(item) {
+function trackDownload(item, ses) {
   let file = null
   if (settings.downloadLocation === 'downloads') {
     file = downloadsStore.uniquePath(app.getPath('downloads'), item.getFilename(), (candidate) => downloading.has(candidate) || fs.existsSync(candidate))
     downloading.add(file)
     item.setSavePath(file)
   }
-  const download = { id: nextDownloadId++, item, path: '', state: 'progressing', received: 0, total: 0, speed: 0 }
+  const download = { id: nextDownloadId++, item, session: ses, path: '', state: 'progressing', received: 0, total: 0, speed: 0 }
   const read = (state) => {
     download.state = state
     download.path = item.getSavePath()
     download.received = item.getReceivedBytes()
     download.total = item.getTotalBytes()
     download.speed = state === 'progressing' ? item.getCurrentBytesPerSecond() : 0
-    // Listed once it has a place: right away, or after the save dialog.
-    if (!download.path || downloads.includes(download)) return false
+    // A private window closed while its save dialog was open: cancelled.
+    if (state === 'progressing' && !download.dropped && ses !== session.defaultSession && !privateSessions.has(ses)) {
+      download.dropped = true
+      item.cancel()
+    }
+    // Listed once it has a place: right away, or after the save dialog;
+    // never again once its private window has dropped it.
+    if (!download.path || download.dropped || downloads.includes(download)) return false
     downloads.unshift(download)
     return true
   }
@@ -336,8 +391,8 @@ function trackDownload(item) {
   if (read('progressing')) downloadsChanged(true)
 }
 
-// What a popup draws when it opens.
-const popupState = (name) => ({ settings: settingsState, history: historyState, downloads: downloadsState })[name]()
+// What a popup draws when it opens; `ses` is its window's session.
+const popupState = (name, ses) => ({ settings: settingsState, history: historyState, downloads: () => downloadsState(ses) })[name]()
 
 // What the Settings popup draws: the values, plus each shortcut as ⌘ symbols.
 function settingsState(error) {
@@ -348,9 +403,14 @@ function settingsState(error) {
   return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), ...(error && { error }) }
 }
 
-// Do Not Track and Global Privacy Control headers, only while turned on.
-function applyDoNotTrack() {
-  session.defaultSession.webRequest.onBeforeSendHeaders(settings.doNotTrack
+// Do Not Track and Global Privacy Control headers, only while turned on,
+// for `ses` or every session.
+function applyDoNotTrack(ses) {
+  if (!ses) {
+    for (const each of [session.defaultSession, ...privateSessions]) applyDoNotTrack(each)
+    return
+  }
+  ses.webRequest.onBeforeSendHeaders(settings.doNotTrack
     ? (details, callback) => callback({ requestHeaders: { ...details.requestHeaders, DNT: '1', 'Sec-GPC': '1' } })
     : null)
 }
@@ -371,12 +431,15 @@ function rememberClosed(entry) {
 
 // The last closed tab goes back where it was: its own window if still open,
 // else the focused one, else a new window. A closed window reopens whole.
+// Private windows remember nothing, and never take a tab from a normal
+// one: from a private window, the normal window in front last gets it.
 function reopenClosed(focused) {
   const entry = closed.pop()
   if (!entry) return
   refreshReopen()
   if (entry.tabs) return createWindow(entry)
-  const target = [...openWindows].find((c) => c.key === entry.windowKey) || focused
+  const normal = focused?.isPrivate ? [...openWindows].reverse().find((c) => !c.isPrivate) : focused
+  const target = [...openWindows].find((c) => c.key === entry.windowKey) || normal
   if (!target) return createWindow({ tabs: [entry.history] })
   if (target !== focused) {
     if (target.win.isMinimized()) target.win.restore()
@@ -405,7 +468,31 @@ function applySettings() {
 // `key`, `tabs`, `activeIndex`, `bounds`, `maximized` and `fullScreen` reopen
 // a closed window (see `closed`). Its old position is used only while it is
 // still on a connected display; otherwise only its size.
-function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex = 0, bounds, maximized, fullScreen } = {}) {
+// `isPrivate` opens a private window: its own in-memory session, no history,
+// nothing to reopen, and no part in the session saved for the next launch.
+// It still reads what normal windows saved (history suggestions, site
+// zooms, Blocks), but what changes in it stays in it, and goes when it closes.
+function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored = [], activeIndex = 0, bounds, maximized, fullScreen } = {}) {
+  // A private window's own permission choices, starting from the saved Blocks.
+  const permissionStore = isPrivate
+    ? { sites: permissions.blocksOnly(sitePermissions), choose(site, kinds, choice) { this.sites = permissions.choose(this.sites, site, kinds, choice); settlePrompts(); return true } }
+    : savedPermissions
+  const ses = isPrivate ? privateSession(key, permissionStore) : session.defaultSession
+  // A private window's own site zooms, over the saved ones.
+  const privateZooms = new Map()
+  const zoomOf = (url) => privateZooms.get(zoom.siteOf(url)) ?? zoomFor(url)
+  // Whether the site has a zoom of its own, which the address bar shows.
+  const ownZoom = (url) => {
+    const site = zoom.siteOf(url)
+    return privateZooms.has(site) ? !zoom.same(privateZooms.get(site), settings.defaultZoom) : siteZooms.has(site)
+  }
+  function changeZoom(url, factor) {
+    if (!isPrivate) return zoomSite(url, factor)
+    const site = zoom.siteOf(url)
+    if (!site) return
+    privateZooms.set(site, factor)
+    controls.applyZoom(site)
+  }
   const place = bounds && onScreen(bounds, screen.getAllDisplays().map((display) => display.workArea))
     ? bounds
     : { width: bounds?.width || 1200, height: bounds?.height || 800 }
@@ -413,7 +500,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     ...place,
     minWidth: 480,
     minHeight: 320,
-    backgroundColor: '#090909',
+    // Matches body's background in index.html.
+    backgroundColor: isPrivate ? '#0c0a12' : '#090909',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 12 },
     webPreferences: { preload: PRELOAD },
@@ -442,7 +530,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     const current = active()
     const top = BAR_HEIGHT + (current?.prompts.length ? PROMPT_HEIGHT : 0)
     if (top !== pageTop) { pageTop = top; layout() }
-    win.setTitle(current?.title || (current?.started ? current.url : '') || 'New Tab')
+    const title = current?.title || (current?.started ? current.url : '') || 'New Tab'
+    win.setTitle(isPrivate ? `${title} (Private)` : title)
     win.webContents.send('tabs', {
       activeId,
       tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts }) => ({
@@ -451,7 +540,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
         prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
         // default or the site has its own (which can match a later default).
-        zoom: started && (!zoom.same(factor, settings.defaultZoom) || siteZooms.has(zoom.siteOf(page.isDestroyed() ? '' : page.getURL())))
+        zoom: started && (!zoom.same(factor, settings.defaultZoom) || ownZoom(page.isDestroyed() ? '' : page.getURL()))
           ? zoom.percent(factor)
           : '',
         find: find && { text: find.text, active: find.active, matches: find.matches },
@@ -463,7 +552,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // The toolbar's tooltips show the current shortcuts.
   const sendShortcuts = () => { if (!win.isDestroyed()) win.webContents.send('shortcuts', settingsState().labels) }
   // The toolbar's downloads indicator.
-  const sendDownloads = () => { if (!win.isDestroyed()) win.webContents.send('downloads', downloadsSummary()) }
+  const sendDownloads = () => { if (!win.isDestroyed()) win.webContents.send('downloads', downloadsSummary(ses)) }
 
   function layout() {
     const { width, height } = win.getContentBounds()
@@ -502,7 +591,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // fails. `referrer` ({ url, policy }) is sent with `url`, as a link opened
   // from a page sends it.
   function addTab({ url, webContents, history, referrer, background = false, index = tabs.length } = {}) {
-    const view = new WebContentsView(webContents ? { webContents } : {})
+    // A page a tab opened is already in its session.
+    const view = new WebContentsView(webContents ? { webContents } : { webPreferences: { session: ses } })
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
@@ -542,7 +632,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       tab.find = findState.reset(tab.find)
       // A new page has not asked for anything yet; the old page's requests go.
       dropPrompts(tab)
-      setZoom(tab, zoomFor(url))
+      setZoom(tab, zoomOf(url))
       committed(tab, url, false)
       sync()
     })
@@ -646,7 +736,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     } else if (url) page.loadURL(url, referrer ? { httpReferrer: referrer } : {}).catch(() => {})
     // A popup can stay on the about:blank its opener writes into, without
     // ever firing did-navigate, so it gets its zoom here.
-    if (webContents) setZoom(tab, zoomFor(page.getURL() || 'about:blank'))
+    if (webContents) setZoom(tab, zoomOf(page.getURL() || 'about:blank'))
     if (background) sync()
     else activate(tab.id)
     return tab
@@ -670,8 +760,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // only its initial blank entry, so it is not read; the address being
   // loaded stands in, if any.
   function saveHistory(tab) {
-    // While Save history is off, nothing is kept to reopen.
-    if (!settings.saveHistory) return (tab.history = null)
+    // While Save history is off, or in a private window, nothing is kept to reopen.
+    if (!settings.saveHistory || isPrivate) return (tab.history = null)
     tab.history = liveHistory(tab) || tab.history
     return tab.history || pendingHistory(tab)
   }
@@ -752,9 +842,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (!tab.page.isLoading()) settle(tab)
   }
 
+  // A private window records nothing.
   function settle(tab) {
     if (!tab.toRecord) return
-    tab.visit = recordVisit(tab.toRecord.url, tab.toRecord.title)
+    tab.visit = isPrivate ? null : recordVisit(tab.toRecord.url, tab.toRecord.title)
     tab.toRecord = null
   }
 
@@ -799,13 +890,13 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // unless Settings says to keep it open with a new tab. Then the window
     // is what reopens.
     const closesWindow = nextId === null && settings.closeWindowWithLastTab
-    if (tab.closedByUser) rememberClosed(closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
+    if (tab.closedByUser && !isPrivate) rememberClosed(closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
     if (nextId === null) return closesWindow ? win.close() : newTab()
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
   }
 
-  // Zoom is per site, so changing it goes through zoomSite, which comes
+  // Zoom is per site, so changing it goes through changeZoom, which comes
   // back here (applyZoom) for every tab on that site.
   function setZoom(tab, factor) {
     tab.zoom = factor
@@ -814,8 +905,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // The page's own URL, not tab.url: a popup can stay on the about:blank its
   // opener writes into, which never fires did-navigate.
   const urlOf = (tab) => (tab.page.isDestroyed() ? '' : tab.page.getURL())
-  const zoomBy = (tab, direction) => { const url = urlOf(tab); if (url) zoomSite(url, zoom.step(tab.zoom, direction)) }
-  const resetZoom = (tab) => { const url = urlOf(tab); if (url) zoomSite(url, settings.defaultZoom) }
+  const zoomBy = (tab, direction) => { const url = urlOf(tab); if (url) changeZoom(url, zoom.step(tab.zoom, direction)) }
+  const resetZoom = (tab) => { const url = urlOf(tab); if (url) changeZoom(url, settings.defaultZoom) }
 
   // Permission prompts. A tab's requests wait in order, one prompt at a
   // time; the same request asked again joins the one waiting. Each prompt
@@ -831,7 +922,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     return true
   }
   // What a prompt asks about now: its kinds without a choice yet.
-  const asking = (prompt) => permissions.undecided(sitePermissions, prompt.site, prompt.kinds)
+  const asking = (prompt) => permissions.undecided(permissionStore.sites, prompt.site, prompt.kinds)
 
   // Refuses the tab's waiting requests, without saving anything.
   function dropPrompts(tab) {
@@ -851,7 +942,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (prompt?.id !== promptId || !Array.isArray(kinds) || kinds.join() !== asking(prompt).join()) return
     if (choice) {
       const kinds = asking(prompt)
-      if (choosePermission(prompt.site, kinds, choice) || win.isDestroyed()) return
+      if (permissionStore.choose(prompt.site, kinds, choice) || win.isDestroyed()) return
       // The choice still holds; say it won't outlast this run.
       dialog.showMessageBox(win, {
         type: 'warning',
@@ -870,7 +961,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   function settlePrompts() {
     for (const tab of tabs) {
       for (const prompt of [...tab.prompts]) {
-        const answer = permissions.status(sitePermissions, prompt.site, prompt.kinds)
+        const answer = permissions.status(permissionStore.sites, prompt.site, prompt.kinds)
         if (answer === 'ask') continue
         tab.prompts.splice(tab.prompts.indexOf(prompt), 1)
         for (const callback of prompt.callbacks) callback(answer === 'allow')
@@ -973,6 +1064,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       askWhereToSave: settings.downloadLocation !== 'downloads',
       keys: { reload: settings['shortcuts.reload'], back: settings['shortcuts.back'], forward: settings['shortcuts.forward'], print: settings['shortcuts.print'] },
       inSubframe: Boolean(params.frame && params.frame !== contents.mainFrame),
+      learnWords: !isPrivate,
     })
     popup(items, (command, arg) => {
       if (contents.isDestroyed()) return
@@ -1101,7 +1193,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     layout()
     view.setVisible(true)
     view.webContents.focus()
-    view.webContents.send(`${name}-open`, popupState(name))
+    view.webContents.send(`${name}-open`, popupState(name, ses))
   }
 
   // Popups have no exit animation, so they just hide. Focus goes back
@@ -1216,6 +1308,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   const controls = {
     win,
     key,
+    isPrivate,
+    session: ses,
     newTab,
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
     reopenTab(history, index) {
@@ -1236,7 +1330,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     applyZoom(site) {
       for (const tab of tabs) {
         const url = urlOf(tab)
-        if (url && (!site || zoom.siteOf(url) === site)) setZoom(tab, zoomFor(url))
+        if (url && (!site || zoom.siteOf(url) === site)) setZoom(tab, zoomOf(url))
       }
       sync()
     },
@@ -1289,13 +1383,13 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // Records the pages still loading, as Lit quits.
     settleAll: () => { for (const tab of tabs) settle(tab) },
     // What reopening this window at the next launch needs (see src/session.js).
-    snapshot: () => (tabs.length ? closedWindow(tabs.map(sessionHistory), Math.max(tabs.indexOf(active()), 0)) : null),
+    snapshot: () => (tabs.length && !isPrivate ? closedWindow(tabs.map(sessionHistory), Math.max(tabs.indexOf(active()), 0)) : null),
     historyChanged() {
       if (popupOpen === 'history') popups.history.webContents.send('history-changed', historyState())
     },
     downloadsChanged() {
       sendDownloads()
-      if (popupOpen === 'downloads') popups.downloads.webContents.send('downloads-changed', downloadsState())
+      if (popupOpen === 'downloads') popups.downloads.webContents.send('downloads-changed', downloadsState(ses))
     },
   }
   windowsByToolbar.set(win.webContents, controls)
@@ -1316,6 +1410,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // only once it is really gone, in case the close is cancelled.
   let closingWindow = null
   win.on('close', () => {
+    if (isPrivate) return
     const histories = tabs.map((tab) => (tab.started ? saveHistory(tab) : null))
     closingWindow = histories.length ? closedWindow(histories, Math.max(tabs.indexOf(active()), 0)) : null
   })
@@ -1333,9 +1428,21 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     for (const view of Object.values(popups)) view.webContents.close()
     clearTimeout(suggestionsHide)
     suggestionsView?.webContents.close()
+    if (isPrivate) {
+      // Its downloads go too, those on their way cancelled; files already
+      // saved stay where they were saved.
+      for (const download of downloadsOf(ses)) {
+        download.dropped = true
+        download.item?.cancel()
+        downloads.splice(downloads.indexOf(download), 1)
+      }
+      downloadsChanged(true)
+      forgetSession(ses)
+    }
   })
 
-  win.loadFile(path.join(__dirname, 'index.html'))
+  // The toolbar draws a private window a little differently.
+  win.loadFile(path.join(__dirname, 'index.html'), isPrivate ? { query: { private: '1' } } : {})
   if (maximized) win.maximize()
   if (fullScreen) win.setFullScreen(true)
   if (restored.length) {
@@ -1404,6 +1511,7 @@ function buildMenu() {
       submenu: [
         { label: 'New Tab', accelerator: key('newTab'), click: (_item, win) => { const c = controlsOf(win); if (c) c.newTab(); else createWindow() } },
         { label: 'New Window', accelerator: key('newWindow'), click: () => createWindow() },
+        { label: 'New Private Window', accelerator: key('newPrivateWindow'), click: () => createWindow({ isPrivate: true }) },
         { type: 'separator' },
         { label: 'Duplicate Tab', accelerator: key('duplicateTab'), click: inFocused((c) => { c.closePopup(); c.duplicateTab() }) },
         { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closePopup(); c.focusAddress() }) },
@@ -1578,22 +1686,23 @@ ipcMain.handle('history-clear', fromHistory(() => {
 }))
 ipcMain.on('history-close', fromHistory((c) => c.closePopup()))
 
-const downloadById = (id) => downloads.find((download) => download.id === id)
-ipcMain.handle('downloads-get', fromDownloads(() => downloadsState()))
+// A window only reaches the downloads it shows.
+const downloadById = (c, id) => downloadsOf(c.session).find((download) => download.id === id)
+ipcMain.handle('downloads-get', fromDownloads((c) => downloadsState(c.session)))
 // Only a download still on its way can be cancelled; done fires next.
-ipcMain.on('downloads-cancel', fromDownloads((_c, id) => downloadById(id)?.item?.cancel()))
-ipcMain.on('downloads-show', fromDownloads((_c, id) => {
-  const download = downloadById(id)
+ipcMain.on('downloads-cancel', fromDownloads((c, id) => downloadById(c, id)?.item?.cancel()))
+ipcMain.on('downloads-show', fromDownloads((c, id) => {
+  const download = downloadById(c, id)
   if (download?.state === 'completed') shell.showItemInFolder(download.path)
 }))
 // Clear keeps downloads still on their way. Clearing them all takes the
 // toolbar button away, and the popup hanging from it closes too.
 ipcMain.on('downloads-clear', fromDownloads((c) => {
-  const active = downloads.filter(downloadsStore.isActive)
-  if (active.length === downloads.length) return
-  downloads.splice(0, downloads.length, ...active)
+  const cleared = downloadsOf(c.session).filter((download) => !downloadsStore.isActive(download))
+  if (!cleared.length) return
+  downloads.splice(0, downloads.length, ...downloads.filter((download) => !cleared.includes(download)))
   downloadsChanged(true)
-  if (!downloads.length) c.closePopup()
+  if (!downloadsOf(c.session).length) c.closePopup()
 }))
 ipcMain.on('downloads-close', fromDownloads((c) => c.closePopup()))
 
@@ -1604,12 +1713,9 @@ app.whenReady().then(() => {
   siteZooms = zoom.load(zoomFile)
   permissionsFile = path.join(app.getPath('userData'), 'permissions.json')
   sitePermissions = permissions.load(permissionsFile)
-  session.defaultSession.setPermissionRequestHandler(onPermissionRequest)
-  session.defaultSession.setPermissionCheckHandler(onPermissionCheck)
+  setUpSession(session.defaultSession, savedPermissions)
   historyFile = path.join(app.getPath('userData'), 'history.json')
   visited = historyStore.load(historyFile)
-  applyDoNotTrack()
-  session.defaultSession.on('will-download', (_event, item) => trackDownload(item))
   // The packaged app gets its icon from the bundle; in development, show it in the Dock too.
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '..', 'build', 'icon.png'))
   Menu.setApplicationMenu(buildMenu())

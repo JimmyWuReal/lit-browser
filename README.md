@@ -9,6 +9,7 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | Shortcut | Action |
 | --- | --- |
 | ⌘T / ⌘N | New tab / new window |
+| ⇧⌘N | New private window |
 | ⇧⌘T | Reopen the last closed tab or window |
 | ⌘Y | History |
 | ⌥⌘L | Downloads |
@@ -33,6 +34,21 @@ Middle-click closes a tab. In the tab strip, arrow keys move between tabs and De
 ⇧⌘T brings back the last tab you closed (⌘W, its close button, middle-click) as it was then, with its back/forward history, in its old place. A closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers up to 50 closed tabs by default (see Settings), counting each tab of a closed window. They are kept in memory only, so Lit forgets them when it quits; a page closing itself (such as a sign-in popup) is not remembered.
 
 When Lit opens again, it reopens the windows and tabs that were open when it quit, each window where it was and each tab with its back/forward history, the window that was in front last. Windows closed before quitting stay closed. The session is saved to `session.json` in the app's data folder as it changes, so a crash loses little. Turn this off in Settings to start with a new window instead.
+
+## Private windows
+
+⇧⌘N (File › New Private Window) opens a private window. It looks a little different: a violet tint, a Private badge in the tab strip, and a note under the search box.
+
+Each private window browses in a session of its own, kept in memory and never written to disk, so its cookies, cache and site storage are seen by no other window, private or not. Lit keeps nothing from it:
+
+- No history: its pages are not recorded, and its closed tabs, and the window itself, can't be reopened. Reopen Closed Tab from a private window brings a normal tab back into a normal window.
+- It is left out of the windows reopened at the next launch.
+- Zooming a site there zooms only that window, and isn't saved.
+- Site permissions start from the sites you blocked; a site you allowed asks again. Answers there last only until the window closes.
+- Its downloads show only in its own Downloads list. Closing the window cancels those still on their way and drops the list; files already saved stay where they were saved.
+- Its right-click menu has no Add to Dictionary.
+
+Closing the window clears its session's data from memory. It still reads what normal windows saved, so the address bar can suggest pages from history, and saved site zooms apply. Changes made in Settings are saved, as in any window.
 
 ## Site permissions
 
@@ -95,7 +111,7 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 
 ## How it works
 
-- `src/main.js` opens windows and gives each tab its own Chromium `WebContentsView` under the toolbar; only the active tab's view is shown. It owns the tab list and sends it to the toolbar whenever it changes. The application menu holds every shortcut, so they work whether the toolbar or a page has focus.
+- `src/main.js` opens windows and gives each tab its own Chromium `WebContentsView` under the toolbar (in a private window, in that window's in-memory session, from `session.fromPartition`); only the active tab's view is shown. It owns the tab list and sends it to the toolbar whenever it changes. The application menu holds every shortcut, so they work whether the toolbar or a page has focus.
 - `src/index.html` is the toolbar: the tab strip (also the window's title bar), the address bar and the find field. When the active tab has not loaded anything, the address bar fills the window as the centered search box and the tab's page view stays hidden.
 - `src/preload.js` is the bridge between Lit's own pages (the toolbar, the address bar's suggestions, and the Settings, History and Downloads popups) and the main process.
 - `src/settings.js` lists every setting, grouped in sections, with its type and default; it also loads, checks and saves them. `src/settings.html` is the Settings popup, drawn entirely from that list, so a new setting only needs an entry there (plus a control in `settings.html` if it brings a new type). Each window shows the popup in its own transparent view over the tabs. While a shortcut is recorded, main passes the key presses to it instead of the menu.

@@ -117,3 +117,15 @@ test('save and load round-trip, keeping only valid sites, kinds and choices', ()
   assert.deepEqual(load(file), new Map())
   fs.rmSync(dir, { recursive: true })
 })
+
+test('a private window keeps only the sites’ Blocks', () => {
+  const { blocksOnly } = require('../src/permissions')
+  const sites = new Map([
+    ['https://a.com', { camera: 'allow', location: 'block' }],
+    ['https://b.com', { microphone: 'allow' }],
+    ['https://c.com', { notifications: 'block' }],
+  ])
+  assert.deepEqual(blocksOnly(sites), new Map([['https://a.com', { location: 'block' }], ['https://c.com', { notifications: 'block' }]]))
+  // The saved choices are left as they were.
+  assert.deepEqual(sites.get('https://a.com'), { camera: 'allow', location: 'block' })
+})

@@ -39,8 +39,10 @@ function quote(text) {
 //   keys           { reload, back, forward, print }: the current accelerators, shown
 //                  next to those items
 //   inSubframe     whether the right-click was inside an iframe
+//   learnWords     false in a private window, whose words would outlast it,
+//                  so it has no Add to Dictionary
 function pageMenu(params, context = {}) {
-  const { isPage = true, canGoBack = false, canGoForward = false, engineName = 'Google', askWhereToSave = true, keys = {}, inSubframe = false } = context
+  const { isPage = true, canGoBack = false, canGoForward = false, engineName = 'Google', askWhereToSave = true, keys = {}, inSubframe = false, learnWords = true } = context
   const flags = params.editFlags || {}
   const selection = (params.selectionText || '').trim()
   const groups = []
@@ -50,7 +52,7 @@ function pageMenu(params, context = {}) {
     const suggestions = (params.dictionarySuggestions || []).map((word) => ({ label: word, command: 'replaceMisspelling', arg: word }))
     groups.push([
       ...(suggestions.length ? suggestions : [{ label: 'No Guesses Found', enabled: false }]),
-      { label: 'Add to Dictionary', command: 'addToDictionary', arg: params.misspelledWord },
+      ...(learnWords ? [{ label: 'Add to Dictionary', command: 'addToDictionary', arg: params.misspelledWord }] : []),
     ])
   }
 

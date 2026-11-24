@@ -369,6 +369,51 @@
     .prompt-button.is-primary:hover { background: #fff; }
     .prompt .icon-button { width: 26px; height: 26px; flex: 0 0 auto; border-radius: 7px; }
 
+    /* A private window (?private in its address, from main) is a shade of
+       violet instead of grey, with a Private badge in the strip and a note
+       under the home search box. Its background matches the window's in
+       main.js. */
+    .private {
+      --line: rgba(196, 181, 253, .2);
+      --line-hover: rgba(196, 181, 253, .38);
+      --line-live: rgba(221, 214, 254, .75);
+      --dim: #8b84a0;
+      background: #0c0a12;
+    }
+    .private .tab-thumb { background: #1c1729; }
+    .private .prompt-box { background: #15111f; }
+    .private-badge {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      height: 24px;
+      margin-left: auto;
+      padding: 0 10px 0 8px;
+      border-radius: 999px;
+      color: #c4b5fd;
+      background: rgba(167, 139, 250, .12);
+      font-size: 11.5px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      white-space: nowrap;
+    }
+    .private .private-badge { display: flex; }
+    .private .open-downloads { margin-left: 0; }
+    .private-note {
+      display: none;
+      position: absolute;
+      top: calc(100% + 14px);
+      left: 0;
+      right: 0;
+      margin: 0;
+      color: var(--dim);
+      font-size: 12.5px;
+      line-height: 1.5;
+      text-align: center;
+      text-wrap: balance;
+    }
+    .home.private .private-note { display: block; animation: find-in 240ms var(--settle); }
+
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
         transition-duration: .01ms !important;
@@ -387,6 +432,15 @@
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
     </button>
+    <span class="private-badge" title="Lit keeps nothing from this window once it closes">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"></path>
+        <path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"></path>
+        <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"></path><path d="m2 2 20 20"></path>
+      </svg>
+      Private
+    </span>
     <button class="icon-button open-downloads is-hidden" id="open-downloads" type="button" tabindex="-1" aria-label="Downloads" title="Downloads" data-shortcut="shortcuts.downloads">
       <svg class="downloads-ring" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
         <circle class="ring-track" cx="11" cy="11" r="9.5"></circle>
@@ -412,6 +466,7 @@
       <input id="address" type="text" placeholder="Search or enter address" aria-label="Search or enter address"
         aria-autocomplete="list" autocomplete="off" spellcheck="false" autofocus>
       <button class="icon-button zoom" id="zoom" type="button" tabindex="-1" title="Reset Zoom" data-shortcut="shortcuts.resetZoom"></button>
+      <p class="private-note">Private window. Lit forgets its pages, cookies and site data when you close it.</p>
     </form>
     <div class="find" id="find" role="search" aria-label="Find in page">
       <!-- maxlength matches MAX_TEXT in src/find.js. -->
@@ -470,6 +525,11 @@
   </template>
 
   <script>
+    // A private window says so in its address (see createWindow in main.js).
+    if (new URLSearchParams(location.search).has('private')) {
+      document.body.classList.add('private')
+      document.getElementById('address').placeholder = 'Search privately or enter address'
+    }
     const addressForm = document.getElementById('address-form')
     const address = document.getElementById('address')
     const zoomButton = document.getElementById('zoom')
