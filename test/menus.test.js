@@ -129,4 +129,6 @@ test('a pinned tab unpins, and closing others leaves pinned tabs', () => {
   const allPinned = tabMenu({ index: 0, count: 2, started: true, pinnedCount: 2 })
   assert.equal(enabled(allPinned, 'Close Other Tabs'), false)
   assert.equal(enabled(allPinned, 'Close Tabs to the Right'), false)
+  // A tab without a real page (a popup on about:blank) can't be pinned.
+  assert.equal(enabled(tabMenu({ index: 0, count: 1, started: true, pinnable: false }), 'Pin Tab'), false)
 })

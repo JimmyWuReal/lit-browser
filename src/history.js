@@ -74,8 +74,12 @@ function suggest(entries, query, limit = SUGGESTIONS) {
 // The address bar's list: pinned tabs' pages ({ url, title }) that match
 // come first, marked `pinned`, then visited pages, each address once.
 function suggestWithPinned(pinned, entries, query, limit = SUGGESTIONS) {
-  const first = suggest(pinned, query, limit).map((item) => ({ ...item, pinned: true }))
-  const shown = new Set(first.map((item) => item.url))
+  // Two pinned tabs on one address (with different titles) show once.
+  const shown = new Set()
+  const first = suggest(pinned, query, pinned.length)
+    .filter((item) => !shown.has(item.url) && shown.add(item.url))
+    .slice(0, limit)
+    .map((item) => ({ ...item, pinned: true }))
   return [...first, ...suggest(entries.filter((entry) => !shown.has(entry.url)), query, limit - first.length)]
 }
 

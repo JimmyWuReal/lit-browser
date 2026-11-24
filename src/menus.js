@@ -119,17 +119,18 @@ function pageMenu(params, context = {}) {
 
 // The menu for a right-click on a tab, the `index`th of `count`, the
 // first `pinnedCount` of which are pinned. `started` is false for a tab
-// still showing the search box, which can't be pinned. Closing other tabs,
+// still showing the search box; `pinnable` says whether the tab is on a
+// page it could be pinned with. Closing other tabs,
 // or those to the right, leaves pinned tabs open. `keys` ({ reload,
 // duplicateTab, pinTab, closeTab, closeOtherTabs, closeTabsToRight }) are
 // the current accelerators, shown next to their items.
-function tabMenu({ index, count, started, pinnedCount = 0, keys = {} }) {
+function tabMenu({ index, count, started, pinnable = started, pinnedCount = 0, keys = {} }) {
   const pinned = index < pinnedCount
   return joinGroups([
     [
       { label: 'Reload', command: 'reload', enabled: Boolean(started), accelerator: keys.reload },
       { label: 'Duplicate', command: 'duplicate', accelerator: keys.duplicateTab },
-      { label: pinned ? 'Unpin Tab' : 'Pin Tab', command: 'pin', enabled: Boolean(started), accelerator: keys.pinTab },
+      { label: pinned ? 'Unpin Tab' : 'Pin Tab', command: 'pin', enabled: pinned || Boolean(pinnable), accelerator: keys.pinTab },
     ],
     [
       { label: 'Close Tab', command: 'close', accelerator: keys.closeTab },

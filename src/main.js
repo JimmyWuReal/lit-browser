@@ -402,13 +402,9 @@ function reopenClosed(focused) {
   target.reopenTab(entry.history, entry.index, entry.pinned)
 }
 
-// Every pinned tab's page, in every window, once each, for the address
-// bar's suggestions.
-function pinnedPages() {
-  const pages = new Map()
-  for (const controls of openWindows) for (const page of controls.pinnedPages()) if (!pages.has(page.url)) pages.set(page.url, page)
-  return [...pages.values()]
-}
+// Every pinned tab's page, in every window, for the address bar's
+// suggestions (which show each address once).
+const pinnedPages = () => [...openWindows].flatMap((controls) => controls.pinnedPages())
 
 // The File menu's Pin Tab is checked while the focused window's tab is
 // pinned, and only enabled for a tab that has a page.
@@ -417,7 +413,7 @@ function refreshPinItem() {
   const controls = controlsOf(BrowserWindow.getFocusedWindow())
   if (!item) return
   item.checked = Boolean(controls?.activePinned())
-  item.enabled = Boolean(controls?.page())
+  item.enabled = Boolean(controls?.canPin())
 }
 
 // After a change: rebuild the menu for new shortcuts, and tell every window.
@@ -462,6 +458,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   const ids = () => tabs.map((tab) => tab.id)
   // Pinned tabs are always the first ones (see placeIndex).
   const pinnedCount = () => tabs.filter((tab) => tab.pinned).length
+  // Only a tab on a real page (web or file) can be pinned, so it always has
+  // a page to reopen and to suggest; not one on a popup's about:blank.
+  const pinnable = (tab) => historyStore.recordable(tab.url || '')
   // Popup views by name, each made on first open (see openPopup), and the
   // name of the one open, if any.
   const popups = {}
@@ -1083,10 +1082,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   }
 
   // Pinning moves a tab to the end of the pinned ones, unpinning to just
-  // after them. A tab on the search box has nothing to pin.
+  // after them. A tab without a real page has nothing to pin.
   function setPinned(id, pinned) {
     const tab = find(id)
-    if (!tab || tab.pinned === pinned || (pinned && !tab.started)) return
+    if (!tab || tab.pinned === pinned || (pinned && !pinnable(tab))) return
     tabs.splice(tabs.indexOf(tab), 1)
     tab.pinned = pinned
     tabs.splice(pinnedCount(), 0, tab)
@@ -1100,7 +1099,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (!tab) return
     const keys = Object.fromEntries(['reload', 'duplicateTab', 'pinTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
       .map((command) => [command, settings[`shortcuts.${command}`]]))
-    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, pinnedCount: pinnedCount(), keys }), (command) => {
+    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, pinnable: pinnable(tab), pinnedCount: pinnedCount(), keys }), (command) => {
       if (!find(id)) return
       switch (command) {
         case 'reload': return tab.page.isDestroyed() ? undefined : tab.page.reload()
@@ -1317,12 +1316,14 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     duplicateTab: () => duplicateTab(activeId),
     togglePin: () => setPinned(activeId, !active()?.pinned),
     activePinned: () => Boolean(active()?.pinned),
+    // Whether Pin Tab can act on the active tab: unpin it, or pin it.
+    canPin: () => Boolean(active() && (active().pinned || pinnable(active()))),
     // Pinned tabs moving in from a closed window, in the background.
     adoptPins(histories) {
       for (const history of histories) addTab({ history, background: true, pinned: true })
     },
     // Each pinned tab's page, once it has one, for suggestions.
-    pinnedPages: () => tabs.filter((tab) => tab.pinned && tab.url).map((tab) => ({ url: tab.url, title: tab.title })),
+    pinnedPages: () => tabs.filter((tab) => tab.pinned && historyStore.recordable(tab.url || '')).map((tab) => ({ url: tab.url, title: tab.title })),
     closeOtherTabs: () => closeOtherTabs(activeId),
     closeTabsToRight: () => closeTabsToRight(activeId),
     setRecording: (on, keys) => {

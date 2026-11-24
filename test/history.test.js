@@ -125,4 +125,8 @@ test('pinned tabs come first in suggestions, each address once', () => {
   ])
   assert.deepEqual(suggestWithPinned(pinned, entries, 'repo', 1).map((item) => item.url), ['https://github.com/b'])
   assert.deepEqual(suggestWithPinned([], entries, 'mail').map((item) => item.url), ['https://mail.example.com/'])
+  // The same address pinned twice matches by either title, and shows once.
+  const twice = [{ url: 'https://news.com/', title: 'News' }, { url: 'https://news.com/', title: 'Front page' }]
+  assert.deepEqual(suggestWithPinned(twice, [], 'front'), [{ url: 'https://news.com/', title: 'Front page', pinned: true }])
+  assert.deepEqual(suggestWithPinned(twice, [], 'news').length, 1)
 })
