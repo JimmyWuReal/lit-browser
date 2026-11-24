@@ -327,17 +327,19 @@
     }
     @keyframes prompt-in { from { opacity: 0; transform: translateY(-4px); } }
     .prompt-box > svg { flex: 0 0 auto; color: var(--dim); }
+    /* A long site name shortens itself, so what it wants stays readable. */
     .prompt-text {
       flex: 1;
       min-width: 0;
+      display: flex;
       overflow: hidden;
       color: #bdbdbd;
       font-size: 12.5px;
       letter-spacing: -.01em;
       white-space: nowrap;
-      text-overflow: ellipsis;
     }
-    .prompt-text strong { color: #ededed; font-weight: 500; }
+    .prompt-text strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: #ededed; font-weight: 500; }
+    .prompt-text span { flex: none; white-space: pre; }
     .home .prompt { display: none; }
     /* The kit's buttons, small: outline for Block, solid for Allow. */
     .prompt-button {
@@ -594,7 +596,9 @@
       if (prompt && promptText.textContent !== `${prompt.site} wants to ${prompt.does}`) {
         const site = document.createElement('strong')
         site.textContent = prompt.site
-        promptText.replaceChildren(site, ` wants to ${prompt.does}`)
+        const does = document.createElement('span')
+        does.textContent = ` wants to ${prompt.does}`
+        promptText.replaceChildren(site, does)
         promptRow.title = promptText.textContent
       }
       if (key === shownPrompt) return
