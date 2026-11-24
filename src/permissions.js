@@ -10,6 +10,8 @@ const path = require('node:path')
 // "example.com wants to …".
 const KINDS = {
   camera: { label: 'Camera', does: 'use your camera' },
+  // Pan, tilt and zoom: asked on its own, as Chrome does.
+  cameraControls: { label: 'Camera controls', does: 'move and zoom your camera' },
   microphone: { label: 'Microphone', does: 'use your microphone' },
   location: { label: 'Location', does: 'know your location' },
   notifications: { label: 'Notifications', does: 'show notifications' },
@@ -35,9 +37,12 @@ const BY_MEDIA = { video: 'camera', audio: 'microphone' }
 // for a permission Lit does not ask about, which keeps Electron's default
 // (allowed): fullscreen, pointer lock, protected video and the like.
 // A `media` request without devices is camera pan, tilt and zoom, which
-// the prompt has no words for yet, so it is refused.
+// Electron also calls `media`.
 function kindsOf(permission, mediaTypes = []) {
-  if (permission === 'media') return [...new Set(mediaTypes.filter((type) => Object.hasOwn(BY_MEDIA, type)).map((type) => BY_MEDIA[type]))]
+  if (permission === 'media') {
+    const kinds = [...new Set(mediaTypes.filter((type) => Object.hasOwn(BY_MEDIA, type)).map((type) => BY_MEDIA[type]))]
+    return kinds.length ? kinds : ['cameraControls']
+  }
   if (!Object.hasOwn(BY_PERMISSION, permission)) return null
   return BY_PERMISSION[permission] ? [BY_PERMISSION[permission]] : []
 }
@@ -46,7 +51,7 @@ function kindsOf(permission, mediaTypes = []) {
 // is about, as in kindsOf. A media check names one device, or 'unknown'
 // for the camera's other streams; one without is pan, tilt and zoom.
 function checkKindsOf(permission, mediaType) {
-  if (permission === 'media') return mediaType === undefined ? [] : [mediaType === 'audio' ? 'microphone' : 'camera']
+  if (permission === 'media') return [mediaType === undefined ? 'cameraControls' : mediaType === 'audio' ? 'microphone' : 'camera']
   return kindsOf(permission)
 }
 

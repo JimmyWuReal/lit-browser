@@ -117,17 +117,19 @@ function siteFor(contents, asking, embedding) {
 
 // Requests for a kind Lit asks about are answered from the saved choices,
 // or by a prompt on the tab that asked, for the kinds not yet decided.
-// Only the page itself can prompt: a frame (even from the same site) gets
-// the saved choice, or no, since Electron can't say when the frame is gone
-// and its prompt stale. Anything not from a tab (Lit's own pages, a service
-// worker) is refused.
+// Only the page itself is answered. Frames are refused, even from the same
+// site: Electron can't say when one is gone (its prompt stale), and a
+// sandboxed frame keeps its site's address with no origin of its own.
+// Camera and microphone requests carry the origin itself
+// (`securityOrigin`), which is used when given. Anything not from a tab
+// (Lit's own pages, a service worker) is refused too.
 function onPermissionRequest(contents, permission, callback, details) {
   const kinds = permissions.kindsOf(permission, details.mediaTypes)
   if (!kinds) return callback(true)
-  const site = siteFor(contents, details.requestingUrl)
-  if (!site || !kinds.length) return callback(false)
+  const site = siteFor(contents, details.securityOrigin ?? details.requestingUrl)
+  if (!site || !kinds.length || !details.isMainFrame) return callback(false)
   const answer = permissions.status(sitePermissions, site, kinds)
-  if (answer !== 'ask' || !details.isMainFrame) return callback(answer === 'allow')
+  if (answer !== 'ask') return callback(answer === 'allow')
   for (const controls of openWindows) {
     if (controls.askPermission(contents, site, kinds, callback)) return
   }
@@ -136,10 +138,13 @@ function onPermissionRequest(contents, permission, callback, details) {
 
 // Checks (Notification.permission, navigator.permissions.query, device
 // labels) say yes only once a site was allowed. Electron has no "not asked
-// yet", so until then they read as denied; asking still prompts.
+// yet", so until then they read as denied; asking still prompts. A frame
+// in a page reads no, as its requests are refused; a service worker (no
+// page) reads its site's choice.
 function onPermissionCheck(contents, permission, requestingOrigin, details) {
   const kinds = permissions.checkKindsOf(permission, details.mediaType)
   if (!kinds) return true
+  if (contents && !details.isMainFrame) return false
   const site = siteFor(contents, requestingOrigin, details.embeddingOrigin)
   return Boolean(site) && kinds.length > 0 && permissions.status(sitePermissions, site, kinds) === 'allow'
 }
