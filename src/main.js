@@ -8,9 +8,10 @@ const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, s
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl, searchUrl, engineOf } = require('./url')
-const { afterClose, step, byNumber, remember, forgetOlder, reopenIndex, onScreen } = require('./tabs')
+const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
+const sessionStore = require('./session')
 const shortcuts = require('./shortcuts')
 const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
@@ -21,6 +22,11 @@ const { pageMenu, tabMenu } = require('./menus')
 const STRIP_HEIGHT = 38
 const BAR_HEIGHT = STRIP_HEIGHT + 44
 const PRELOAD = path.join(__dirname, 'preload.js')
+// Keep in sync with .menu padding and .row height in suggestions.html.
+const SUGGESTION_ROW = 38
+const SUGGESTIONS_PAD = 5
+// How long the suggestions list takes to fade out (its opacity transition).
+const SUGGESTIONS_FADE = 160
 
 // The toolbar's webContents -> its window's controls, so toolbar messages
 // only ever act on their own window. Each popup's webContents ->
@@ -41,8 +47,8 @@ let nextWindowKey = 1
 // A window: { key, tabs: [history], activeIndex, bounds, maximized,
 // fullScreen }, so tab order, the active tab and its place come back as they were.
 // A history is { entries, index } from navigationHistory, so back and
-// forward come back too. Kept in memory only, and forgotten after the
-// time the Forget closed tabs setting gives (and when Lit quits).
+// forward come back too. Kept in memory only, so Lit forgets them when it
+// quits; the Closed tabs to remember setting caps how many.
 const closed = []
 
 // Settings are read once at launch and saved on every change.
@@ -114,11 +120,44 @@ function setVisited(next, { now = false } = {}) {
   return true
 }
 
-// Whether the visit was recorded, so a title arriving later goes only to
-// a visit that was.
+// Records a visit and returns what unvisit needs to take it back, or
+// null when nothing was recorded (Save history is off, or not a real page).
+// Which navigations count as visits is up to the tab (see `committed`).
 function recordVisit(url, title) {
-  if (settings.saveHistory) setVisited(historyStore.visit(visited, { url, title, time: Date.now() }))
-  return settings.saveHistory
+  if (!settings.saveHistory || !historyStore.recordable(url)) return null
+  const previous = visited.find((entry) => entry.url === url) || null
+  const time = Date.now()
+  setVisited(historyStore.visit(visited, { url, title, time }))
+  return { url, time, previous }
+}
+
+// A page's address without its #fragment, to tell a jump within a page
+// from a new page.
+const withoutHash = (url) => url.split('#')[0]
+
+// The windows and tabs to reopen at the next launch (src/session.js),
+// saved a moment after anything in them changes, so a crash loses little,
+// and once more as Lit quits. Windows closing one by one during a quit
+// change nothing: the session is what was open when the quit began.
+let sessionFile
+let sessionSave = null
+let quitting = false
+
+function saveSession() {
+  clearTimeout(sessionSave)
+  sessionSave = null
+  if (!sessionFile) return
+  try {
+    if (!settings.restoreSession) return sessionStore.forget(sessionFile)
+    sessionStore.save(sessionFile, [...openWindows].map((controls) => controls.snapshot()).filter(Boolean))
+  } catch {
+    // Unsaved, the session saved last reopens instead.
+  }
+}
+
+function sessionChanged() {
+  if (quitting || sessionSave) return
+  sessionSave = setTimeout(saveSession, 1000)
 }
 
 // What the History popup draws.
@@ -129,7 +168,7 @@ const historyState = (error) => ({ entries: visited, enabled: settings.saveHisto
 
 function forgetClosed() {
   closed.length = 0
-  pruneClosed()
+  refreshReopen()
 }
 
 // This session's downloads, newest first, in memory only: { id, item,
@@ -203,19 +242,6 @@ function trackDownload(item) {
   if (read('progressing')) downloadsChanged(true)
 }
 
-// How long a closed tab can be reopened, per the Forget closed tabs setting.
-const KEEP_CLOSED = { '10m': 10 * 60 * 1000, '1h': 60 * 60 * 1000, '1d': 24 * 60 * 60 * 1000 }
-let closedTimer = null
-
-// Forgets closes older than the setting allows, then waits for the next
-// one to come due. Run after every change to the list or the setting.
-function pruneClosed() {
-  clearTimeout(closedTimer)
-  const due = forgetOlder(closed, Date.now(), KEEP_CLOSED[settings.closedTabsFor])
-  closedTimer = due === null ? null : setTimeout(pruneClosed, due - Date.now())
-  refreshReopen()
-}
-
 // What a popup draws when it opens.
 const popupState = (name) => ({ settings: settingsState, history: historyState, downloads: downloadsState })[name]()
 
@@ -245,14 +271,13 @@ function refreshReopen() {
 
 function rememberClosed(entry) {
   if (!settings.saveHistory) return
-  remember(closed, { ...entry, time: Date.now() })
-  pruneClosed()
+  remember(closed, entry, settings.closedTabsLimit)
+  refreshReopen()
 }
 
 // The last closed tab goes back where it was: its own window if still open,
 // else the focused one, else a new window. A closed window reopens whole.
 function reopenClosed(focused) {
-  pruneClosed()
   const entry = closed.pop()
   if (!entry) return
   refreshReopen()
@@ -273,8 +298,14 @@ function applySettings() {
   if (!settings.saveHistory) {
     forgetClosed()
     for (const controls of openWindows) controls.forgetTabHistories()
-  } else pruneClosed()
+  } else {
+    keepNewest(closed, settings.closedTabsLimit)
+    refreshReopen()
+  }
   for (const controls of openWindows) { controls.applyZoom(); controls.settingsChanged() }
+  // Turning Reopen windows off forgets the saved session now; Save history
+  // changes how much of each tab it keeps.
+  saveSession()
 }
 
 // `key`, `tabs`, `activeIndex`, `bounds`, `maximized` and `fullScreen` reopen
@@ -326,6 +357,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
         find: find && { text: find.text, active: find.active, matches: find.matches },
       })),
     })
+    sessionChanged()
   }
 
   // The toolbar's tooltips show the current shortcuts.
@@ -386,7 +418,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     layout()
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
-    page.on('did-stop-loading', () => { tab.loading = false; sync() })
+    page.on('did-stop-loading', () => { tab.loading = false; settle(tab); sync() })
     // The address being opened, before it commits: a tab duplicated or
     // closed before its first page commits gets it.
     page.on('did-start-navigation', ({ url, isMainFrame }) => { if (isMainFrame) tab.pendingUrl = url })
@@ -394,23 +426,23 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // as Chromium does not announce a title it already had.
     page.on('did-navigate', (_event, url) => {
       const history = page.navigationHistory
-      tab.url = url
       tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
       tab.favicon = null
       tab.find = findState.reset(tab.find)
       setZoom(tab, zoomFor(url))
-      tab.recorded = recordVisit(url, tab.title)
+      committed(tab, url, false)
       sync()
     })
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => {
       if (!isMainFrame) return
-      tab.url = url
-      tab.recorded = recordVisit(url, tab.title)
+      committed(tab, url, true)
       sync()
     })
+    // A title goes to the tab's visit once it is recorded; until then the
+    // visit takes the tab's latest title when it is.
     page.on('page-title-updated', (_event, title) => {
       tab.title = title
-      if (settings.saveHistory && tab.recorded) setVisited(historyStore.retitle(visited, tab.url, title))
+      if (tab.visit && !tab.unrecorded) setVisited(historyStore.retitle(visited, tab.visit.url, title))
       sync()
     })
     page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
@@ -454,6 +486,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       // Staying cancels a close in progress, so a later close the page
       // makes itself is not taken for one made here.
       else {
+        // A quit waits for every page, so staying cancels it too.
+        quitting = false
         delete tab.closedByUser
         delete tab.closeFocus
         delete tab.closeSnapshot
@@ -483,6 +517,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       tab.url = current.url || ''
       tab.title = current.title || ''
       tab.history = history
+      // Reopening a page is not a new visit to it, as in other browsers.
+      tab.restoring = true
       // If restoring fails, the page it was on still loads.
       const retry = url || current.url
       page.navigationHistory.restore(history).catch(() => { if (retry && !page.isDestroyed()) page.loadURL(retry).catch(() => {}) })
@@ -515,12 +551,71 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   function saveHistory(tab) {
     // While Save history is off, nothing is kept to reopen.
     if (!settings.saveHistory) return (tab.history = null)
-    if (!tab.page.isDestroyed() && tab.url) {
-      const entries = tab.page.navigationHistory.getAllEntries()
-      if (entries.length) tab.history = { entries, index: tab.page.navigationHistory.getActiveIndex() }
+    tab.history = liveHistory(tab) || tab.history
+    return tab.history || pendingHistory(tab)
+  }
+
+  // The page's back/forward list as Chromium has it now, once its first
+  // page has committed.
+  function liveHistory(tab) {
+    if (tab.page.isDestroyed() || !tab.url) return null
+    const entries = tab.page.navigationHistory.getAllEntries()
+    return entries.length ? { entries, index: tab.page.navigationHistory.getActiveIndex() } : null
+  }
+
+  // Before its first page commits, the address being opened stands in.
+  const pendingHistory = (tab) => (!tab.url && tab.pendingUrl ? { entries: [{ url: tab.pendingUrl, title: '' }], index: 0 } : null)
+
+  // A tab's back/forward list for the next launch. Unlike saveHistory it is
+  // kept while Save history is off, but then only as the page the tab is on.
+  function sessionHistory(tab) {
+    if (!tab.started) return null
+    const history = liveHistory(tab) || tab.history || pendingHistory(tab)
+    if (!history || settings.saveHistory) return history
+    const current = history.entries[history.index]
+    return current ? { entries: [current], index: 0 } : null
+  }
+
+  // History follows the back/forward list, as in other browsers, and
+  // records a page only once it has settled:
+  // - A page is recorded when its tab stops loading, so the addresses it
+  //   passes through while loading (redirects in the page, an address it
+  //   swaps for another) never show. An address a page moves to after it
+  //   has loaded (a web app's pushState) is recorded right away.
+  // - A page that replaces its tab's current entry (location.replace,
+  //   history.replaceState) takes back the visit that entry recorded, so
+  //   the address it left is not kept either.
+  // - A jump within the page (#section) is not a new visit.
+  // - A restored page (a reopened or restored tab, a duplicate) is not
+  //   one either.
+  // tab.visit is the visit this tab's page recorded; tab.unrecorded says
+  // its current page is still waiting to be.
+  function committed(tab, url, sameDocument) {
+    const list = tab.page.navigationHistory
+    const position = { length: list.length(), index: list.getActiveIndex() }
+    const replaced = tab.position?.length === position.length && tab.position.index === position.index
+    const left = tab.url
+    tab.position = position
+    tab.url = url
+    if (tab.restoring) {
+      tab.restoring = false
+      tab.unrecorded = false
+      tab.visit = null
+      return
     }
-    if (!tab.history && !tab.url && tab.pendingUrl) return { entries: [{ url: tab.pendingUrl, title: '' }], index: 0 }
-    return tab.history
+    if (sameDocument && withoutHash(url) === withoutHash(left)) return
+    if (replaced && url !== left && tab.visit?.url === left) {
+      setVisited(historyStore.unvisit(visited, tab.visit))
+      tab.visit = null
+    }
+    tab.unrecorded = true
+    if (!tab.page.isLoading()) settle(tab)
+  }
+
+  function settle(tab) {
+    if (!tab.unrecorded) return
+    tab.unrecorded = false
+    tab.visit = recordVisit(tab.url, tab.title)
   }
 
   // What Reopen Closed Tab needs to bring this window back.
@@ -582,6 +677,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   function navigate(input) {
     const tab = active()
     if (!tab || !input.trim()) return
+    hideSuggestions()
     tab.started = true
     show(tab)
     tab.page.loadURL(toUrl(input, settings.searchEngine)).catch(() => {})
@@ -787,6 +883,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   // Opening one popup over another swaps them; focus still goes back to
   // where it was before the first.
   function openPopup(name) {
+    hideSuggestions()
     const view = popupView(name)
     if (!popupOpen) toolbarHadFocus = win.webContents.isFocused()
     else if (popupOpen !== name) {
@@ -812,6 +909,82 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (toolbarHadFocus) return win.webContents.focus()
     const tab = active()
     if (tab) show(tab)
+  }
+
+  // Address bar suggestions (src/suggestions.html), in a view of their own
+  // sized to the list and laid over the page just under the address field,
+  // since the toolbar's page ends above the tabs. The toolbar keeps focus
+  // and handles the keys; the view only draws the list and reports a click.
+  // A click arrives while the list fades out (the toolbar closes it on
+  // losing focus to the click), so the list is kept until it is hidden.
+  let suggestionsView = null
+  let suggestions = []
+  let suggestionsOpen = false
+  let suggestionsHide = null
+
+  function showSuggestions(items, { x, y, width }) {
+    if (!suggestionsView) {
+      suggestionsView = new WebContentsView({ webPreferences: { preload: PRELOAD } })
+      suggestionsView.setBackgroundColor('#00000000')
+      suggestionsView.setVisible(false)
+      windowsByPopup.set(suggestionsView.webContents, { controls, name: 'suggestions' })
+      // The first list is sent before the page can hear it; send it again.
+      suggestionsView.webContents.on('did-finish-load', () => {
+        if (suggestionsOpen) suggestionsView.webContents.send('suggestions-show', suggestions)
+      })
+      suggestionsView.webContents.loadFile(path.join(__dirname, 'suggestions.html'))
+    }
+    clearTimeout(suggestionsHide)
+    suggestions = items
+    const { width: windowWidth, height: windowHeight } = win.getContentBounds()
+    const left = Math.max(0, Math.min(Math.round(x), windowWidth - 1))
+    const top = Math.max(0, Math.round(y))
+    suggestionsView.setBounds({
+      x: left,
+      y: top,
+      width: Math.max(1, Math.min(Math.round(width), windowWidth - left)),
+      height: Math.max(1, Math.min(items.length * SUGGESTION_ROW + SUGGESTIONS_PAD * 2, windowHeight - top)),
+    })
+    // Re-adding moves it over the tabs.
+    if (!suggestionsView.getVisible()) win.contentView.addChildView(suggestionsView)
+    suggestionsView.setVisible(true)
+    suggestionsOpen = true
+    suggestionsView.webContents.send('suggestions-show', items)
+  }
+
+  function hideSuggestions() {
+    if (!suggestionsOpen) return
+    suggestionsOpen = false
+    suggestionsView.webContents.send('suggestions-hide')
+    clearTimeout(suggestionsHide)
+    suggestionsHide = setTimeout(() => {
+      suggestions = []
+      if (win.isDestroyed()) return
+      // A click on the list's edge leaves focus on it; give it back.
+      const hadFocus = suggestionsView.webContents.isFocused()
+      suggestionsView.setVisible(false)
+      const tab = active()
+      if (hadFocus && tab) show(tab)
+    }, SUGGESTIONS_FADE)
+  }
+
+  // Pages from history matching what is typed, shown under the field at
+  // `rect` ({ x, y, width }, in the window). Answers with the pages shown.
+  function suggest(text, rect) {
+    const fits = rect && ['x', 'y', 'width'].every((key) => Number.isFinite(rect[key]))
+    const items = settings.addressSuggestions && fits && !popupOpen && typeof text === 'string' && text.length <= 2048
+      ? historyStore.suggest(visited, text)
+      : []
+    if (items.length) showSuggestions(items, rect)
+    else hideSuggestions()
+    return items
+  }
+
+  function pickSuggestion(index) {
+    const item = suggestions[index]
+    if (!item) return
+    hideSuggestions()
+    navigate(item.url)
   }
 
   // A page picked in History opens in the current tab, or with ⌘ in a
@@ -861,6 +1034,10 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     closePopup,
     popupOpen: () => popupOpen,
     openFromHistory,
+    suggest,
+    selectSuggestion: (index) => { if (suggestionsOpen) suggestionsView.webContents.send('suggestions-select', index) },
+    hideSuggestions,
+    pickSuggestion,
     showTabMenu,
     duplicateTab: () => duplicateTab(activeId),
     closeOtherTabs: () => closeOtherTabs(activeId),
@@ -881,6 +1058,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
         delete tab.closeSnapshot
       }
     },
+    // What reopening this window at the next launch needs (see src/session.js).
+    snapshot: () => (tabs.length ? closedWindow(tabs.map(sessionHistory), Math.max(tabs.indexOf(active()), 0)) : null),
     historyChanged() {
       if (popupOpen === 'history') popups.history.webContents.send('history-changed', historyState())
     },
@@ -893,6 +1072,13 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   openWindows.add(controls)
 
   win.on('resize', layout)
+  // Where the window is, and which window was in front, come back next launch.
+  for (const change of ['move', 'resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(change, sessionChanged)
+  win.on('focus', () => {
+    openWindows.delete(controls)
+    openWindows.add(controls)
+    sessionChanged()
+  })
   win.webContents.on('context-menu', (_event, params) => showPageMenu(win.webContents, params, false))
   // A window closed with tabs still in it (⇧⌘W, the close button) can be
   // reopened whole. A window closed by its last tab was remembered in
@@ -907,11 +1093,14 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendDownloads() })
   win.on('closed', () => {
     openWindows.delete(controls)
+    sessionChanged()
     if (closingWindow) rememberClosed(closingWindow)
     for (const tab of tabs.splice(0)) {
       if (!tab.page.isDestroyed()) tab.page.close()
     }
     for (const view of Object.values(popups)) view.webContents.close()
+    clearTimeout(suggestionsHide)
+    suggestionsView?.webContents.close()
   })
 
   win.loadFile(path.join(__dirname, 'index.html'))
@@ -1081,6 +1270,9 @@ ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 ipcMain.on('open-downloads', fromToolbar((c) => c.openPopup('downloads')))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
+ipcMain.handle('suggest', (event, text, rect) => windowsByToolbar.get(event.sender)?.suggest(text, rect) ?? [])
+ipcMain.on('suggestions-select', fromToolbar((c, index) => Number.isInteger(index) && c.selectSuggestion(index)))
+ipcMain.on('suggestions-close', fromToolbar((c) => c.hideSuggestions()))
 
 // Popup messages, answered only for the popup `name`.
 const fromPopup = (name, handler) => (event, ...args) => {
@@ -1090,6 +1282,7 @@ const fromPopup = (name, handler) => (event, ...args) => {
 const fromSettings = (handler) => fromPopup('settings', handler)
 const fromHistory = (handler) => fromPopup('history', handler)
 const fromDownloads = (handler) => fromPopup('downloads', handler)
+ipcMain.on('suggestions-pick', fromPopup('suggestions', (c, index) => Number.isInteger(index) && c.pickSuggestion(index)))
 ipcMain.handle('settings-get', fromSettings(() => settingsState()))
 ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
   const { values, error } = settingsStore.update(settings, key, value)
@@ -1156,13 +1349,22 @@ app.whenReady().then(() => {
   // The packaged app gets its icon from the bundle; in development, show it in the Dock too.
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '..', 'build', 'icon.png'))
   Menu.setApplicationMenu(buildMenu())
-  createWindow()
+  sessionFile = path.join(app.getPath('userData'), 'session.json')
+  // The windows open when Lit last quit, the one in front opened last.
+  const restored = settings.restoreSession ? sessionStore.load(sessionFile) : []
+  if (restored.length) for (const saved of restored) createWindow(saved)
+  else createWindow()
   // Like other Mac browsers, Lit keeps running with no windows open;
   // clicking the Dock icon opens a fresh one. Registered after the first
   // window so a launch-time activate cannot open a second.
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow() })
 })
 
+// The session is saved as the quit begins, before windows start closing.
+app.on('before-quit', () => {
+  saveSession()
+  quitting = true
+})
 // A save still waiting when Lit quits is written now.
 app.on('will-quit', () => { if (historySave) saveVisited() })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

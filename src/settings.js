@@ -38,6 +38,13 @@ const SECTIONS = [
         options: [0.8, 0.9, 1, 1.1, 1.25, 1.5].map((value) => ({ value, label: zoom.percent(value) })),
         default: 1,
       },
+      {
+        key: 'addressSuggestions',
+        label: 'Suggest pages from history',
+        description: 'As you type in the address bar, show visited pages whose title or address matches.',
+        type: 'toggle',
+        default: true,
+      },
     ],
   },
   {
@@ -73,6 +80,21 @@ const SECTIONS = [
         type: 'toggle',
         default: true,
       },
+      {
+        key: 'restoreSession',
+        label: 'Reopen windows from last time',
+        description: 'Lit opens with the windows and tabs that were open when it quit.',
+        type: 'toggle',
+        default: true,
+      },
+      {
+        key: 'closedTabsLimit',
+        label: 'Closed tabs to remember',
+        description: 'For Reopen Closed Tab. Kept in memory only, and forgotten when Lit quits.',
+        type: 'choice',
+        options: [10, 25, 50, 100].map((value) => ({ value, label: String(value) })),
+        default: 50,
+      },
     ],
   },
   {
@@ -95,17 +117,9 @@ const SECTIONS = [
       {
         key: 'saveHistory',
         label: 'Save history',
-        description: 'Pages you visit, and closed tabs to reopen. When off, neither is kept.',
+        description: 'Pages you visit, and closed tabs to reopen. When off, neither is kept, and reopened windows keep only each tab’s page, not its back and forward history.',
         type: 'toggle',
         default: true,
-      },
-      {
-        key: 'closedTabsFor',
-        label: 'Forget closed tabs after',
-        description: 'Closed tabs are kept in memory only, for Reopen Closed Tab.',
-        type: 'choice',
-        options: [{ value: '10m', label: '10 minutes' }, { value: '1h', label: '1 hour' }, { value: '1d', label: '1 day' }],
-        default: '1h',
       },
       {
         key: 'doNotTrack',

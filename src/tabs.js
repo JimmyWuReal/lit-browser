@@ -25,19 +25,16 @@ function byNumber(ids, number) {
 }
 
 // Closed tabs and windows, for Reopen Closed Tab: newest last, and only
-// the `limit` newest are kept.
-function remember(closed, entry, limit = 25) {
+// the `limit` newest are kept (the Closed tabs to remember setting).
+function remember(closed, entry, limit) {
   closed.push(entry)
-  if (closed.length > limit) closed.splice(0, closed.length - limit)
-  return closed
+  return keepNewest(closed, limit)
 }
 
-// Drops entries closed `keepFor` ms or more before `now` (each has `time`).
-// Returns when the next one expires, or null when none are left.
-function forgetOlder(closed, now, keepFor) {
-  const kept = closed.filter((entry) => now - entry.time < keepFor)
-  closed.splice(0, closed.length, ...kept)
-  return kept.length ? Math.min(...kept.map((entry) => entry.time)) + keepFor : null
+// Drops all but the `limit` newest, as when the setting is lowered.
+function keepNewest(closed, limit) {
+  if (closed.length > limit) closed.splice(0, closed.length - limit)
+  return closed
 }
 
 // Where a reopened tab goes: back at its old place, or at the end if the
@@ -51,4 +48,4 @@ const onScreen = (bounds, areas) => areas.some((area) =>
   bounds.x < area.x + area.width && bounds.x + bounds.width > area.x &&
   bounds.y < area.y + area.height && bounds.y + bounds.height > area.y)
 
-module.exports = { afterClose, step, byNumber, remember, forgetOlder, reopenIndex, onScreen }
+module.exports = { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen }
