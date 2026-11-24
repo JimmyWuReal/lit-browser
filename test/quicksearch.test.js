@@ -16,6 +16,12 @@ test('a shortcut at the end works too', () => {
   assert.deepEqual(parse('react !gh').query, 'react')
 })
 
+test('the search keeps its spacing, and dots survive in Maps', () => {
+  assert.equal(parse('!gh "a  b"').query, '"a  b"')
+  assert.equal(parse('"a  b"  !gh').query, '"a  b"')
+  assert.equal(resolve('!maps ..'), 'https://www.google.com/maps/search/?api=1&query=..')
+})
+
 test('a shortcut alone opens the site', () => {
   assert.equal(resolve('!yt'), 'https://www.youtube.com/')
   assert.equal(resolve('!maps '), 'https://maps.google.com/')

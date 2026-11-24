@@ -667,7 +667,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   function newTab() {
     const current = active()
     addTab({
-      url: settings.newTabPage ? destination(settings.newTabPage) : undefined,
+      url: settings.newTabPage ? toUrl(settings.newTabPage, settings.searchEngine) : undefined,
       index: settings.newTabPosition === 'next' && current ? tabs.indexOf(current) + 1 : tabs.length,
     })
   }

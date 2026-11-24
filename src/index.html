@@ -792,6 +792,8 @@
     async function suggest() {
       const request = ++suggestRequest
       typed = address.value
+      // The old rows can't be picked while the new ones are on their way.
+      suggestions = []
       selected = -1
       const box = address.getBoundingClientRect()
       const items = await window.lit.suggest(typed, { x: box.left, y: box.bottom + 6, width: box.width })

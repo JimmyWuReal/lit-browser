@@ -16,7 +16,7 @@ const SITES = [
   { id: 'google', name: 'Google', aliases: ['g', 'google'], home: 'https://www.google.com/', search: 'https://www.google.com/search?q={query}' },
   { id: 'duckduckgo', name: 'DuckDuckGo', aliases: ['ddg', 'duck'], home: 'https://duckduckgo.com/', search: 'https://duckduckgo.com/?q={query}' },
   { id: 'github', name: 'GitHub', aliases: ['gh', 'github'], home: 'https://github.com/', search: 'https://github.com/search?q={query}' },
-  { id: 'maps', name: 'Google Maps', aliases: ['maps', 'map'], home: 'https://maps.google.com/', search: 'https://www.google.com/maps/search/{query}/', icon: 'google-maps' },
+  { id: 'maps', name: 'Google Maps', aliases: ['maps', 'map'], home: 'https://maps.google.com/', search: 'https://www.google.com/maps/search/?api=1&query={query}', icon: 'google-maps' },
   { id: 'reddit', name: 'Reddit', aliases: ['r', 'reddit'], home: 'https://www.reddit.com/', search: 'https://www.reddit.com/search/?q={query}' },
   { id: 'x', name: 'X', aliases: ['x', 'twitter'], home: 'https://x.com/', search: 'https://x.com/search?q={query}' },
   { id: 'chatgpt', name: 'ChatGPT', aliases: ['gpt', 'chatgpt'], home: 'https://chatgpt.com/', search: 'https://chatgpt.com/?q={query}' },
@@ -59,11 +59,14 @@ function urlFor(site, query = '') {
 // (`!yt lofi`, `lofi !yt`, or `!yt` alone), else null.
 function parse(input, prefix = '!') {
   if (typeof input !== 'string' || !PREFIXES.includes(prefix)) return null
-  const words = input.trim().split(/\s+/)
+  const text = input.trim()
+  const [first] = text.split(/\s/, 1)
+  const last = text.match(/\S*$/)[0]
   const shortcut = (word) => word.length > prefix.length && word.startsWith(prefix) && siteFor(word.slice(prefix.length))
-  for (const [at, rest] of [[0, words.slice(1)], [words.length - 1, words.slice(0, -1)]]) {
-    const site = shortcut(words[at])
-    if (site) return { site, alias: words[at].slice(prefix.length).toLowerCase(), query: rest.join(' ') }
+  // The search keeps its own spacing.
+  for (const [word, query] of [[first, text.slice(first.length)], [last, text.slice(0, text.length - last.length)]]) {
+    const site = shortcut(word)
+    if (site) return { site, alias: word.slice(prefix.length).toLowerCase(), query: query.trim() }
   }
   return null
 }
