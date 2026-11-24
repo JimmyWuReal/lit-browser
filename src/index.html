@@ -667,7 +667,13 @@
         // The first Escape only closes the list and puts back what was typed.
         address.value = typed
         closeSuggestions()
-      } else if (event.key === 'Escape') { editing = false; address.value = currentUrl(); address.select() }
+      } else if (event.key === 'Escape') {
+        // Also drops a lookup still on its way.
+        closeSuggestions()
+        editing = false
+        address.value = currentUrl()
+        address.select()
+      }
     })
     address.addEventListener('blur', () => {
       closeSuggestions(true)

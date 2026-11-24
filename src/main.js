@@ -133,6 +133,18 @@ function recordVisit(url, title) {
   return { url, time, previous }
 }
 
+// Visits taken back after the same page was visited again (by another
+// tab), by time: one taken back later must not bring them back as its
+// `previous`, so it goes past them to theirs.
+const takenBack = new Map()
+function takeBack(visit) {
+  let previous = visit.previous
+  while (previous && takenBack.has(previous.time)) previous = takenBack.get(previous.time).previous
+  const next = historyStore.unvisit(visited, { ...visit, previous })
+  if (next === visited) takenBack.set(visit.time, { ...visit, previous })
+  else setVisited(next)
+}
+
 // How soon after loading a page that loads another by itself, untouched,
 // counts as redirecting rather than as a page someone read.
 const REDIRECT_AFTER = 5000
@@ -539,7 +551,12 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       tab.restoring = true
       // If restoring fails, the page it was on still loads.
       const retry = url || current.url
-      page.navigationHistory.restore(history).catch(() => { if (retry && !page.isDestroyed()) page.loadURL(retry).catch(() => {}) })
+      // When neither commits, the next page is a visit again.
+      const restored = () => { tab.restoring = false }
+      page.navigationHistory.restore(history).catch(() => {
+        if (retry && !page.isDestroyed()) page.loadURL(retry).catch(restored)
+        else restored()
+      })
     } else if (url) page.loadURL(url, referrer ? { httpReferrer: referrer } : {}).catch(() => {})
     // A popup can stay on the about:blank its opener writes into, without
     // ever firing did-navigate, so it gets its zoom here.
@@ -601,10 +618,11 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   //   passes through while loading (redirects in the page, an address it
   //   swaps for another) never show. An address a page moves to after it
   //   has loaded (a web app's pushState) is recorded right away.
-  // - A page that moves on by itself (a new entry, or replacing its own)
-  //   within REDIRECT_AFTER of loading, with no click, key press or scroll
-  //   on it, is redirecting: that takes back the visit it recorded. Moves
-  //   you prompt, or that come later, keep it.
+  // - A page that moves on by itself (loading another page, or replacing
+  //   its own address) within REDIRECT_AFTER of loading, with no click,
+  //   key press or scroll on it, is redirecting: that takes back the visit
+  //   it recorded. Moves you prompt, or that come later, keep it, and so
+  //   does a pushState, which keeps both addresses in the back list.
   // - A page left before it finished loading is recorded when you left it
   //   (a link clicked, an address typed, Back, closing it), as you saw it.
   // - A jump within the page (#section) is not a new visit.
@@ -637,9 +655,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     // Forward to the entry that was there looks the same in numbers.
     const added = before && position.index === before.index + 1 && position.length === position.index + 1 &&
       !(position.length === before.length && url === before.next)
-    const redirected = (replaced || added) && unprompted
+    const redirected = (replaced || (added && !sameDocument)) && unprompted
     if (redirected && url !== left && Date.now() - (tab.visit?.time ?? 0) < REDIRECT_AFTER && tab.visit && withoutHash(tab.visit.url) === withoutHash(left)) {
-      setVisited(historyStore.unvisit(visited, tab.visit))
+      takeBack(tab.visit)
       tab.visit = null
     }
     // A page left while loading, other than by its own doing, still counts.
