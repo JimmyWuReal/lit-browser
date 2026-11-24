@@ -211,7 +211,7 @@
       font-size: 13px;
       letter-spacing: -.01em;
       box-shadow: inset 0 0 0 1px var(--line);
-      transition: box-shadow 200ms ease;
+      transition: box-shadow 200ms ease, padding 200ms var(--settle);
     }
     .address input::placeholder { color: var(--dim); }
     .address input:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
@@ -228,6 +228,38 @@
     .address:focus-within svg { color: #fff; }
     /* Room for the zoom button, only while it shows. */
     .address.is-zoomed input { padding-right: 64px; }
+
+    /* Quick search: a typed shortcut (!yt) becomes a chip naming its site
+       at the start of the field, and what follows searches that site.
+       Stays mounted and eases in and out like the zoom button; the field's
+       text makes room for it (--chip-width is measured in the script). */
+    .chip {
+      position: absolute;
+      top: 50%;
+      left: 32px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 22px;
+      padding: 0 8px 0 6px;
+      border-radius: 6px;
+      color: #ededed;
+      background: rgba(255, 255, 255, .08);
+      box-shadow: inset 0 0 0 1px var(--line);
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-50%) scale(.8);
+      transform-origin: left center;
+      transition: opacity 160ms ease-out, transform 200ms var(--settle), visibility 0s linear 200ms;
+    }
+    .chip img { width: 14px; height: 14px; object-fit: contain; }
+    .address.has-chip .chip { opacity: 1; visibility: visible; transform: translateY(-50%); transition-delay: 0s; }
+    .address.has-chip input { padding-left: calc(38px + var(--chip-width, 0px)); }
 
     /* The page's zoom, shown at the right of the address field when it is
        not the default; clicking resets it. Stays mounted and eases in and
@@ -262,6 +294,9 @@
     .home .address { flex: 0 1 560px; }
     .home .address input { height: 48px; padding: 0 16px 0 42px; border-radius: 10px; }
     .home .address svg { left: 16px; width: 15px; height: 15px; }
+    .home .chip { left: 38px; height: 28px; gap: 7px; padding: 0 10px 0 8px; border-radius: 7px; font-size: 13px; }
+    .home .chip img { width: 16px; height: 16px; }
+    .home .address.has-chip input { padding-left: calc(46px + var(--chip-width, 0px)); }
 
     /* Find in page: a field at the end of the address row, shown while the
        active tab has its find open. It slides in; closing just hides it. */
@@ -409,6 +444,7 @@
         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path>
       </svg>
+      <span class="chip" id="chip" aria-hidden="true"><img alt=""><span></span></span>
       <input id="address" type="text" placeholder="Search or enter address" aria-label="Search or enter address"
         aria-autocomplete="list" autocomplete="off" spellcheck="false" autofocus>
       <button class="icon-button zoom" id="zoom" type="button" tabindex="-1" title="Reset Zoom" data-shortcut="shortcuts.resetZoom"></button>
@@ -575,9 +611,10 @@
       // follows the page's address when it changes, unless the user is
       // typing; so a sent address stays until the new page commits.
       const url = currentUrl()
-      if (switched) { editing = false; closeSuggestions() }
+      if (switched) { editing = false; closeSuggestions(); setChip(null) }
       if (switched || (!editing && url !== shownUrl)) address.value = url
       shownUrl = url
+      measureChip()
 
       // The zoom button keeps its last text while it fades out.
       const zoom = tab?.started ? tab.zoom : ''
@@ -755,6 +792,8 @@
     async function suggest() {
       const request = ++suggestRequest
       typed = address.value
+      // The old rows can't be picked while the new ones are on their way.
+      suggestions = []
       selected = -1
       const box = address.getBoundingClientRect()
       const items = await window.lit.suggest(typed, { x: box.left, y: box.bottom + 6, width: box.width })
@@ -772,19 +811,97 @@
       // -1 is the typed text itself, between the last page and the first.
       const count = suggestions.length + 1
       selected = ((selected + 1 + delta + count) % count) - 1
-      address.value = selected === -1 ? typed : suggestions[selected].url
+      const item = suggestions[selected]
+      address.value = selected === -1 ? typed : item.kind === 'site' ? item.shortcut : item.url
       window.lit.selectSuggestion(selected)
     }
     window.addEventListener('resize', () => closeSuggestions())
 
+    // Quick search (see src/quicksearch.js): { prefix, sites } from main,
+    // or null while it is off. Typing a site's shortcut and a space (or
+    // Tab), pasting one with a search, or picking a site from the list
+    // shows the site as a chip at the start of the field; the field then
+    // holds only the search. Backspace at the start puts the shortcut back
+    // as text. The chip lasts until the search is sent or dropped.
+    let quick = null
+    // { site, alias } while the chip shows.
+    let chip = null
+    const chipBox = document.getElementById('chip')
+    const siteFor = (alias) => quick?.sites.find((site) => site.aliases.includes(alias.toLowerCase()))
+    const shortcutOf = (alias) => `${quick?.prefix ?? ''}${alias}`
+
+    function measureChip() {
+      if (chip) addressForm.style.setProperty('--chip-width', `${chipBox.offsetWidth}px`)
+    }
+    function setChip(next) {
+      chip = next
+      addressForm.classList.toggle('has-chip', Boolean(chip))
+      if (chip) {
+        chipBox.querySelector('img').src = chip.site.icon
+        chipBox.querySelector('span').textContent = chip.site.name
+        measureChip()
+      }
+      const label = chip ? `Search ${chip.site.name}` : 'Search or enter address'
+      address.placeholder = label
+      address.setAttribute('aria-label', label)
+    }
+    // Shows the chip with `search` in the field after it.
+    // `caret` is where in the search the caret goes.
+    function enterChip(site, alias, search = '', caret = search.length) {
+      closeSuggestions()
+      editing = true
+      setChip({ site, alias })
+      address.value = search
+      address.setSelectionRange(caret, caret)
+    }
+    // The shortcut typed in full and followed by a space or a search, as
+    // `!yt` and what follows, or null.
+    function typedShortcut() {
+      const match = quick && address.value.match(/^(\S+)\s+([\s\S]*)$/)
+      if (!match || !match[1].startsWith(quick.prefix)) return null
+      const alias = match[1].slice(quick.prefix.length)
+      const site = siteFor(alias)
+      return site && { site, alias: alias.toLowerCase(), search: match[2], end: match[1].length + 1 }
+    }
+    window.lit.onQuickSearch((next) => {
+      // Turned off, or a new prefix: the chip goes back into the field as
+      // the shortcut it was typed as.
+      // Rows listed for the old prefix no longer apply.
+      if (next?.prefix !== quick?.prefix && document.activeElement === address) closeSuggestions()
+      if (chip && next?.prefix !== quick.prefix) {
+        const text = fieldText()
+        setChip(null)
+        address.value = text
+      }
+      quick = next
+    })
+    window.lit.onQuickSearchPick(({ id, alias }) => {
+      const site = quick?.sites.find((item) => item.id === id)
+      if (!site) return
+      address.focus()
+      enterChip(site, alias)
+    })
+
+    // What the field holds, with the chip's shortcut back in front.
+    const fieldText = () => (chip ? `${shortcutOf(chip.alias)} ${address.value}` : address.value)
+
     addressForm.addEventListener('submit', (event) => {
       event.preventDefault()
-      if (!address.value.trim()) return
+      // Enter on a site in the list shows its chip, to type the search.
+      const item = !chip && suggestions[selected]
+      if (item?.kind === 'site') {
+        const site = siteFor(item.alias)
+        if (site) return enterChip(site, item.alias)
+      }
+      const text = fieldText()
+      if (!text.trim()) return
       closeSuggestions()
       document.body.classList.remove('home')
       // What was typed stays until the page's real address arrives.
       editing = false
-      window.lit.navigate(address.value)
+      setChip(null)
+      address.value = text
+      window.lit.navigate(text)
       address.blur()
     })
 
@@ -792,11 +909,52 @@
     // While an input method composes, its half-typed text is not looked up.
     address.addEventListener('input', (event) => {
       editing = true
-      if (!event.isComposing) suggest()
+      if (event.isComposing) return
+      if (!chip) {
+        // A space right after a typed shortcut, or a pasted one, shows its chip.
+        const found = typedShortcut()
+        const pasted = event.inputType === 'insertFromPaste' || event.inputType === 'insertFromDrop'
+        if (found && (pasted || (/^\s$/.test(event.data ?? '') && address.selectionStart === found.end))) {
+          // The caret stays where it was in the search.
+          const caret = found.search.length - (address.value.length - address.selectionStart)
+          return enterChip(found.site, found.alias, found.search, Math.max(0, caret))
+        }
+      }
+      // The site's search lists nothing under the field.
+      if (chip) closeSuggestions()
+      else suggest()
     })
-    address.addEventListener('compositionend', suggest)
+    // An input method can commit the space, or it and the search, at once.
+    address.addEventListener('compositionend', (event) => {
+      if (chip) return
+      const found = /\s/.test(event.data ?? '') && typedShortcut()
+      if (found) enterChip(found.site, found.alias, found.search, Math.max(0, found.search.length - (address.value.length - address.selectionStart)))
+      else suggest()
+    })
     address.addEventListener('keydown', (event) => {
       if (event.isComposing || event.keyCode === 229) return
+      const plain = !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
+      // Backspace at the very start of the search puts the shortcut back as text.
+      if (chip && event.key === 'Backspace' && plain && address.selectionStart === 0 && address.selectionEnd === 0) {
+        event.preventDefault()
+        const shortcut = shortcutOf(chip.alias)
+        const search = address.value
+        setChip(null)
+        address.value = search ? `${shortcut} ${search}` : shortcut
+        address.setSelectionRange(shortcut.length, shortcut.length)
+        suggest()
+        return
+      }
+      // Tab on a site in the list, or after its whole shortcut, shows its chip.
+      if (!chip && quick && event.key === 'Tab' && plain) {
+        const item = suggestions[selected]
+        const alias = item?.kind === 'site' ? item.alias : address.value.startsWith(quick.prefix) ? address.value.slice(quick.prefix.length) : ''
+        const site = alias && !/\s/.test(alias) && siteFor(alias)
+        if (site) {
+          event.preventDefault()
+          return enterChip(site, alias.toLowerCase())
+        }
+      }
       if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && suggestions.length) {
         event.preventDefault()
         moveSelection(event.key === 'ArrowDown' ? 1 : -1)
@@ -807,6 +965,7 @@
       } else if (event.key === 'Escape') {
         // Also drops a lookup still on its way.
         closeSuggestions()
+        setChip(null)
         editing = false
         address.value = currentUrl()
         address.select()
@@ -814,7 +973,7 @@
     })
     address.addEventListener('blur', () => {
       closeSuggestions(true)
-      if (editing) { editing = false; address.value = currentUrl() }
+      if (editing) { editing = false; setChip(null); address.value = currentUrl() }
     })
     address.addEventListener('focus', () => address.select())
 
@@ -849,7 +1008,16 @@
       shortcutLabels = labels
       document.querySelectorAll('[data-shortcut]').forEach(labelShortcut)
     })
-    window.lit.onFocusAddress(() => { address.focus(); address.select() })
+    window.lit.onFocusAddress(() => {
+      // Selects everything, so a chip goes back to being text too.
+      if (chip) {
+        const text = fieldText()
+        setChip(null)
+        address.value = text
+      }
+      address.focus()
+      address.select()
+    })
     window.lit.onFocusFind(() => { findInput.focus(); findInput.select() })
   </script>
 </body>
