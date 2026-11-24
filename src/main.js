@@ -690,7 +690,17 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     const tab = find(tabId)
     const prompt = tab?.prompts.find((each) => each.id === promptId)
     if (!prompt || !Array.isArray(kinds) || kinds.join() !== asking(prompt).join()) return
-    if (choice) return choosePermission(prompt.site, asking(prompt), choice)
+    if (choice) {
+      const kinds = asking(prompt)
+      if (choosePermission(prompt.site, kinds, choice) || win.isDestroyed()) return
+      // The choice still holds; say it won't outlast this run.
+      dialog.showMessageBox(win, {
+        type: 'warning',
+        message: 'Couldn’t save site permissions',
+        detail: `${permissions.label(prompt.site)} ${choice === 'allow' ? 'can' : 'can’t'} ${permissions.describe(kinds)} until Lit quits, but it will be asked again after that.`,
+      }).catch(() => {})
+      return
+    }
     tab.prompts.splice(tab.prompts.indexOf(prompt), 1)
     for (const callback of prompt.callbacks) callback(false)
     sync()
