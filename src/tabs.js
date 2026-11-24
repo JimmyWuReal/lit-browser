@@ -24,16 +24,25 @@ function byNumber(ids, number) {
   return number === 9 ? ids[ids.length - 1] : ids[number - 1] ?? null
 }
 
-// Closed tabs and windows, for Reopen Closed Tab: newest last, and only
-// the `limit` newest are kept (the Closed tabs to remember setting).
+// Closed tabs and windows, for Reopen Closed Tab: newest last, holding
+// at most `limit` tabs (the Closed tabs to remember setting).
 function remember(closed, entry, limit) {
   closed.push(entry)
   return keepNewest(closed, limit)
 }
 
-// Drops all but the `limit` newest, as when the setting is lowered.
+// Drops the oldest entries until the tabs left fit `limit`; a window
+// ({ tabs }) counts each of its tabs. The newest entry always stays, so a
+// window with more tabs than the limit can still come back whole.
 function keepNewest(closed, limit) {
-  if (closed.length > limit) closed.splice(0, closed.length - limit)
+  let count = 0
+  let keep = 0
+  for (let i = closed.length - 1; i >= 0; i--) {
+    count += closed[i].tabs?.length || 1
+    if (count > limit && keep) break
+    keep++
+  }
+  closed.splice(0, closed.length - keep)
   return closed
 }
 

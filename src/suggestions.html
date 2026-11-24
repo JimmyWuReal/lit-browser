@@ -84,7 +84,11 @@
     // How the address bar shows an address: without its scheme and www.
     const bare = (url) => url.replace(/^https?:\/\/(www\.)?/, '')
 
-    function draw(items) {
+    // Which list main last showed; a click names it.
+    let generation = 0
+    function draw(list) {
+      generation = list.generation
+      const items = list.items
       menu.replaceChildren(...items.map((item, index) => {
         const row = rowTemplate.content.firstElementChild.cloneNode(true)
         row.querySelector('.title').textContent = item.title || bare(item.url)
@@ -92,7 +96,7 @@
         // Picked on press: the address field closes the list as it loses
         // focus to this click, and the list only lasts while it fades out.
         row.addEventListener('mousedown', (event) => {
-          if (event.button === 0) window.lit.suggestions.pick(index)
+          if (event.button === 0) window.lit.suggestions.pick(index, generation)
         })
         return row
       }))

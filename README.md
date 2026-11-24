@@ -29,7 +29,7 @@ Zoom is per site, as in Chrome: zooming a page zooms every tab on that site, and
 
 Middle-click closes a tab. In the tab strip, arrow keys move between tabs and Delete closes one.
 
-⇧⌘T brings back the last tab you closed (⌘W, its close button, middle-click) as it was then, with its back/forward history, in its old place. A closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers the last 50 closed tabs and windows by default (see Settings), in memory only, so they are forgotten when Lit quits; a page closing itself (such as a sign-in popup) is not remembered.
+⇧⌘T brings back the last tab you closed (⌘W, its close button, middle-click) as it was then, with its back/forward history, in its old place. A closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers up to 50 closed tabs by default (see Settings), counting each tab of a closed window. They are kept in memory only, so Lit forgets them when it quits; a page closing itself (such as a sign-in popup) is not remembered.
 
 When Lit opens again, it reopens the windows and tabs that were open when it quit, each window where it was and each tab with its back/forward history, the window that was in front last. Windows closed before quitting stay closed. The session is saved to `session.json` in the app's data folder as it changes, so a crash loses little. Turn this off in Settings to start with a new window instead.
 
@@ -58,7 +58,7 @@ Right-clicking a tab offers Reload, Duplicate (which keeps the tab's back and fo
 ⌘, or the button at the right of the tab strip opens Settings as a popup over the window. Changes save right away, to `settings.json` in the app's data folder.
 
 - **General:** search engine (Google, DuckDuckGo or Bing), the page zoom for sites you have not zoomed, and whether the address bar suggests pages from history.
-- **Tabs:** what new tabs open (the search box, or an address or search), where they go, whether ⌘-clicked links come to the front, whether closing the last tab closes the window, whether Lit reopens the windows and tabs from last time, and how many closed tabs Reopen Closed Tab remembers (10, 25, 50 or 100; a closed window counts as one).
+- **Tabs:** what new tabs open (the search box, or an address or search), where they go, whether ⌘-clicked links come to the front, whether closing the last tab closes the window, whether Lit reopens the windows and tabs from last time, and how many closed tabs Reopen Closed Tab remembers (10, 25, 50 or 100; a closed window counts each of its tabs, and the last one closed is always kept).
 - **Downloads:** ask where to save, or save straight to Downloads.
 - **Privacy:** save history (pages visited and closed tabs; when off, nothing new is saved, closed tabs are forgotten, Reopen Closed Tab does nothing, and windows reopened at launch keep only each tab's page, not its back and forward history), and send Do Not Track and Global Privacy Control.
 - **Keyboard Shortcuts:** every shortcut in the table above except ⌘1–9 and the ⇧⌘[ / ⇧⌘] and ⌘+ alternates, plus Duplicate Tab and Close Tabs to the Right, which have none until you set one. Click a shortcut and press the new keys; Escape cancels and Delete removes it. Lit refuses a shortcut another command already uses.

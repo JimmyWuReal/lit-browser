@@ -123,10 +123,12 @@ function setVisited(next, { now = false } = {}) {
 // Records a visit and returns what unvisit needs to take it back, or
 // null when nothing was recorded (Save history is off, or not a real page).
 // Which navigations count as visits is up to the tab (see `committed`).
+// Each visit gets its own time, so unvisit never mistakes one for another.
+let lastVisitTime = 0
 function recordVisit(url, title) {
   if (!settings.saveHistory || !historyStore.recordable(url)) return null
   const previous = visited.find((entry) => entry.url === url) || null
-  const time = Date.now()
+  const time = lastVisitTime = Math.max(Date.now(), lastVisitTime + 1)
   setVisited(historyStore.visit(visited, { url, title, time }))
   return { url, time, previous }
 }
@@ -624,9 +626,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (sameDocument && withoutHash(url) === withoutHash(left)) return
     tab.touched = false
     const replaced = before?.length === position.length && before.index === position.index
-    // A new entry after the current one; going Forward looks the same, but
-    // the page did not start that (unless its script did, as history.forward()).
-    const added = before && position.index === before.index + 1 && position.length === position.index + 1
+    // A new entry after the current one, which had none after it, so this
+    // cannot be going Forward (history.forward() from the page's script).
+    const added = before && before.length === before.index + 1 && position.index === before.index + 1 && position.length === position.index + 1
     if ((replaced || (added && unprompted)) && url !== left && tab.visit && withoutHash(tab.visit.url) === withoutHash(left)) {
       setVisited(historyStore.unvisit(visited, tab.visit))
       tab.visit = null
@@ -944,6 +946,9 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
   let suggestions = []
   let suggestionsOpen = false
   let suggestionsHide = null
+  // Counts each list shown; a click names the list it was on, so a click
+  // on a list that has since changed opens nothing.
+  let suggestionsGeneration = 0
 
   function showSuggestions(items, { x, y, width }) {
     if (!suggestionsView) {
@@ -953,7 +958,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       windowsByPopup.set(suggestionsView.webContents, { controls, name: 'suggestions' })
       // The first list is sent before the page can hear it; send it again.
       suggestionsView.webContents.on('did-finish-load', () => {
-        if (suggestionsOpen) suggestionsView.webContents.send('suggestions-show', suggestions)
+        if (suggestionsOpen) suggestionsView.webContents.send('suggestions-show', { items: suggestions, generation: suggestionsGeneration })
       })
       suggestionsView.webContents.loadFile(path.join(__dirname, 'suggestions.html'))
     }
@@ -972,10 +977,16 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     if (!suggestionsView.getVisible()) win.contentView.addChildView(suggestionsView)
     suggestionsView.setVisible(true)
     suggestionsOpen = true
-    suggestionsView.webContents.send('suggestions-show', items)
+    suggestionsGeneration++
+    suggestionsView.webContents.send('suggestions-show', { items, generation: suggestionsGeneration })
   }
 
-  function hideSuggestions() {
+  // `blur` is the toolbar closing the list as the address field loses
+  // focus, which a click on the list does too, so that click still counts
+  // while the list fades. Any other close (Escape, a tab switch, opening a
+  // page) ends clicks on it at once.
+  function hideSuggestions(blur = false) {
+    if (!blur) suggestionsGeneration++
     if (!suggestionsOpen) return
     suggestionsOpen = false
     suggestionsView.webContents.send('suggestions-hide')
@@ -1003,8 +1014,8 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     return items
   }
 
-  function pickSuggestion(index) {
-    const item = suggestions[index]
+  function pickSuggestion(index, generation) {
+    const item = generation === suggestionsGeneration && suggestions[index]
     if (!item) return
     hideSuggestions()
     navigate(item.url)
@@ -1059,7 +1070,7 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
     openFromHistory,
     suggest,
     selectSuggestion: (index) => { if (suggestionsOpen) suggestionsView.webContents.send('suggestions-select', index) },
-    hideSuggestions,
+    hideSuggestions: (blur) => hideSuggestions(blur),
     pickSuggestion,
     showTabMenu,
     duplicateTab: () => duplicateTab(activeId),
@@ -1073,6 +1084,14 @@ function createWindow({ key = nextWindowKey++, tabs: restored = [], activeIndex 
       sendShortcuts()
       popups.settings?.webContents.send('settings-changed', settingsState())
       controls.historyChanged()
+    },
+    // History removed `url` (or everything, without one): tabs drop their
+    // visits to it, and their pages still loading are not recorded.
+    forgetVisits(url) {
+      for (const tab of tabs) {
+        if (!url || tab.visit?.url === url) tab.visit = null
+        if (!url || tab.toRecord === url) tab.toRecord = null
+      }
     },
     // Save history was turned off: drop what each tab kept to reopen.
     forgetTabHistories() {
@@ -1295,7 +1314,7 @@ ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
 ipcMain.handle('suggest', (event, text, rect) => windowsByToolbar.get(event.sender)?.suggest(text, rect) ?? [])
 ipcMain.on('suggestions-select', fromToolbar((c, index) => Number.isInteger(index) && c.selectSuggestion(index)))
-ipcMain.on('suggestions-close', fromToolbar((c) => c.hideSuggestions()))
+ipcMain.on('suggestions-close', fromToolbar((c, blur) => c.hideSuggestions(blur === true)))
 
 // Popup messages, answered only for the popup `name`.
 const fromPopup = (name, handler) => (event, ...args) => {
@@ -1305,7 +1324,7 @@ const fromPopup = (name, handler) => (event, ...args) => {
 const fromSettings = (handler) => fromPopup('settings', handler)
 const fromHistory = (handler) => fromPopup('history', handler)
 const fromDownloads = (handler) => fromPopup('downloads', handler)
-ipcMain.on('suggestions-pick', fromPopup('suggestions', (c, index) => Number.isInteger(index) && c.pickSuggestion(index)))
+ipcMain.on('suggestions-pick', fromPopup('suggestions', (c, index, generation) => Number.isInteger(index) && c.pickSuggestion(index, generation)))
 ipcMain.handle('settings-get', fromSettings(() => settingsState()))
 ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
   const { values, error } = settingsStore.update(settings, key, value)
@@ -1330,12 +1349,17 @@ ipcMain.on('history-open-page', fromHistory((c, url, background) => {
   if (visited.some((entry) => entry.url === url)) c.openFromHistory(url, background === true)
 }))
 // Removing and clearing answer with the state, saying so if nothing changed.
-ipcMain.handle('history-remove', fromHistory((_c, url) => (setVisited(historyStore.remove(visited, url), { now: true })
-  ? historyState()
-  : historyState('Couldn’t save history, so that page wasn’t removed.'))))
+// Tabs forget their visits to what was removed, so neither taking a visit
+// back nor a page finishing loading brings it back.
+ipcMain.handle('history-remove', fromHistory((_c, url) => {
+  if (!setVisited(historyStore.remove(visited, url), { now: true })) return historyState('Couldn’t save history, so that page wasn’t removed.')
+  for (const controls of openWindows) controls.forgetVisits(url)
+  return historyState()
+}))
 // Clearing history forgets closed tabs too.
 ipcMain.handle('history-clear', fromHistory(() => {
   if (!setVisited([], { now: true })) return historyState('Couldn’t save history, so nothing was cleared.')
+  for (const controls of openWindows) controls.forgetVisits()
   forgetClosed()
   return historyState()
 }))

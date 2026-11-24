@@ -35,7 +35,8 @@ contextBridge.exposeInMainWorld('lit', {
   // where the list goes. `selectSuggestion` highlights one (-1 for none).
   suggest: (text, rect) => ipcRenderer.invoke('suggest', text, rect),
   selectSuggestion: (index) => ipcRenderer.send('suggestions-select', index),
-  closeSuggestions: () => ipcRenderer.send('suggestions-close'),
+  // `blur` when the field lost focus, maybe to a click on the list.
+  closeSuggestions: (blur = false) => ipcRenderer.send('suggestions-close', blur),
   // The right-click menu for a tab.
   showTabMenu: (id) => ipcRenderer.send('tab-menu', id),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
@@ -68,10 +69,10 @@ contextBridge.exposeInMainWorld('lit', {
     onChanged: (callback) => on('history-changed', callback),
   },
   // For the address bar's suggestions list only: it shows the pages
-  // (onShow, [{ url, title }]), highlights the one the toolbar selects,
-  // and says which one was clicked.
+  // (onShow, { items: [{ url, title }], generation }), highlights the one
+  // the toolbar selects, and says which one was clicked, on which list.
   suggestions: {
-    pick: (index) => ipcRenderer.send('suggestions-pick', index),
+    pick: (index, generation) => ipcRenderer.send('suggestions-pick', index, generation),
     onShow: (callback) => on('suggestions-show', callback),
     onSelect: (callback) => on('suggestions-select', callback),
     onHide: (callback) => ipcRenderer.on('suggestions-hide', () => callback()),

@@ -623,11 +623,13 @@
       const items = await window.lit.suggest(typed, { x: box.left, y: box.bottom + 6, width: box.width })
       if (request === suggestRequest) suggestions = items
     }
-    function closeSuggestions() {
+    // `blur` lets a click on the list, which takes focus from the field,
+    // still open its page.
+    function closeSuggestions(blur = false) {
       suggestRequest++
       suggestions = []
       selected = -1
-      window.lit.closeSuggestions()
+      window.lit.closeSuggestions(blur === true)
     }
     function moveSelection(delta) {
       // -1 is the typed text itself, between the last page and the first.
@@ -636,7 +638,7 @@
       address.value = selected === -1 ? typed : suggestions[selected].url
       window.lit.selectSuggestion(selected)
     }
-    window.addEventListener('resize', closeSuggestions)
+    window.addEventListener('resize', () => closeSuggestions())
 
     addressForm.addEventListener('submit', (event) => {
       event.preventDefault()
@@ -668,7 +670,7 @@
       } else if (event.key === 'Escape') { editing = false; address.value = currentUrl(); address.select() }
     })
     address.addEventListener('blur', () => {
-      closeSuggestions()
+      closeSuggestions(true)
       if (editing) { editing = false; address.value = currentUrl() }
     })
     address.addEventListener('focus', () => address.select())

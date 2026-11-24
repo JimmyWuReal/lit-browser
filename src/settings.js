@@ -90,7 +90,7 @@ const SECTIONS = [
       {
         key: 'closedTabsLimit',
         label: 'Closed tabs to remember',
-        description: 'For Reopen Closed Tab; a closed window counts as one. Kept in memory only, and forgotten when Lit quits.',
+        description: 'For Reopen Closed Tab; a closed window counts each of its tabs. Kept in memory only, and forgotten when Lit quits.',
         type: 'choice',
         options: [10, 25, 50, 100].map((value) => ({ value, label: String(value) })),
         default: 50,
