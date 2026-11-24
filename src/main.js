@@ -89,15 +89,17 @@ let sitePermissions = new Map()
 
 // Saves `choice` ('allow', 'block', or null to forget) for the kinds, then
 // answers every prompt it settles, in every window. Unsaved, a choice still
-// holds until Lit quits.
+// holds until Lit quits; returns whether it was saved.
 function choosePermission(site, kinds, choice) {
   sitePermissions = permissions.choose(sitePermissions, site, kinds, choice)
+  let saved = true
   try {
     permissions.save(permissionsFile, sitePermissions)
   } catch {
-    // Kept in memory only.
+    saved = false
   }
   for (const controls of openWindows) { controls.settlePrompts(); controls.settingsChanged() }
+  return saved
 }
 
 // The site a request or check is for: the origin that asked, but only when
@@ -117,6 +119,7 @@ function siteFor(contents, asking, embedding) {
 // or by a prompt on the tab that asked, for the kinds not yet decided.
 // Anything not from a tab (Lit's own pages, a service worker) is refused.
 function onPermissionRequest(contents, permission, callback, details) {
+  if (permissions.REFUSED.includes(permission)) return callback(false)
   const kinds = permissions.kindsOf(permission, details.mediaTypes)
   if (!kinds) return callback(true)
   const site = siteFor(contents, details.requestingUrl)
@@ -133,6 +136,7 @@ function onPermissionRequest(contents, permission, callback, details) {
 // labels) say yes only once a site was allowed. Electron has no "not asked
 // yet", so until then they read as denied; asking still prompts.
 function onPermissionCheck(contents, permission, requestingOrigin, details) {
+  if (permissions.REFUSED.includes(permission)) return false
   let kinds = permissions.kindsOf(permission)
   if (permission === 'media') kinds = details.mediaType === 'video' ? ['camera'] : details.mediaType === 'audio' ? ['microphone'] : ['camera', 'microphone']
   if (!kinds) return true
@@ -1244,7 +1248,9 @@ ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
 // Changes or forgets (null) one site's choice for one kind.
 ipcMain.handle('permissions-set', fromSettings((_c, site, kind, choice) => {
   const saved = typeof site === 'string' && Object.hasOwn(permissions.KINDS, kind) && sitePermissions.get(site)?.[kind]
-  if (saved && (choice === null || permissions.CHOICES.includes(choice))) choosePermission(site, [kind], choice)
+  if (saved && (choice === null || permissions.CHOICES.includes(choice)) && !choosePermission(site, [kind], choice)) {
+    return settingsState('Couldn’t save site permissions, so this change lasts only until Lit quits.')
+  }
   return settingsState()
 }))
 ipcMain.on('settings-record', fromSettings((c, on, keys) => c.setRecording(on === true, keys)))

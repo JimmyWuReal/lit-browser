@@ -26,8 +26,10 @@ const BY_PERMISSION = {
   'geolocation-approximate': 'location',
   notifications: 'notifications',
   'clipboard-read': 'clipboard',
-  'deprecated-sync-clipboard-read': 'clipboard',
 }
+// Always refused, as Electron does by default: document.execCommand('paste')
+// reads the clipboard with no prompt of its own.
+const REFUSED = ['deprecated-sync-clipboard-read']
 const BY_MEDIA = { video: 'camera', audio: 'microphone' }
 
 // The kinds a request needs, or null for a permission Lit does not ask
@@ -133,4 +135,4 @@ function save(file, sites) {
   fs.renameSync(temporary, file)
 }
 
-module.exports = { KINDS, CHOICES, kindsOf, originOf, label, describe, status, undecided, choose, list, load, save }
+module.exports = { KINDS, CHOICES, REFUSED, kindsOf, originOf, label, describe, status, undecided, choose, list, load, save }

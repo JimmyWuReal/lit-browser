@@ -590,7 +590,8 @@
     function drawPrompt(tab) {
       const prompt = tab?.started ? tab.prompt : null
       const key = prompt ? `${tab.id}:${prompt.id}` : null
-      if (prompt) {
+      // Only a change of text touches the live region, so it is read once.
+      if (prompt && promptText.textContent !== `${prompt.site} wants to ${prompt.does}`) {
         const site = document.createElement('strong')
         site.textContent = prompt.site
         promptText.replaceChildren(site, ` wants to ${prompt.does}`)

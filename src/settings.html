@@ -364,7 +364,7 @@
       return settings.setPermission(site, kind, choice).then((next) => {
         if (id !== saves) return
         state = next
-        redraw()
+        redraw({ sitePermissions: next.error || '' })
       })
     }
 
@@ -428,9 +428,12 @@
       })
       arrowKeys(group, buttons, index, choose)
       const place = () => placeThumb(group, thumb, buttons[index()])
-      new ResizeObserver(place).observe(group)
+      const observer = new ResizeObserver(place)
+      observer.observe(group)
       return {
         element: group,
+        // Called once the control leaves the page.
+        stop: () => observer.disconnect(),
         draw() {
           buttons.forEach((button, i) => {
             const on = i === index()
@@ -551,6 +554,7 @@
         const choiceOf = (site, kind) => state.sitePermissions.find((item) => item.site === site)?.kinds.find((entry) => entry.kind === kind)?.choice
         function build() {
           const hadFocus = body.contains(document.activeElement)
+          for (const item of items) item.stop()
           items = []
           if (!state.sitePermissions.length) {
             body.replaceChildren(el('p', 'sites-empty', 'No sites have asked yet.'))
@@ -585,6 +589,7 @@
           key: 'sitePermissions',
           error,
           element,
+          stop: () => items.forEach((item) => item.stop()),
           draw() {
             const keys = state.sitePermissions.map((item) => `${item.site} ${item.kinds.map((entry) => entry.kind)}`).join('\n')
             if (keys !== shownKeys) { shownKeys = keys; build() }
@@ -618,7 +623,7 @@
       text.append(error)
       const control = controls[setting.type](setting)
       element.append(text, control.element)
-      return { key: setting.key, error, draw: control.draw, element }
+      return { key: setting.key, error, draw: control.draw, stop: control.stop, element }
     }
 
     // A new panel each time, so it plays the kit's panel keyframe.
@@ -633,6 +638,7 @@
         button.tabIndex = on ? 0 : -1
       }
       placeThumb(nav, navThumb, navButtons.get(id), true)
+      for (const item of rows) item.stop?.()
       rows = section.settings.map(row)
       if (section.list) rows.push(lists[section.list]())
       const list = el('div', 'rows')
