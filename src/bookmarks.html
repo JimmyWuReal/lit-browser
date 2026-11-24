@@ -238,7 +238,7 @@
       document.body.getBoundingClientRect()
       document.body.classList.add('is-open')
       if (isList) list.focus()
-      else { title.focus(); title.select() }
+      else { title.focus(); title.setSelectionRange(0, title.value.length, 'backward') }
     }
 
     const close = () => api.close()
