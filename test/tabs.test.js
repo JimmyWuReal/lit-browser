@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, remember, keepNewest, placeIndex, onScreen } = require('../src/tabs')
+const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -35,20 +35,9 @@ test('remember keeps the newest closed entries last, up to the limit', () => {
 })
 
 test('a reopened tab goes back to its place, or the end', () => {
-  assert.equal(placeIndex(1, 3, 0), 1)
-  assert.equal(placeIndex(5, 2, 0), 2)
-  assert.equal(placeIndex(-1, 2, 0), 0)
-})
-
-test('pinned tabs stay together at the left', () => {
-  // Other tabs never go among the pinned ones.
-  assert.equal(placeIndex(0, 4, 2), 2)
-  assert.equal(placeIndex(1, 4, 2), 2)
-  assert.equal(placeIndex(3, 4, 2), 3)
-  // Pinned tabs never go past them.
-  assert.equal(placeIndex(3, 4, 2, true), 2)
-  assert.equal(placeIndex(1, 4, 2, true), 1)
-  assert.equal(placeIndex(0, 4, 0, true), 0)
+  assert.equal(reopenIndex(1, 3), 1)
+  assert.equal(reopenIndex(5, 2), 2)
+  assert.equal(reopenIndex(-1, 2), 0)
 })
 
 test('a window is on screen while it overlaps a display', () => {
@@ -81,11 +70,4 @@ test('a window bigger than the limit keeps its active tab and its neighbors', ()
   const start = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 0 }]
   keepNewest(start, 2)
   assert.deepEqual(start, [{ tabs: [0, 1], activeIndex: 0 }])
-})
-
-test('trimming a closed window keeps the pinned count of the tabs it keeps', () => {
-  const win = (pinned) => ({ tabs: [1, 2, 3, 4, 5, 6], activeIndex: 5, pinned })
-  assert.equal(keepNewest([win(2)], 3)[0].pinned, 0)
-  assert.deepEqual(keepNewest([win(5)], 3)[0], { tabs: [4, 5, 6], activeIndex: 2, pinned: 2 })
-  assert.equal(keepNewest([{ tabs: [1, 2, 3], activeIndex: 0, pinned: 3 }], 2)[0].pinned, 2)
 })

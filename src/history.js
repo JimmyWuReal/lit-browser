@@ -71,15 +71,15 @@ function suggest(entries, query, limit = SUGGESTIONS) {
   return ranked.flat().slice(0, limit)
 }
 
-// The address bar's list: pinned tabs' pages ({ url, title }) that match
-// come first, marked `pinned`, then visited pages, each address once.
-function suggestWithPinned(pinned, entries, query, limit = SUGGESTIONS) {
-  // Two pinned tabs on one address (with different titles) show once.
+// The address bar's list: bookmarks ({ url, title }) that match come first,
+// marked `bookmarked`, then visited pages, each address once.
+function suggestWithBookmarks(bookmarks, entries, query, limit = SUGGESTIONS) {
+  // Two bookmarks of one address (with different titles) show once.
   const shown = new Set()
-  const first = suggest(pinned, query, pinned.length)
+  const first = suggest(bookmarks, query, bookmarks.length)
     .filter((item) => !shown.has(item.url) && shown.add(item.url))
     .slice(0, limit)
-    .map((item) => ({ ...item, pinned: true }))
+    .map((item) => ({ ...item, bookmarked: true }))
   return [...first, ...suggest(entries.filter((entry) => !shown.has(entry.url)), query, limit - first.length)]
 }
 
@@ -98,4 +98,4 @@ function load(file) {
   }
 }
 
-module.exports = { LIMIT, recordable, visit, unvisit, retitle, remove, suggest, suggestWithPinned, load, save }
+module.exports = { LIMIT, recordable, visit, unvisit, retitle, remove, suggest, suggestWithBookmarks, load, save }

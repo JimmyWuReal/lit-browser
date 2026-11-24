@@ -6,22 +6,24 @@
 // search (src/find.js). A site asking for the camera, location and the like
 // gets a prompt in the toolbar, below the address row (src/permissions.js).
 // A private window (⇧⌘N) browses in an in-memory session of its own and
-// keeps nothing once it closes (see privateSession).
-const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, screen, session, shell } = require('electron')
+// keeps nothing once it closes (see privateSession), except the bookmarks
+// someone adds in it.
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, screen, session, shell } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl, searchUrl, engineOf } = require('./url')
 const quickSearch = require('./quicksearch')
-const { afterClose, step, byNumber, remember, keepNewest, placeIndex, onScreen } = require('./tabs')
+const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
+const bookmarkStore = require('./bookmarks')
 const sessionStore = require('./session')
 const shortcuts = require('./shortcuts')
 const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
 const permissions = require('./permissions')
 const findState = require('./find')
-const { pageMenu, tabMenu } = require('./menus')
+const { pageMenu, tabMenu, bookmarkMenu } = require('./menus')
 const { createAdblock } = require('./adblock')
 
 // Keep in sync with .strip and .bar heights in index.html.
@@ -30,6 +32,9 @@ const BAR_HEIGHT = STRIP_HEIGHT + 44
 // The permission prompt's row under the address row; keep in sync with
 // .prompt in index.html. Pages move down by this while their tab asks.
 const PROMPT_HEIGHT = 44
+// The bookmark bar's row, above the prompt; keep in sync with .bookmarks in
+// index.html.
+const BOOKMARKS_HEIGHT = 34
 const PRELOAD = path.join(__dirname, 'preload.js')
 // Keep in sync with .menu padding and .row height in suggestions.html.
 const SUGGESTION_ROW = 38
@@ -53,10 +58,9 @@ let nextWindowKey = 1
 // Only closes people make count (⌘W, the close button, closing a window),
 // not a page closing itself; a blank tab has a null history and comes
 // back blank. Nothing is kept while Save history is off.
-// A tab: { windowKey, index, history, pinned }, back in its window if that
-// is open, pinned again if it was. A window: { key, tabs: [history],
-// activeIndex, pinned, bounds, maximized, fullScreen }, so tab order, the
-// active tab, its pinned tabs and its place come back as they were.
+// A tab: { windowKey, index, history }, back in its window if that is open.
+// A window: { key, tabs: [history], activeIndex, bounds, maximized,
+// fullScreen }, so tab order, the active tab and its place come back as they were.
 // A history is { entries, index } from navigationHistory, so back and
 // forward come back too. Kept in memory only, so Lit forgets them when it
 // quits; the Closed tabs to remember setting caps how many.
@@ -298,6 +302,68 @@ const REDIRECT_AFTER = 5000
 // from a new page.
 const withoutHash = (url) => url.split('#')[0]
 
+// Bookmarks (src/bookmarks.js), shared by every window, private ones too.
+// Read at launch and saved on every change.
+let bookmarksFile
+let bookmarks = []
+
+// Saved first, so a failed write keeps the old list. Returns whether the
+// change was made.
+function setBookmarks(next) {
+  if (next === bookmarks) return true
+  try {
+    bookmarkStore.save(bookmarksFile, next)
+  } catch {
+    return false
+  }
+  bookmarks = next
+  for (const controls of openWindows) controls.bookmarksChanged()
+  return true
+}
+
+// The same, for changes with nowhere of their own to show a failure.
+function changeBookmarks(win, next) {
+  if (setBookmarks(next)) return true
+  if (!win.isDestroyed()) dialog.showMessageBox(win, { type: 'warning', message: 'Couldn’t save bookmarks', detail: 'Nothing was changed.' }).catch(() => {})
+  return false
+}
+
+// A site's icon as a data: URL, from its address: pictures Electron can
+// read are scaled to 32px, others (SVG, ICO) kept if small. '' if it can't
+// be had. A bigger file is dropped as it arrives, so a page can't fill
+// memory with its icon.
+const ICON_DOWNLOAD_LIMIT = 1024 * 1024
+const ICON_LIMIT = 64 * 1024
+async function fetchIcon(url, ses) {
+  try {
+    if (!/^(https?|data):/i.test(url)) return ''
+    const response = await ses.fetch(url, { credentials: 'omit', signal: AbortSignal.timeout(10000) })
+    const type = (response.headers.get('content-type') || '').split(';')[0].trim()
+    if (!response.ok || !/^image\/[\w.+-]+$/.test(type)) return ''
+    const chunks = []
+    let size = 0
+    for await (const chunk of response.body) {
+      size += chunk.length
+      if (size > ICON_DOWNLOAD_LIMIT) return ''
+      chunks.push(chunk)
+    }
+    const data = Buffer.concat(chunks)
+    const image = nativeImage.createFromBuffer(data)
+    if (!image.isEmpty()) return image.resize({ width: 32, height: 32 }).toDataURL()
+    return data.length <= ICON_LIMIT ? `data:${type};base64,${data.toString('base64')}` : ''
+  } catch {
+    return ''
+  }
+}
+
+// Gives `url`'s bookmarks without an icon theirs, from a page showing it.
+async function addIcon(url, favicon, ses) {
+  const missing = () => bookmarkStore.pages(bookmarks).filter((item) => item.url === url && !item.icon)
+  if (!favicon || !missing().length) return
+  const icon = await fetchIcon(favicon, ses)
+  if (icon) setBookmarks(missing().reduce((list, item) => bookmarkStore.update(list, item.id, { icon }), bookmarks))
+}
+
 // The windows and tabs to reopen at the next launch (src/session.js),
 // saved a moment after anything in them changes, so a crash loses little,
 // and once more as Lit quits. Windows closing one by one during a quit
@@ -306,30 +372,13 @@ let sessionFile
 let sessionSave = null
 let quitting = false
 
-// Closing a window never closes its pinned tabs: they move to the window
-// used last, or, with no window left open, wait here (a window spec, as in
-// session.js) for the next window opened, and are saved with the session
-// in case Lit quits first. Only kept while no normal window is open;
-// private windows never take them.
-let strayPins = null
-
-function takeStrayPins() {
-  const tabs = strayPins ? strayPins.tabs : []
-  strayPins = null
-  return tabs
-}
-
 function saveSession() {
   clearTimeout(sessionSave)
   sessionSave = null
   if (!sessionFile) return
   try {
-    const windows = [...(strayPins ? [strayPins] : []), ...[...openWindows].map((controls) => controls.snapshot()).filter(Boolean)]
-    if (settings.restoreSession) return sessionStore.save(sessionFile, windows)
-    // Pinned tabs open at every launch, even with Reopen windows off.
-    const pinned = sessionStore.pinnedWindow(windows)
-    if (pinned) sessionStore.save(sessionFile, [pinned])
-    else sessionStore.forget(sessionFile)
+    if (!settings.restoreSession) return sessionStore.forget(sessionFile)
+    sessionStore.save(sessionFile, [...openWindows].map((controls) => controls.snapshot()).filter(Boolean))
   } catch {
     // Unsaved, the session saved last reopens instead.
   }
@@ -497,27 +546,12 @@ function reopenClosed(focused) {
     if (target.win.isMinimized()) target.win.restore()
     target.win.focus()
   }
-  target.reopenTab(entry.history, entry.index, entry.pinned)
-}
-
-// Every pinned tab's page, in every window, for the address bar's
-// suggestions (which show each address once).
-const pinnedPages = () => [...openWindows].flatMap((controls) => controls.pinnedPages())
-
-// The File menu's Pin Tab is checked while the focused window's tab is
-// pinned, and only enabled for a tab that has a page.
-function refreshPinItem() {
-  const item = Menu.getApplicationMenu()?.getMenuItemById('pinTab')
-  const controls = controlsOf(BrowserWindow.getFocusedWindow())
-  if (!item) return
-  item.checked = Boolean(controls?.activePinned())
-  item.enabled = Boolean(controls?.canPin())
+  target.reopenTab(entry.history, entry.index)
 }
 
 // After a change: rebuild the menu for new shortcuts, and tell every window.
 function applySettings() {
   Menu.setApplicationMenu(buildMenu())
-  refreshPinItem()
   applyDoNotTrack()
   adblock.set(settings.blockAds)
   if (!settings.saveHistory) {
@@ -533,15 +567,39 @@ function applySettings() {
   saveSession()
 }
 
-// `key`, `tabs`, `activeIndex`, `pinned`, `bounds`, `maximized` and
-// `fullScreen` reopen a closed window (see `closed`). Its old position is
-// used only while it is still on a connected display; otherwise only its size.
+// Changes one setting; returns why it couldn't, if so.
+function changeSetting(key, value) {
+  const { values, error } = settingsStore.update(settings, key, value)
+  if (error) return error
+  if (values === settings) return
+  // Saved first, so a failed write leaves the old settings in use.
+  try {
+    settingsStore.save(settingsFile, values)
+  } catch {
+    return 'Couldn’t save settings.'
+  }
+  settings = values
+  applySettings()
+}
+
+// Applying the settings rebuilds the menu, so its checkbox follows; after
+// a failure the rebuild puts it back.
+function toggleBookmarkBar() {
+  if (!changeSetting('bookmarkBar', !settings.bookmarkBar)) return
+  Menu.setApplicationMenu(buildMenu())
+  dialog.showMessageBox({ type: 'warning', message: 'Couldn’t save settings' }).catch(() => {})
+}
+
+// `key`, `tabs`, `activeIndex`, `bounds`, `maximized` and `fullScreen` reopen
+// a closed window (see `closed`). Its old position is used only while it is
+// still on a connected display; otherwise only its size.
+// `url` opens in the new window's first tab.
 // `isPrivate` opens a private window: its own in-memory session, no history,
 // nothing to reopen, and no part in the session saved for the next launch.
-// It suggests nothing from history and starts every site at the default
+// It suggests only bookmarks, nothing from history, and starts every site at the default
 // zoom; only the sites' saved Blocks reach it. What changes in it goes when
 // it closes.
-function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored = [], activeIndex = 0, pinned = 0, bounds, maximized, fullScreen } = {}) {
+function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: restored = [], activeIndex = 0, bounds, maximized, fullScreen } = {}) {
   // A private window's own permission choices, kept in memory, under the
   // saved Blocks, which always win (choosePermission settles its prompts too).
   const permissionStore = isPrivate
@@ -588,12 +646,6 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   const find = (id) => tabs.find((tab) => tab.id === id)
   const active = () => find(activeId)
   const ids = () => tabs.map((tab) => tab.id)
-  // Pinned tabs are always the first ones (see placeIndex).
-  const pinnedCount = () => tabs.filter((tab) => tab.pinned).length
-  // Only a tab on a real page (web or file) can be pinned, so it always has
-  // a page to reopen and to suggest; not one on a popup's about:blank, nor
-  // one in a private window, which keeps nothing.
-  const pinnable = (tab) => !isPrivate && historyStore.recordable(tab.url || '')
   // Popup views by name, each made on first open (see openPopup), and the
   // name of the one open, if any.
   const popups = {}
@@ -603,21 +655,22 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   let toolbarHadFocus = false
   // The keyboard layout's code -> character map, sent by the popup.
   let keyboardLayout = {}
-  // How far down the pages start: lower while the active tab has a prompt.
+  // How far down the pages start: lower with the bookmark bar, and while the
+  // active tab has a prompt.
   let pageTop = BAR_HEIGHT
 
   // Everything the toolbar draws. Sent whenever any of it changes.
   function sync() {
     if (win.isDestroyed()) return
     const current = active()
-    const top = BAR_HEIGHT + (current?.prompts.length ? PROMPT_HEIGHT : 0)
+    const top = BAR_HEIGHT + (settings.bookmarkBar ? BOOKMARKS_HEIGHT : 0) + (current?.prompts.length ? PROMPT_HEIGHT : 0)
     if (top !== pageTop) { pageTop = top; layout() }
     const title = current?.title || (current?.started ? current.url : '') || 'New Tab'
     win.setTitle(isPrivate ? `${title} (Private)` : title)
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, pinned, find, zoom: factor, page, prompts }) => ({
-        id, title, url, favicon, loading, started, pinned,
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts }) => ({
+        id, title, url, favicon, loading, started,
         // The tab's oldest unanswered permission request; the rest wait.
         prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
@@ -628,7 +681,6 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
         find: find && { text: find.text, active: find.active, matches: find.matches },
       })),
     })
-    if (win.isFocused()) refreshPinItem()
     // A private window is no part of the saved session.
     if (!isPrivate) sessionChanged()
   }
@@ -640,6 +692,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   const sendQuickSearch = () => {
     if (!win.isDestroyed()) win.webContents.send('quick-search', settings.quickSearch ? { prefix: settings.quickSearchPrefix, sites: quickSearch.list() } : null)
   }
+  const sendBookmarks = () => { if (!win.isDestroyed()) win.webContents.send('bookmarks', { visible: settings.bookmarkBar, items: bookmarks }) }
   // The toolbar's downloads indicator.
   const sendDownloads = () => { if (!win.isDestroyed()) win.webContents.send('downloads', downloadsSummary(ses)) }
 
@@ -678,9 +731,8 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   // `history` ({ entries, index }) restores a back/forward list, of a closed
   // tab or of the tab being duplicated; `url` is then loaded only if that
   // fails. `referrer` ({ url, policy }) is sent with `url`, as a link opened
-  // from a page sends it. A `pinned` tab goes among the pinned ones, any
-  // other after them, whatever `index` says.
-  function addTab({ url, webContents, history, referrer, background = false, pinned = false, index = tabs.length } = {}) {
+  // from a page sends it.
+  function addTab({ url, webContents, history, referrer, background = false, index = tabs.length } = {}) {
     // A page a tab opened is already in its session.
     // Private pages get no DevTools, which saves its state (breakpoints and
     // the like) to the profile on disk, whatever the session.
@@ -693,8 +745,8 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), pinned, history: null, find: null, zoom: settings.defaultZoom, prompts: [] }
-    tabs.splice(placeIndex(index, tabs.length, pinnedCount(), pinned), 0, tab)
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: settings.defaultZoom, prompts: [] }
+    tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
     // Re-adding a view moves it to the top, so popups stay over new tabs.
@@ -743,7 +795,13 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
       else if (tab.visit && settings.saveHistory) setVisited(historyStore.retitle(visited, tab.visit.url, title))
       sync()
     })
-    page.on('page-favicon-updated', (_event, favicons) => { tab.favicon = favicons[0] || null; sync() })
+    // A bookmark added by hand gets its icon the first time its page shows.
+    // Not in a private window, so browsing there changes nothing saved.
+    page.on('page-favicon-updated', (_event, favicons) => {
+      tab.favicon = favicons[0] || null
+      if (!isPrivate) addIcon(tab.url, tab.favicon, ses)
+      sync()
+    })
     // Escape in the page closes its find field too, as in Safari and
     // Firefox. The page still gets the key, and an input method's keeps it.
     page.on('before-input-event', (_event, input) => {
@@ -943,10 +1001,9 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     tab.toRecord = null
   }
 
-  // What Reopen Closed Tab needs to bring this window back. Its first
-  // `pinned` histories are pinned tabs.
-  function closedWindow(histories, activeIndex, pinned = pinnedCount()) {
-    return { key, tabs: histories, activeIndex, pinned, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen() }
+  // What Reopen Closed Tab needs to bring this window back.
+  function closedWindow(histories, activeIndex) {
+    return { key, tabs: histories, activeIndex, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen() }
   }
 
   // A tab's first load turns it from the search box into its page.
@@ -985,7 +1042,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     // unless Settings says to keep it open with a new tab. Then the window
     // is what reopens.
     const closesWindow = nextId === null && settings.closeWindowWithLastTab
-    if (tab.closedByUser && !isPrivate) rememberClosed(closesWindow ? closedWindow([history], 0, tab.pinned && history ? 1 : 0) : { windowKey: key, index, history, pinned: tab.pinned })
+    if (tab.closedByUser && !isPrivate) rememberClosed(closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
     if (nextId === null) return closesWindow ? win.close() : newTab()
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
@@ -1209,36 +1266,20 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     addTab({ url, index })
   }
 
-  // Pinned tabs stay open through both, as in Chrome. The kept tab comes
-  // to the front first (for tabs to the right, only when the active one is
-  // closing), so closing the others never shows one of them on the way.
+  // The kept tab comes to the front first, so closing the others never
+  // shows one of them on the way.
   function closeOtherTabs(id) {
     const tab = find(id)
     if (!tab) return
     activate(id)
-    closeTabs(id, tabs.filter((each) => each !== tab && !each.pinned))
+    for (const other of tabs.filter((each) => each !== tab)) closeTab(other.id)
   }
 
   function closeTabsToRight(id) {
     const index = tabs.indexOf(find(id))
     if (index === -1) return
-    closeTabs(id, tabs.slice(index + 1).filter((each) => !each.pinned))
-  }
-
-  function closeTabs(keptId, closing) {
-    if (closing.includes(active())) activate(keptId)
-    for (const other of closing) closeTab(other.id)
-  }
-
-  // Pinning moves a tab to the end of the pinned ones, unpinning to just
-  // after them. A tab without a real page has nothing to pin.
-  function setPinned(id, pinned) {
-    const tab = find(id)
-    if (!tab || tab.pinned === pinned || (pinned && !pinnable(tab))) return
-    tabs.splice(tabs.indexOf(tab), 1)
-    tab.pinned = pinned
-    tabs.splice(pinnedCount(), 0, tab)
-    sync()
+    if (index < tabs.indexOf(active())) activate(id)
+    for (const other of tabs.slice(index + 1)) closeTab(other.id)
   }
 
   // The right-click menu for a tab in the strip. Tabs are looked up again
@@ -1246,14 +1287,13 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   function showTabMenu(id) {
     const tab = find(id)
     if (!tab) return
-    const keys = Object.fromEntries(['reload', 'duplicateTab', 'pinTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
+    const keys = Object.fromEntries(['reload', 'duplicateTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
       .map((command) => [command, settings[`shortcuts.${command}`]]))
-    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, pinnable: pinnable(tab), pinnedCount: pinnedCount(), keys }), (command) => {
+    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, keys }), (command) => {
       if (!find(id)) return
       switch (command) {
         case 'reload': return tab.page.isDestroyed() ? undefined : tab.page.reload()
         case 'duplicate': return duplicateTab(id)
-        case 'pin': return setPinned(id, !tab.pinned)
         case 'close': return closeTab(id)
         case 'closeOthers': return closeOtherTabs(id)
         case 'closeToRight': return closeTabsToRight(id)
@@ -1261,8 +1301,8 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     })
   }
 
-  // The Settings, History and Downloads popups (src/settings.html,
-  // src/history.html, src/downloads.html): each is made on first use, then hidden and shown; one is open at a time.
+  // The Settings, History, Downloads and Bookmarks popups (src/settings.html,
+  // src/history.html, src/downloads.html, src/bookmarks.html): each is made on first use, then hidden and shown; one is open at a time.
   // While a shortcut is being recorded in Settings, key presses go to it
   // instead of the menu, so ⌘T records ⌘T rather than opening a tab.
   function popupView(name) {
@@ -1305,7 +1345,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     layout()
     view.setVisible(true)
     view.webContents.focus()
-    view.webContents.send(`${name}-open`, popupState(name, ses))
+    view.webContents.send(`${name}-open`, name === 'bookmarks' ? bookmarksState() : popupState(name, ses))
   }
 
   // Popups have no exit animation, so they just hide. Focus goes back
@@ -1390,15 +1430,16 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   // What to list under the field at `rect` ({ x, y, width }, in the
   // window) for what is typed: the quick search sites a half-typed
   // shortcut could be ({ kind: 'site', id, name, alias, icon, shortcut },
-  // `shortcut` being `!yt`), else pinned tabs' pages, then pages from
-  // history ({ url, title, pinned? }). Answers with the items shown.
+  // `shortcut` being `!yt`), else
+  // bookmarks and pages from history ({ url, title, bookmarked }; only
+  // bookmarks in a private window). Answers with the items shown.
   function suggest(text, rect) {
     const fits = rect && ['x', 'y', 'width'].every((key) => Number.isFinite(rect[key]))
     const ok = fits && !popupOpen && typeof text === 'string' && text.length <= 2048
     const sites = ok && settings.quickSearch
       ? quickSearch.complete(text, settings.quickSearchPrefix).map((site) => ({ kind: 'site', ...site, shortcut: settings.quickSearchPrefix + site.alias }))
       : []
-    const items = sites.length ? sites : ok && settings.addressSuggestions && !isPrivate ? historyStore.suggestWithPinned(pinnedPages(), visited, text) : []
+    const items = sites.length ? sites : ok && settings.addressSuggestions ? historyStore.suggestWithBookmarks(bookmarkStore.pages(bookmarks), isPrivate ? [] : visited, text) : []
     if (items.length) showSuggestions(items, rect)
     else hideSuggestions()
     return items
@@ -1413,6 +1454,149 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
       win.webContents.focus()
       win.webContents.send('quick-search-pick', { id: item.id, alias: item.alias })
     } else navigate(item.url)
+  }
+
+  // Bookmarks. The popup shows one of two things at `at` ({ x, y } in the
+  // window): { kind: 'list', folderId | ids }, what is in a folder or the
+  // bookmarks that don't fit the bar; or { kind: 'form', id, folder, values
+  // }, to edit one (`id` null to add it) or to say it was just added.
+  let bookmarksView = null
+
+  function bookmarksState() {
+    const view = bookmarksView
+    if (!view) return null
+    if (view.kind === 'list') {
+      const folder = view.folderId && bookmarkStore.get(bookmarks, view.folderId)
+      const items = folder ? folder.items : bookmarks.filter((item) => view.ids?.includes(item.id))
+      return { kind: 'list', at: view.at, folderId: folder ? folder.id : null, title: folder ? folder.title : 'More bookmarks', items }
+    }
+    const { kind, at, id, folder, heading, values } = view
+    return { kind, at, id, folder, heading, values, folders: bookmarkStore.folders(bookmarks).map(({ id, title }) => ({ id, title })) }
+  }
+
+  function openBookmarks(view) {
+    bookmarksView = view
+    openPopup('bookmarks')
+  }
+
+  // Where the form goes when the pointer didn't say: under the star.
+  const underStar = () => ({ x: win.getContentBounds().width, y: BAR_HEIGHT })
+
+  function editBookmark(id, at = underStar(), heading) {
+    const item = bookmarkStore.get(bookmarks, id)
+    if (!item) return
+    const folder = bookmarkStore.isFolder(item)
+    openBookmarks({
+      kind: 'form', at, id, folder, heading: heading || (folder ? 'Rename folder' : 'Edit bookmark'),
+      values: { title: item.title, url: item.url, folderId: bookmarkStore.folderOf(bookmarks, id) },
+    })
+  }
+
+  // The star or ⌘D: bookmarks the page at the end of the bar and offers to
+  // change its name or folder; a page already bookmarked just opens that.
+  function bookmarkPage() {
+    const tab = active()
+    const url = tab?.started ? bookmarkStore.address(tab.url) : null
+    if (!url) return
+    const existing = bookmarkStore.pages(bookmarks).find((item) => item.url === url)
+    if (existing) return editBookmark(existing.id)
+    const item = bookmarkStore.page({ title: tab.title || url, url })
+    if (!changeBookmarks(win, bookmarkStore.add(bookmarks, item))) return
+    addIcon(url, tab.favicon, ses)
+    editBookmark(item.id, undefined, 'Bookmark added')
+  }
+
+  function newBookmark(folder, at) {
+    const tab = active()
+    const url = !folder && tab?.started ? bookmarkStore.address(tab.url) : null
+    openBookmarks({
+      kind: 'form', at, id: null, folder, heading: folder ? 'Add folder' : 'Add page',
+      values: { title: url ? tab.title : '', url: url || '', folderId: null },
+    })
+  }
+
+  // Done in the form. Answers { error }, or closes it.
+  function saveBookmark(values) {
+    const view = bookmarksView
+    if (popupOpen !== 'bookmarks' || view?.kind !== 'form') return {}
+    const title = String(values?.title ?? '').trim().slice(0, 1024)
+    const folderId = values?.folderId || null
+    let next
+    let url
+    // Removed in another window while it was edited here.
+    if (view.id && !bookmarkStore.get(bookmarks, view.id)) return { error: `This ${view.folder ? 'folder' : 'bookmark'} was removed.` }
+    if (view.folder) {
+      if (!title) return { error: 'Give the folder a name.' }
+      next = view.id ? bookmarkStore.update(bookmarks, view.id, { title }) : bookmarkStore.add(bookmarks, bookmarkStore.folder(title))
+    } else {
+      url = bookmarkStore.address(values?.url)
+      if (!url) return { error: 'Enter a web address.' }
+      const old = view.id && bookmarkStore.get(bookmarks, view.id)
+      const target = bookmarkStore.folders(bookmarks).some((each) => each.id === folderId) ? folderId : null
+      if (!old) next = bookmarkStore.add(bookmarks, bookmarkStore.page({ title, url }), target)
+      else {
+        // Another address is another site's icon.
+        next = bookmarkStore.update(bookmarks, old.id, { title, url, icon: url === old.url ? old.icon : '' })
+        if (target !== bookmarkStore.folderOf(bookmarks, old.id)) next = bookmarkStore.move(next, old.id, target)
+      }
+    }
+    if (!setBookmarks(next)) return { error: 'Couldn’t save bookmarks.' }
+    if (url) for (const tab of tabs) if (tab.url === url) addIcon(url, tab.favicon, ses)
+    closePopup()
+    return {}
+  }
+
+  // A folder with pages in it asks first, as it takes them with it.
+  function deleteBookmark(id) {
+    const item = bookmarkStore.get(bookmarks, id)
+    if (!item) return
+    if (bookmarkStore.isFolder(item) && item.items.length) {
+      const count = item.items.length
+      const choice = dialog.showMessageBoxSync(win, {
+        type: 'question',
+        buttons: ['Delete', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+        message: `Delete “${item.title}”?`,
+        detail: count === 1 ? 'The bookmark in it is deleted too.' : `The ${count} bookmarks in it are deleted too.`,
+      })
+      if (choice !== 0) return
+    }
+    changeBookmarks(win, bookmarkStore.remove(bookmarks, id))
+  }
+
+  function openBookmark(id, newTab) {
+    const item = bookmarkStore.get(bookmarks, id)
+    if (!item || bookmarkStore.isFolder(item)) return
+    closePopup()
+    if (newTab) openInTabs([item.url])
+    else navigate(item.url)
+  }
+
+  // New tabs next to the current one, in order, like ⌘-clicked links.
+  function openInTabs(urls) {
+    const index = active() ? tabs.indexOf(active()) + 1 : tabs.length
+    urls.forEach((url, i) => addTab({ url, index: index + i, background: i > 0 || !settings.switchToNewTabs }))
+  }
+
+  function showBookmarkMenu(id, at) {
+    const item = id === null ? null : bookmarkStore.get(bookmarks, id)
+    if (id !== null && !item) return
+    const folder = Boolean(item && bookmarkStore.isFolder(item))
+    popup(bookmarkMenu({ kind: item && (folder ? 'folder' : 'page'), count: folder ? item.items.length : 0, key: settings['shortcuts.bookmarkBar'] }), (command) => {
+      switch (command) {
+        case 'openInNewTab': return openBookmark(id, true)
+        case 'openInNewWindow': return createWindow({ url: item.url })
+        case 'openInPrivateWindow': return createWindow({ url: item.url, isPrivate: true })
+        case 'openAll': closePopup(); return openInTabs(item.items.map((each) => each.url))
+        case 'copyAddress': return clipboard.writeText(item.url)
+        case 'edit': return editBookmark(id, at)
+        case 'delete': return deleteBookmark(id)
+        case 'addPage': return newBookmark(false, at)
+        case 'addFolder': return newBookmark(true, at)
+        case 'hideBar': closePopup(); return toggleBookmarkBar()
+      }
+    })
   }
 
   // A page picked in History opens in the current tab, or with ⌘ in a
@@ -1433,9 +1617,9 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     session: ses,
     newTab,
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
-    reopenTab(history, index, pinned = false) {
+    reopenTab(history, index) {
       closePopup()
-      addTab({ history, index, pinned: pinned && Boolean(history) })
+      addTab({ history, index: reopenIndex(index, tabs.length) })
     },
     activate,
     navigate,
@@ -1472,17 +1656,30 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     hideSuggestions: (blur) => hideSuggestions(blur),
     pickSuggestion,
     showTabMenu,
-    duplicateTab: () => duplicateTab(activeId),
-    togglePin: () => setPinned(activeId, !active()?.pinned),
-    activePinned: () => Boolean(active()?.pinned),
-    // Whether Pin Tab can act on the active tab: unpin it, or pin it.
-    canPin: () => Boolean(active() && (active().pinned || pinnable(active()))),
-    // Pinned tabs moving in from a closed window, in the background.
-    adoptPins(histories) {
-      for (const history of histories) addTab({ history, background: true, pinned: true })
+    bookmarkPage,
+    openBookmark,
+    showBookmarkMenu,
+    saveBookmark,
+    bookmarksState,
+    listBookmarks: (view) => openBookmarks({ kind: 'list', ...view }),
+    moveBookmark: (id, folderId, beforeId) => changeBookmarks(win, bookmarkStore.move(bookmarks, id, folderId, beforeId)),
+    // The form's Delete.
+    removeBookmark() {
+      const id = bookmarksView?.id
+      closePopup()
+      if (id) deleteBookmark(id)
     },
-    // Each pinned tab's page, once it has one, for suggestions.
-    pinnedPages: () => tabs.filter((tab) => tab.pinned && historyStore.recordable(tab.url || '')).map((tab) => ({ url: tab.url, title: tab.title })),
+    // A list follows the change, and closes once nothing is left to list;
+    // a form keeps what is typed in it.
+    bookmarksChanged() {
+      sendBookmarks()
+      if (popupOpen !== 'bookmarks' || bookmarksView.kind !== 'list') return
+      const gone = bookmarksView.folderId && !bookmarkStore.get(bookmarks, bookmarksView.folderId)
+      const state = bookmarksState()
+      if (gone || (!bookmarksView.folderId && !state.items.length)) closePopup()
+      else popups.bookmarks.webContents.send('bookmarks-changed', state)
+    },
+    duplicateTab: () => duplicateTab(activeId),
     closeOtherTabs: () => closeOtherTabs(activeId),
     closeTabsToRight: () => closeTabsToRight(activeId),
     setRecording: (on, keys) => {
@@ -1492,6 +1689,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
     settingsChanged() {
       sendShortcuts()
       sendQuickSearch()
+      sendBookmarks()
       popups.settings?.webContents.send('settings-changed', settingsState())
       controls.historyChanged()
     },
@@ -1535,7 +1733,6 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   win.on('focus', () => {
     openWindows.delete(controls)
     openWindows.add(controls)
-    refreshPinItem()
     changed()
   })
   win.webContents.on('context-menu', (_event, params) => showPageMenu(win.webContents, params, false))
@@ -1543,29 +1740,16 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   // reopened whole. A window closed by its last tab was remembered in
   // removeTab. Its tabs are read while it is still there, and remembered
   // only once it is really gone, in case the close is cancelled.
-  // Its pinned tabs are not closed with it but move on (see strayPins), so
-  // they are read as a launch would reopen them, and left out of what
-  // Reopen Closed Tab brings back.
   let closingWindow = null
-  let closingPins = null
   win.on('close', () => {
     if (isPrivate) return
-    const closing = tabs.filter((tab) => !tab.pinned)
-    const histories = closing.map((tab) => (tab.started ? saveHistory(tab) : null))
-    closingWindow = histories.length ? closedWindow(histories, Math.max(closing.indexOf(active()), 0), 0) : null
-    const pins = tabs.filter((tab) => tab.pinned).map(sessionHistory).filter(Boolean)
-    closingPins = pins.length ? closedWindow(pins, 0, pins.length) : null
+    const histories = tabs.map((tab) => (tab.started ? saveHistory(tab) : null))
+    closingWindow = histories.length ? closedWindow(histories, Math.max(tabs.indexOf(active()), 0)) : null
   })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
-  win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendQuickSearch(); sendDownloads() })
+  win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendQuickSearch(); sendBookmarks(); sendDownloads() })
   win.on('closed', () => {
     openWindows.delete(controls)
-    // While quitting, the session already holds them in this window.
-    if (!quitting && closingPins) {
-      const heir = [...openWindows].filter((c) => !c.isPrivate).at(-1)
-      if (heir) heir.adoptPins(closingPins.tabs)
-      else strayPins = closingPins
-    }
     changed()
     if (closingWindow) rememberClosed(closingWindow)
     // Its own pages too, read before they close.
@@ -1597,12 +1781,11 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, tabs: restored
   win.loadFile(path.join(__dirname, 'index.html'), isPrivate ? { query: { private: '1' } } : {})
   if (maximized) win.maximize()
   if (fullScreen) win.setFullScreen(true)
-  // Pinned tabs left by the last window closed join this one's.
-  if (!isPrivate) controls.adoptPins(takeStrayPins())
   if (restored.length) {
-    const added = restored.map((history, i) => addTab(history ? { history, background: true, pinned: i < pinned } : { background: true }))
-    activate(added[Math.min(activeIndex, added.length - 1)].id)
-  } else newTab()
+    for (const history of restored) addTab(history ? { history, background: true } : { background: true })
+    activate(tabs[Math.min(activeIndex, tabs.length - 1)].id)
+  } else if (url) addTab({ url })
+  else newTab()
   return controls
 }
 
@@ -1675,8 +1858,6 @@ function buildMenu() {
         { label: 'New Private Window', accelerator: key('newPrivateWindow'), click: () => createWindow({ isPrivate: true }) },
         { type: 'separator' },
         { label: 'Duplicate Tab', accelerator: key('duplicateTab'), click: inFocused((c) => { c.closePopup(); c.duplicateTab() }) },
-        // Checked while the tab is pinned (see refreshPinItem).
-        { id: 'pinTab', label: 'Pin Tab', type: 'checkbox', accelerator: key('pinTab'), click: inFocused((c) => { c.closePopup(); c.togglePin() }) },
         { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closePopup(); c.focusAddress() }) },
         { type: 'separator' },
         // With a popup open, Close Tab closes the popup instead.
@@ -1746,6 +1927,14 @@ function buildMenu() {
       ],
     },
     {
+      label: 'Bookmarks',
+      submenu: [
+        { label: 'Bookmark This Page…', accelerator: key('bookmarkPage'), click: inFocused((c) => c.bookmarkPage()) },
+        { type: 'separator' },
+        { label: 'Show Bookmark Bar', type: 'checkbox', checked: settings.bookmarkBar, accelerator: key('bookmarkBar'), click: toggleBookmarkBar },
+      ],
+    },
+    {
       label: 'Window',
       role: 'window',
       submenu: [
@@ -1783,6 +1972,21 @@ ipcMain.on('close-find', fromToolbar((c, tabId) => c.isActive(tabId) && c.closeF
 ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 ipcMain.on('open-downloads', fromToolbar((c) => c.openPopup('downloads')))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
+// Bookmarks, from the bar or the popup's lists, which share these.
+const fromBookmarks = (handler) => (event, ...args) => {
+  const popup = windowsByPopup.get(event.sender)
+  const controls = windowsByToolbar.get(event.sender) || (popup?.name === 'bookmarks' ? popup.controls : null)
+  if (controls) handler(controls, ...args)
+}
+const isPoint = (at) => Number.isFinite(at?.x) && Number.isFinite(at?.y)
+const isId = (id) => typeof id === 'string'
+ipcMain.on('bookmark-page', fromToolbar((c) => c.bookmarkPage()))
+ipcMain.on('bookmark-move', fromBookmarks((c, id, folderId, beforeId) => isId(id) && c.moveBookmark(id, isId(folderId) ? folderId : null, isId(beforeId) ? beforeId : null)))
+ipcMain.on('bookmark-open', fromBookmarks((c, id, newTab) => isId(id) && c.openBookmark(id, newTab === true)))
+ipcMain.on('bookmark-menu', fromBookmarks((c, id, at) => (id === null || isId(id)) && isPoint(at) && c.showBookmarkMenu(id, { x: at.x, y: at.y })))
+ipcMain.on('bookmark-list', fromBookmarks((c, what, at) => {
+  if (isPoint(at)) c.listBookmarks({ at: { x: at.x, y: at.y }, ...(Array.isArray(what) ? { ids: what } : { folderId: what }) })
+}))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
 // A prompt's answer: 'allow', 'block', or null to dismiss it, for the
 // kinds the row showed.
@@ -1801,22 +2005,13 @@ const fromPopup = (name, handler) => (event, ...args) => {
 const fromSettings = (handler) => fromPopup('settings', handler)
 const fromHistory = (handler) => fromPopup('history', handler)
 const fromDownloads = (handler) => fromPopup('downloads', handler)
+ipcMain.handle('bookmarks-get', fromPopup('bookmarks', (c) => c.bookmarksState()))
+ipcMain.handle('bookmarks-save', fromPopup('bookmarks', (c, values) => c.saveBookmark(values)))
+ipcMain.on('bookmarks-remove', fromPopup('bookmarks', (c) => c.removeBookmark()))
+ipcMain.on('bookmarks-close', fromPopup('bookmarks', (c) => c.closePopup()))
 ipcMain.on('suggestions-pick', fromPopup('suggestions', (c, index, generation) => Number.isInteger(index) && c.pickSuggestion(index, generation)))
 ipcMain.handle('settings-get', fromSettings(() => settingsState()))
-ipcMain.handle('settings-set', fromSettings((_c, key, value) => {
-  const { values, error } = settingsStore.update(settings, key, value)
-  if (error) return settingsState(error)
-  if (values === settings) return settingsState()
-  // Saved first, so a failed write leaves the old settings in use.
-  try {
-    settingsStore.save(settingsFile, values)
-  } catch {
-    return settingsState('Couldn’t save settings.')
-  }
-  settings = values
-  applySettings()
-  return settingsState()
-}))
+ipcMain.handle('settings-set', fromSettings((_c, key, value) => settingsState(changeSetting(key, value))))
 // Changes or forgets (null) one site's choice for one kind.
 ipcMain.handle('permissions-set', fromSettings((_c, site, kind, choice) => {
   const saved = typeof site === 'string' && Object.hasOwn(permissions.KINDS, kind) && sitePermissions.get(site)?.[kind]
@@ -1880,6 +2075,8 @@ app.whenReady().then(async () => {
   setUpSession(session.defaultSession, savedPermissions)
   historyFile = path.join(app.getPath('userData'), 'history.json')
   visited = historyStore.load(historyFile)
+  bookmarksFile = path.join(app.getPath('userData'), 'bookmarks.json')
+  bookmarks = bookmarkStore.load(bookmarksFile)
   adblock = createAdblock(session.defaultSession, path.join(app.getPath('userData'), 'adblock.bin'))
   // A saved engine is in use before any tab loads; first-time lists
   // download in the background.
@@ -1889,14 +2086,9 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(buildMenu())
   sessionFile = path.join(app.getPath('userData'), 'session.json')
   // The windows open when Lit last quit, the one in front opened last.
-  // With Reopen windows off, a new window with the pinned tabs (if any,
-  // through strayPins) and a new tab in front.
-  const saved = sessionStore.load(sessionFile)
-  if (settings.restoreSession && saved.length) for (const win of saved) createWindow(win)
-  else {
-    strayPins = sessionStore.pinnedWindow(saved)
-    createWindow()
-  }
+  const restored = settings.restoreSession ? sessionStore.load(sessionFile) : []
+  if (restored.length) for (const saved of restored) createWindow(saved)
+  else createWindow()
   // Like other Mac browsers, Lit keeps running with no windows open;
   // clicking the Dock icon opens a fresh one. Registered after the first
   // window so a launch-time activate cannot open a second.

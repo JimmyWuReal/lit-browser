@@ -122,27 +122,55 @@ function pageMenu(params, context = {}) {
   return joinGroups(groups)
 }
 
-// The menu for a right-click on a tab, the `index`th of `count`, the
-// first `pinnedCount` of which are pinned. `started` is false for a tab
-// still showing the search box; `pinnable` says whether the tab is on a
-// page it could be pinned with. Closing other tabs,
-// or those to the right, leaves pinned tabs open. `keys` ({ reload,
-// duplicateTab, pinTab, closeTab, closeOtherTabs, closeTabsToRight }) are
-// the current accelerators, shown next to their items.
-function tabMenu({ index, count, started, pinnable = started, pinnedCount = 0, keys = {} }) {
-  const pinned = index < pinnedCount
+// The menu for a right-click on a tab, the `index`th of `count`.
+// `started` is false for a tab still showing the search box. `keys`
+// ({ reload, duplicateTab, closeTab, closeOtherTabs, closeTabsToRight })
+// are the current accelerators, shown next to their items.
+function tabMenu({ index, count, started, keys = {} }) {
   return joinGroups([
     [
       { label: 'Reload', command: 'reload', enabled: Boolean(started), accelerator: keys.reload },
       { label: 'Duplicate', command: 'duplicate', accelerator: keys.duplicateTab },
-      { label: pinned ? 'Unpin Tab' : 'Pin Tab', command: 'pin', enabled: pinned || Boolean(pinnable), accelerator: keys.pinTab },
     ],
     [
       { label: 'Close Tab', command: 'close', accelerator: keys.closeTab },
-      { label: 'Close Other Tabs', command: 'closeOthers', enabled: count - pinnedCount - (pinned ? 0 : 1) > 0, accelerator: keys.closeOtherTabs },
-      { label: 'Close Tabs to the Right', command: 'closeToRight', enabled: count > Math.max(index + 1, pinnedCount), accelerator: keys.closeTabsToRight },
+      { label: 'Close Other Tabs', command: 'closeOthers', enabled: count > 1, accelerator: keys.closeOtherTabs },
+      { label: 'Close Tabs to the Right', command: 'closeToRight', enabled: index < count - 1, accelerator: keys.closeTabsToRight },
     ],
   ])
 }
 
-module.exports = { pageMenu, tabMenu }
+// The menu for a right-click on the bookmark bar or in one of its lists:
+// on a page, on a folder (`count` pages in it), or, with no `kind`, on the
+// bar itself. `key` is Show Bookmark Bar's accelerator.
+function bookmarkMenu({ kind, count = 0, key } = {}) {
+  const create = [
+    { label: 'Add Page…', command: 'addPage' },
+    { label: 'Add Folder…', command: 'addFolder' },
+  ]
+  const bar = [{ label: 'Hide Bookmark Bar', command: 'hideBar', accelerator: key }]
+  if (kind === 'page') {
+    return joinGroups([
+      [
+        { label: 'Open in New Tab', command: 'openInNewTab' },
+        { label: 'Open in New Window', command: 'openInNewWindow' },
+        { label: 'Open in Private Window', command: 'openInPrivateWindow' },
+      ],
+      [{ label: 'Copy Address', command: 'copyAddress' }],
+      [{ label: 'Edit…', command: 'edit' }, { label: 'Delete', command: 'delete' }],
+      create,
+      bar,
+    ])
+  }
+  if (kind === 'folder') {
+    return joinGroups([
+      [{ label: `Open All in New Tabs (${count})`, command: 'openAll', enabled: count > 0 }],
+      [{ label: 'Rename…', command: 'edit' }, { label: 'Delete', command: 'delete' }],
+      create,
+      bar,
+    ])
+  }
+  return joinGroups([create, bar])
+}
+
+module.exports = { pageMenu, tabMenu, bookmarkMenu }
