@@ -865,6 +865,8 @@
     window.lit.onQuickSearch((next) => {
       // Turned off, or a new prefix: the chip goes back into the field as
       // the shortcut it was typed as.
+      // Rows listed for the old prefix no longer apply.
+      if (next?.prefix !== quick?.prefix && document.activeElement === address) closeSuggestions()
       if (chip && next?.prefix !== quick.prefix) {
         const text = fieldText()
         setChip(null)
@@ -919,7 +921,13 @@
       if (chip) closeSuggestions()
       else suggest()
     })
-    address.addEventListener('compositionend', () => { if (!chip) suggest() })
+    // An input method can commit the space, or it and the search, at once.
+    address.addEventListener('compositionend', (event) => {
+      if (chip) return
+      const found = /\s/.test(event.data ?? '') && typedShortcut()
+      if (found) enterChip(found.site, found.alias, found.search)
+      else suggest()
+    })
     address.addEventListener('keydown', (event) => {
       if (event.isComposing || event.keyCode === 229) return
       const plain = !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
