@@ -8,6 +8,8 @@ const { SEARCH_ENGINES } = require('./url')
 const zoom = require('./zoom')
 const shortcuts = require('./shortcuts')
 
+// A section can also name a `list` the popup draws after its settings, from
+// state main sends with them (sitePermissions is the only one).
 // Each setting: { key, label, description?, type, default, ...type fields }.
 // Types the popup can draw:
 //   choice    `options` is [{ value, label }]; a segmented control.
@@ -91,6 +93,9 @@ const SECTIONS = [
   {
     id: 'privacy',
     title: 'Privacy',
+    // Also lists the sites given or refused a permission (see
+    // src/permissions.js), after the settings.
+    list: 'sitePermissions',
     settings: [
       {
         key: 'saveHistory',
