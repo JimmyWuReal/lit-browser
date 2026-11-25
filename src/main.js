@@ -28,6 +28,7 @@ const sessionStore = require('./session')
 const shortcuts = require('./shortcuts')
 const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
+const pdf = require('./pdf')
 const permissions = require('./permissions')
 const passwords = require('./passwords')
 const shareStore = require('./share')
@@ -1139,7 +1140,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     win.webContents.send('tabs', {
       activeId,
       navigationButtons: profile.settings.navigationButtons,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts, signIns, offer, error, audible }) => ({
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, pdf: isPdf, page, prompts, signIns, offer, error, audible }) => ({
         id, title, url, favicon, loading, started,
         canGoBack: !page.isDestroyed() && page.navigationHistory.canGoBack(),
         canGoForward: !page.isDestroyed() && page.navigationHistory.canGoForward(),
@@ -1155,7 +1156,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
         prompt: signIns[0] ? undefined : promptOf({ prompts, offer }),
         // The address bar shows the zoom, to reset it, when it is not the
         // default or the site has its own (which can match a later default).
-        zoom: started && !error && !signInPage({ signIns }) && (!zoom.same(factor, profile.settings.defaultZoom) || ownZoom(page.isDestroyed() ? '' : page.getURL()))
+        // A PDF's viewer shows its own zoom instead.
+        zoom: started && !error && !isPdf && !signInPage({ signIns }) && (!zoom.same(factor, profile.settings.defaultZoom) || ownZoom(page.isDestroyed() ? '' : page.getURL()))
           ? zoom.percent(factor)
           : '',
         find: find && { text: find.text, active: find.active, matches: find.matches },
@@ -1355,7 +1357,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], signIns: [], submitted: null, offer: null, fullScreen: null, error: null, audible: false }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, pdf: false, prompts: [], signIns: [], submitted: null, offer: null, fullScreen: null, error: null, audible: false }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -1412,6 +1414,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       moveLogin(tab, status)
       dropSignIns(tab)
       tab.leaving = false
+      // Until checkPdf says otherwise.
+      tab.pdf = false
       setZoom(tab, zoomOf(url))
       // For checkResponse; a new object for each page.
       tab.response = { status }
@@ -1497,6 +1501,18 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const rerunFind = () => { if (tab.find?.text && tab.find.requestId === null) search(tab) }
     page.on('dom-ready', rerunFind)
     page.on('did-stop-loading', rerunFind)
+    // Whether the page is a PDF, which zooms in its viewer (src/pdf.js).
+    // Asked apart from the page's own scripts, so no page passes for one.
+    const checkPdf = async () => {
+      const { pageId } = tab
+      if (page.isDestroyed()) return
+      const isPdf = (await page.executeJavaScriptInIsolatedWorld(CHECK_WORLD, [{ code: pdf.IS_PDF }]).catch(() => false)) === true
+      if (tab.pageId !== pageId || tab.pdf === isPdf) return
+      tab.pdf = isPdf
+      sync()
+    }
+    page.on('dom-ready', checkPdf)
+    page.on('did-stop-loading', checkPdf)
     page.on('found-in-page', (_event, result) => {
       const next = findState.result(tab.find, result)
       if (next === tab.find) return
@@ -1779,8 +1795,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // The page's own URL, not tab.url: a popup can stay on the about:blank its
   // opener writes into, which never fires did-navigate.
   const urlOf = (tab) => (tab.page.isDestroyed() ? '' : tab.page.getURL())
-  const zoomBy = (tab, direction) => { const url = urlOf(tab); if (url) changeZoom(url, zoom.step(tab.zoom, direction)) }
-  const resetZoom = (tab) => { const url = urlOf(tab); if (url) changeZoom(url, profile.settings.defaultZoom) }
+  // A PDF zooms in its viewer, apart from its site's zoom (see src/pdf.js).
+  const zoomPdf = (tab, direction) => { if (!tab.page.isDestroyed()) pdf.viewerOf(tab.page)?.executeJavaScript(pdf.zoomScript(direction)).catch(() => {}) }
+  const zoomBy = (tab, direction) => { const url = urlOf(tab); if (tab.pdf) zoomPdf(tab, direction); else if (url) changeZoom(url, zoom.step(tab.zoom, direction)) }
+  const resetZoom = (tab) => { const url = urlOf(tab); if (tab.pdf) zoomPdf(tab, 0); else if (url) changeZoom(url, profile.settings.defaultZoom) }
 
   // Permission prompts. A tab's requests wait in order, one prompt at a
   // time; the same request asked again joins the one waiting. Each prompt
@@ -3377,7 +3395,7 @@ ipcMain.on('share-choose', fromShare((c, kind, id, audio, page) => c.chooseShare
 ipcMain.on('share-allow', fromShare(openScreenPermission))
 ipcMain.on('share-close', fromShare((c) => c.closePopup()))
 
-// Other apps opening links and HTML files. Registered before Lit is ready,
+// Other apps opening links, and HTML and PDF files. Registered before Lit is ready,
 // as macOS sends the link that launched it early.
 app.on('open-url', (event, url) => {
   event.preventDefault()
