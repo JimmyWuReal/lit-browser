@@ -28,7 +28,7 @@ const shortcuts = require('./shortcuts')
 const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
 const permissions = require('./permissions')
-const { refusePasskeys } = require('./passkeys')
+const passkeys = require('./passkeys')
 const passwords = require('./passwords')
 const shareStore = require('./share')
 const signIn = require('./signin')
@@ -54,7 +54,6 @@ const BOOKMARKS_HEIGHT = 34
 const PRELOAD = path.join(__dirname, 'preload.js')
 // What runs in web pages.
 const PAGE_PRELOAD = path.join(__dirname, 'page.js')
-const PASSKEYS_PRELOAD = path.join(__dirname, 'passkeys.js')
 // Keep in sync with .menu padding and .row height in suggestions.html.
 const SUGGESTION_ROW = 38
 const SUGGESTIONS_PAD = 5
@@ -460,8 +459,7 @@ app.on('login', (event, contents, details, authInfo, callback) => {
 })
 
 // What every session browsing pages needs: Lit's permission prompts, Do
-// Not Track, downloads followed into the Downloads list, and what runs in
-// its pages.
+// Not Track, and downloads followed into the Downloads list.
 function setUpSession(ses, profile, store) {
   ses.setPermissionRequestHandler((...args) => onPermissionRequest(store, ...args))
   ses.setPermissionCheckHandler((...args) => onPermissionCheck(store, ...args))
@@ -469,7 +467,6 @@ function setUpSession(ses, profile, store) {
   ses.on('will-download', (_event, item) => trackDownload(item, ses, profile))
   ses.webRequest.onBeforeRedirect({ urls: ['<all_urls>'], types: ['mainFrame'] }, (details) => onAppRedirect(store, details))
   ses.registerPreloadScript({ type: 'frame', filePath: PAGE_PRELOAD })
-  ses.registerPreloadScript({ type: 'frame', filePath: PASSKEYS_PRELOAD })
   applyDoNotTrack(ses, profile)
 }
 
@@ -1295,6 +1292,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     for (const overlay of Object.values(popups)) win.contentView.addChildView(overlay)
     layout()
 
+    // Frames inside the page, as each opens a page of its own. One that asks in
+    // its first script may be ahead of this.
+    page.on('did-frame-navigate', (_event, _url, _code, _status, isMainFrame, processId, routingId) => {
+      if (!isMainFrame) webFrameMain.fromId(processId, routingId)?.executeJavaScript(`(${passkeys.refuse})()`).catch(() => {})
+    })
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
     page.on('did-stop-loading', () => { tab.loading = false; tab.leaving = false; settle(tab); dropSignIns(tab, true); sync(); checkResponse(tab); checkLogin(tab) })
     // The address being opened, before it commits: a tab duplicated or
@@ -1351,11 +1353,6 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // list are now the tab's. This event is only for those: a page that
     // breaks off halfway, or a load stopped or turned into a download, keeps
     // what the tab shows.
-    // Preloads don't run in the frames inside a page (src/passkeys.js). A
-    // frame that asks while its page is still being read may get in first.
-    page.on('did-frame-navigate', (_event, _url, _code, _status, isMainFrame, processId, routingId) => {
-      if (!isMainFrame) webFrameMain.fromId(processId, routingId)?.executeJavaScript(`(${refusePasskeys})()`).catch(() => {})
-    })
     page.on('did-fail-provisional-load', (_event, code, name, url, isMainFrame) => {
       if (!isMainFrame || code === ERR_ABORTED) return
       tab.url = url
@@ -3313,9 +3310,9 @@ app.whenReady().then(async () => {
   if (swept !== profileList) setProfileList(swept)
   for (const profile of profileList.profiles) openProfile(profile)
   currentProfile = profiles.find((profile) => profile.id === profileList.last)
-  // Before any page's process starts, as each gets it from here, and some are
-  // shared between tabs and profiles (src/passkeys.js).
-  if (!shared().securityKeys) app.commandLine.appendSwitch('disable-blink-features', 'WebAuth')
+  // Once, before any page: pages' processes take it as they start, and tabs and
+  // profiles share them.
+  if (!shared().securityKeys) passkeys.turnAway(app)
   adblock = createAdblock(path.join(root, 'adblock.bin'))
   // A saved engine is in use before any tab loads; first-time lists
   // download in the background.
