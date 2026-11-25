@@ -280,8 +280,9 @@ function siteFor(contents, asking, embedding) {
 
 // Pages being redirected to another app -> { to, site }, `site` being the
 // one that redirects. Filled from the network request, the only place that
-// knows it, and taken by the page's will-redirect, which follows. Two sites
-// sending a page to the same address at once leave it without one.
+// knows it, and taken by the page's will-redirect, which follows. A page has
+// one navigation at a time, and each starts without one; two sites sending it
+// to the same address within one (a cancelled request's late news) leave none.
 const appRedirects = new WeakMap()
 function noteAppRedirect({ webContents: page, url, redirectURL }) {
   if (!page || !permissions.opensApp(redirectURL)) return
@@ -297,7 +298,9 @@ function noteAppRedirect({ webContents: page, url, redirectURL }) {
 // (`securityOrigin`). Other requests carry only the frame's address, which a
 // sandboxed frame keeps without the origin, so frames are refused those.
 // The prompt names the site, not the frame, so its answer stays right even
-// if the frame has gone. Anything not from a tab (Lit's own pages, a
+// if the frame has gone. A link to another app is always a page's: Lit
+// itself loads only Chromium's own schemes (toUrl, bookmarks), and a restored
+// or duplicated tab, not yet on a page, has no site. Anything not from a tab (Lit's own pages, a
 // service worker) is refused too. `store` is the session's choices.
 function onPermissionRequest(store, contents, permission, callback, details) {
   const kinds = permissions.kindsOf(permission, details.mediaTypes, details.externalURL)
@@ -988,6 +991,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     page.on('did-start-navigation', ({ url, isMainFrame, initiator }) => {
       if (!isMainFrame) return
       tab.pendingUrl = url
+      // What an earlier navigation, now cancelled, left behind.
+      appRedirects.delete(page)
       tab.startedByPage = Boolean(initiator)
     })
     // A redirect to another app. Electron would ask for the page the link was
