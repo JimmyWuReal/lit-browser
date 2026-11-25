@@ -1269,9 +1269,12 @@
       const started = event.detail === 0 ? shownSignIn : signInPressed
       signInPressed = null
       if (shownSignIn === null || started !== shownSignIn) return
-      // Enter in the username goes on to the password; nothing is not sent.
-      if (credentials && !username.value && !password.value) return username.focus()
-      if (credentials && event.detail === 0 && document.activeElement === username && !password.value) return password.focus()
+      // Enter in the username goes on to the password. Two empty fields are
+      // sent only from the button itself, not by an Enter meant for something
+      // else as the prompt appeared.
+      const byEnter = event.detail === 0 && document.activeElement !== event.currentTarget
+      if (credentials && byEnter && !password.value && document.activeElement === username) return password.focus()
+      if (credentials && byEnter && !username.value && !password.value) return
       window.lit.answerSignIn(signInTab, shownSignIn, credentials ? { username: username.value, password: password.value } : null)
     }
     // Enter in a field clicks the button too.

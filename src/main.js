@@ -1133,7 +1133,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     layout()
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
-    page.on('did-stop-loading', () => { tab.loading = false; settle(tab); dropSignIns(tab, true); sync(); checkResponse(tab) })
+    page.on('did-stop-loading', () => { tab.loading = false; tab.leaving = false; settle(tab); dropSignIns(tab, true); sync(); checkResponse(tab) })
     // The address being opened, before it commits: a tab duplicated or
     // closed before its first page commits gets it.
     // Whether the page started it (a link, a script) or Lit did (the
@@ -1141,9 +1141,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     page.on('did-start-navigation', ({ url, isMainFrame, isSameDocument, initiator }) => {
       if (!isMainFrame) return
       tab.pendingUrl = url
-      // It takes the place of one still asking to sign in, as a stopped load
-      // ends it (did-stop-loading).
-      if (!isSameDocument) dropSignIns(tab, true)
+      // Leaving the page, or a load that asks, drops their sign-ins, and the
+      // page left asks no more (askSignIn); a load only stopped drops its own
+      // (did-stop-loading).
+      if (!isSameDocument) { tab.leaving = true; dropSignIns(tab) }
       // For onAppRedirect. Read now: a frame can be gone by the time its
       // navigation redirects. A new page cancels the one still on its way, so
       // this is the latest's; a move within the page (#section) leaves it
@@ -1168,6 +1169,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       // A new page has not asked for anything yet; the old page's requests go.
       dropPrompts(tab)
       dropSignIns(tab)
+      tab.leaving = false
       setZoom(tab, zoomOf(url))
       // For checkResponse; a new object for each page.
       tab.response = { status }
@@ -1609,12 +1611,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // with the username and password, or with none, which refuses it and leaves
   // the server's own response.
   // A page that asks is on its way to replace the one there, whose requests
-  // are refused, so its prompt is the tab's only one. It gets the keyboard,
+  // are refused as soon as it starts to load, so its prompt is the tab's only one. It gets the keyboard,
   // but not from someone typing in the toolbar, nor in a window behind.
   function askSignIn(contents, request, callback) {
     const tab = tabs.find((each) => each.page === contents)
-    if (request.main) dropSignIns(tab)
-    else if (signInPage(tab)) return callback()
+    if (!request.main && tab.leaving) return callback()
     const same = tab.signIns.find((prompt) => prompt.key === request.key)
     if (same) {
       same.callbacks.push(callback)
