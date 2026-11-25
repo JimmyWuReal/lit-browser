@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('lit', {
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
   // Before another tab, or last (null).
   moveTab: (id, beforeId) => ipcRenderer.send('move-tab', id, beforeId),
+  // One place left (-1) or right (1), from where it is by then.
+  nudgeTab: (id, direction) => ipcRenderer.send('nudge-tab', id, direction),
   // { activeId, tabs: [{ id, title, url, favicon, loading, started, find, zoom, prompt, error }] },
   // `zoom` being '125%', or '' at the default zoom, and `prompt` the tab's
   // permission request, { id, site, kinds, does }, or undefined. `error` is

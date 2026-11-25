@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, moved, remember, keepNewest, reopenIndex, onScreen } = require('../src/tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -38,6 +38,15 @@ test('a move that goes nowhere, or of a tab that is gone, changes nothing', () =
   assert.deepEqual(moved([1, 2, 3], 2, 3), [1, 2, 3])
   assert.deepEqual(moved([1, 2, 3], 9, 1), [1, 2, 3])
   assert.deepEqual(moved([1, 2, 3], 1, 9), [1, 2, 3])
+})
+
+test('a tab moves one place either way, and stops at the ends', () => {
+  assert.deepEqual(nudged([1, 2, 3], 2, -1), [2, 1, 3])
+  assert.deepEqual(nudged([1, 2, 3], 2, 1), [1, 3, 2])
+  assert.deepEqual(nudged([1, 2, 3], 1, 1), [2, 1, 3])
+  assert.deepEqual(nudged([1, 2, 3], 1, -1), [1, 2, 3])
+  assert.deepEqual(nudged([1, 2, 3], 3, 1), [1, 2, 3])
+  assert.deepEqual(nudged([1, 2, 3], 9, 1), [1, 2, 3])
 })
 
 test('remember keeps the newest closed entries last, up to the limit', () => {

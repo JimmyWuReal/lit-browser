@@ -808,7 +808,9 @@
         event.dataTransfer.setData('application/x-lit-tab', String(id))
         root.classList.add('is-dragged')
       })
-      root.addEventListener('dragend', endTabDrag)
+      // The press took focus from the page (or the search box), so it goes
+      // back, as after a click on a tab.
+      root.addEventListener('dragend', () => { endTabDrag(); window.lit.activateTab(state.activeId) })
       labelShortcut(close)
       const elements = { root, select, close, icon: root.querySelector('.tab-icon'), title: root.querySelector('.tab-title'), iconKey: null }
       tabElements.set(id, elements)
@@ -841,7 +843,7 @@
       // The same tabs in another order, so one was moved.
       const reordered = next.tabs.length === state.tabs.length && state.tabs.every(({ id }) => ids.has(id)) &&
         state.tabs.some(({ id }, index) => id !== next.tabs[index].id)
-      const lefts = reordered && new Map([...tabElements].map(([id, { root }]) => [id, root.getBoundingClientRect().left]))
+      const lefts = reordered && new Map([...tabElements].map(([id, { root }]) => [id, tabLeft(root)]))
       const focused = tabList.contains(document.activeElement) ? document.activeElement : null
       state = next
 
@@ -870,12 +872,15 @@
       placeThumb()
       fadeTabs()
       if (reordered) {
+        for (const { glide } of tabElements.values()) glide?.cancel()
+        // A tab put elsewhere in the page loses focus. The focused tab is the
+        // one moved, by keys or a drag, so it stays in view.
+        if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true })
+        focused?.closest('.tab')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
         glideTabs(lefts)
-        // A tab put elsewhere in the page loses focus.
-        if (focused && document.activeElement !== focused) focused.focus()
       }
       if (refocusTabs) { refocusTabs = false; tabElements.get(state.activeId)?.select.focus() }
-      if (switched || reordered) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      if (switched) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 
       const tab = activeTab()
       document.body.classList.toggle('home', !tab?.started)
@@ -1198,12 +1203,12 @@
     tabList.addEventListener('scroll', fadeTabs)
     new ResizeObserver(fadeTabs).observe(tabList)
 
-    // Tabs glide from where they were on screen (`lefts`, by id), along with
-    // the thumb; one still gliding carries on from where it had got to.
+    // Where a tab is along the strip's length, wherever its glide has got to.
+    const tabLeft = (root) => root.getBoundingClientRect().left + tabList.scrollLeft
+    // Tabs glide from where they were (`lefts`, by id), along with the thumb.
     function glideTabs(lefts) {
       for (const [id, elements] of tabElements) {
-        elements.glide?.cancel()
-        const from = lefts.get(id) - elements.root.getBoundingClientRect().left
+        const from = lefts.get(id) - tabLeft(elements.root)
         if (!from || matchMedia('(prefers-reduced-motion: reduce)').matches) continue
         elements.glide = elements.root.animate([{ transform: `translateX(${from}px)` }, { transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.22, 1, .36, 1)' })
       }
@@ -1271,9 +1276,7 @@
         window.lit.closeTab(focusedId, false)
       } else if (event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
         event.preventDefault()
-        if (event.key === 'ArrowLeft' ? index > 0 : index < ids.length - 1) {
-          window.lit.moveTab(focusedId, event.key === 'ArrowLeft' ? ids[index - 1] : ids[index + 2] ?? null)
-        }
+        window.lit.nudgeTab(focusedId, event.key === 'ArrowLeft' ? -1 : 1)
       } else if (target !== undefined) {
         event.preventDefault()
         const id = ids[(target + ids.length) % ids.length]

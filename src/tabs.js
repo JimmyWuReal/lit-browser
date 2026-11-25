@@ -33,6 +33,14 @@ function moved(ids, id, beforeId) {
   return rest
 }
 
+// The tabs with `id` moved one place left (-1) or right (1), if there is one.
+function nudged(ids, id, direction) {
+  const index = ids.indexOf(id)
+  const to = index + direction
+  if (index === -1 || to < 0 || to >= ids.length) return ids
+  return moved(ids, id, direction < 0 ? ids[to] : ids[to + 1] ?? null)
+}
+
 // Closed tabs and windows, for Reopen Closed Tab: newest last, holding
 // at most `limit` tabs (the Closed tabs to remember setting).
 function remember(closed, entry, limit) {
@@ -72,4 +80,4 @@ const onScreen = (bounds, areas) => areas.some((area) =>
   bounds.x < area.x + area.width && bounds.x + bounds.width > area.x &&
   bounds.y < area.y + area.height && bounds.y + bounds.height > area.y)
 
-module.exports = { afterClose, step, byNumber, moved, remember, keepNewest, reopenIndex, onScreen }
+module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen }
