@@ -15,7 +15,8 @@ const quickSearch = require('./quicksearch')
 // person or their accounts goes in a profile's, how Lit itself works (tabs,
 // shortcuts) in a shared one. The profile ones come first.
 // A section can also name a `list` the popup draws after its settings, from
-// state main sends with them (sitePermissions, passwords, quickSearchSites, profiles, defaultBrowser).
+// state main sends with them (sitePermissions, passwords, quickSearchSites, profiles, defaultBrowser),
+// with `listWords`, the words that find it in Settings' search.
 // Each setting: { key, label, description?, group?, type, default, ...type
 // fields }. Settings next to each other with the same `group` get it as a
 // heading.
@@ -95,6 +96,7 @@ const SECTIONS = [
     // Also lists every saved login and the sites never asked about (see
     // src/passwords.js), after the settings.
     list: 'passwords',
+    listWords: 'Saved passwords logins usernames never saved',
     settings: [
       {
         key: 'savePasswords',
@@ -119,6 +121,7 @@ const SECTIONS = [
     // Also lists the sites given or refused a permission (see
     // src/permissions.js), after the settings.
     list: 'sitePermissions',
+    listWords: 'Site permissions camera microphone location notifications clipboard allow block',
     settings: [
       {
         key: 'saveHistory',
@@ -155,6 +158,7 @@ const SECTIONS = [
     title: 'Default Browser',
     // Also makes Lit the Mac's default browser, after the settings.
     list: 'defaultBrowser',
+    listWords: 'Default browser make default',
     settings: [
       {
         key: 'externalLinks',
@@ -171,6 +175,7 @@ const SECTIONS = [
     title: 'Quick Search',
     // Also lists every site and its shortcuts, after the settings.
     list: 'quickSearchSites',
+    listWords: 'Search sites shortcuts',
     settings: [
       {
         key: 'quickSearch',
@@ -243,6 +248,7 @@ const SECTIONS = [
     title: 'Profiles',
     // Only the profiles themselves (src/profiles.js), to manage.
     list: 'profiles',
+    listWords: 'Manage profiles name color new delete',
     settings: [],
   },
   {

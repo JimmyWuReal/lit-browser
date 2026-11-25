@@ -19,6 +19,10 @@ test('each heading in a section covers one run of its settings', () => {
   }
 })
 
+test('each list has words to find it by', () => {
+  for (const { id, list, listWords } of SECTIONS) assert.equal(Boolean(list), Boolean(listWords), id)
+})
+
 test('every default is valid, so clean keeps them all', () => {
   for (const setting of SETTINGS) assert.equal(defaults[setting.key], setting.default, setting.key)
 })

@@ -170,7 +170,7 @@ Right-clicking a tab offers Reload, Duplicate (which keeps the tab's back and fo
 
 ## Settings
 
-⌘, or the button at the right of the tab strip opens Settings as a popup over the window. Changes save right away, to `settings.json` in the app's data folder.
+⌘, or the button at the right of the tab strip opens Settings as a popup over the window. Changes save right away, to `settings.json` in the app's data folder. Type in the search field to find settings in any section by their name, description, options or shortcut, and change them right there; click a section's title to open it. Escape clears the search.
 
 General, Downloads, Passwords and Privacy are the profile's own; the rest are shared by every profile. With more than one profile, the sidebar groups them by whose they are.
 
