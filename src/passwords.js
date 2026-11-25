@@ -29,12 +29,14 @@ const forSite = (store, site) => store.logins.filter((login) => login.site === s
 
 // What to do about a password just used to sign in: null (nothing new, or the
 // site is never asked about), 'save', or 'update' a saved one, whose `id`
-// comes with it. A form without a username means the site's only login, if it
-// has just one. `decrypt` answers a secret's password, or null if it can't be read.
-function offerFor(store, { site, username, password }, decrypt) {
+// comes with it. Changing a password (`changing`) without a username means the
+// site's only login, if it has just one; signing in without one could be any
+// account, so it updates none. `decrypt` answers a secret's password, or null if it can't be read.
+function offerFor(store, { site, username, password, changing = false }, decrypt) {
   if (!site || !password || store.never.includes(site)) return null
   const saved = forSite(store, site)
-  const login = saved.find((each) => each.username === username) || (!username && saved.length === 1 ? saved[0] : null)
+  const login = saved.find((each) => each.username === username) || (!username && changing && saved.length === 1 ? saved[0] : null)
+  if (!login && !username && saved.some((each) => decrypt(each.secret) === password)) return null
   if (!login) return { action: 'save', username }
   return decrypt(login.secret) === password ? null : { action: 'update', id: login.id, username: login.username }
 }

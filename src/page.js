@@ -24,6 +24,9 @@ function passwordOf(fields) {
   return filled.find((field, i) => filled.slice(i + 1).some((other) => other.value === field.value)) || filled[1]
 }
 
+// Whether a form changes or makes a password rather than signing in.
+const isChange = (fields) => fields.filter((field) => field.value).length > 1 || fields.some(isNew)
+
 // The username field among a form's fields, in order: the one marked so, else
 // the last name-like one before the password. `visible` says which can be seen;
 // a hidden one counts only when marked (a second step repeats the name there).
@@ -49,9 +52,15 @@ function start({ ipcRenderer }) {
   let watch = null
   function submitted(fields) {
     const password = passwordOf(passwords(fields))
-    if (!password) return
+    if (!password) {
+      // The first step of two, whose name the second may not repeat.
+      const emails = fields.filter((field) => field.type === 'email' && visible(field))
+      const name = nameOf(fields, null, visible) || (emails.length === 1 ? emails[0] : null)
+      if (name?.value) ipcRenderer.send('login-name', { username: name.value.trim() })
+      return
+    }
     const name = nameOf(fields, password, visible)
-    ipcRenderer.send('login-submitted', { username: (name?.value || '').trim(), password: password.value })
+    ipcRenderer.send('login-submitted', { username: (name?.value || '').trim(), password: password.value, changing: isChange(passwords(fields)) })
     clearInterval(watch)
     let gone = 0
     let left = 60
@@ -62,16 +71,27 @@ function start({ ipcRenderer }) {
       if (gone >= 3) ipcRenderer.send('login-done')
     }, 500)
   }
+  // Typing again, or following a link, after a sign-in that led nowhere.
+  function abandon() {
+    if (watch === null) return
+    clearInterval(watch)
+    watch = null
+    ipcRenderer.send('login-abandoned')
+  }
+  addEventListener('input', (event) => {
+    if (event.isTrusted && event.composedPath()[0] instanceof HTMLInputElement) abandon()
+  }, true)
   addEventListener('submit', (event) => {
     if (event.isTrusted && event.target instanceof HTMLFormElement) submitted([...event.target.elements].filter((each) => each instanceof HTMLInputElement))
   }, true)
   // Pages without a form, or with a button that isn't a submit one.
   addEventListener('keydown', (event) => {
     const field = event.composedPath()[0]
-    if (event.isTrusted && event.key === 'Enter' && !event.isComposing && isField(field) && field.type === 'password') submitted(fieldsWith(field))
+    if (event.isTrusted && event.key === 'Enter' && !event.isComposing && isField(field) && ['password', 'email', 'text'].includes(field.type)) submitted(fieldsWith(field))
   }, true)
   addEventListener('click', (event) => {
     if (!event.isTrusted) return
+    if (event.composedPath().some((each) => each instanceof Element && each.matches('a[href]'))) return abandon()
     const button = event.composedPath().find((each) => each instanceof Element && each.matches('button, input[type=submit], input[type=button], [role=button]'))
     // Other buttons in a form (showing the password, say) don't sign in.
     if (button && (button.type === 'submit' || !button.closest('form'))) submitted(fieldsWith(button))
@@ -113,7 +133,8 @@ function start({ ipcRenderer }) {
   addEventListener('click', (event) => { if (event.isTrusted && event.composedPath()[0] instanceof HTMLInputElement) ask(event.composedPath()[0]) }, true)
   addEventListener('keyup', (event) => { if (event.isTrusted && event.key === 'Tab') ask(event.composedPath()[0]) }, true)
   addEventListener('keydown', (event) => {
-    if (event.isTrusted && event.key === 'ArrowDown' && !anchor && !event.isComposing) ask(event.composedPath()[0])
+    // With the list open, main takes the key.
+    if (event.isTrusted && event.key === 'ArrowDown' && !event.isComposing) ask(event.composedPath()[0])
   }, true)
   // Anything that moves the field away, or leaves it, or types in it.
   addEventListener('focusout', dismiss, true)
@@ -140,4 +161,4 @@ function start({ ipcRenderer }) {
 
 if (typeof window !== 'undefined') {
   if (/^https?:$/.test(location.protocol)) start(require('electron'))
-} else module.exports = { passwordOf, nameOf }
+} else module.exports = { passwordOf, isChange, nameOf }

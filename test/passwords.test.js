@@ -30,11 +30,15 @@ test('offers to save what is new, update what changed, and nothing else', () => 
   assert.equal(p.offerFor(store, { site, username: 'jo', password: 'one' }, () => null).action, 'update')
 })
 
-test('without a username, the only login is meant', () => {
+test('changing a password without a username, the only login is meant', () => {
   const one = put(empty, 'jo', 'one')
-  assert.deepEqual(offer(one, '', 'two'), { action: 'update', id: one.logins[0].id, username: 'jo' })
+  const change = (store, password) => p.offerFor(store, { site, username: '', password, changing: true }, hide)
+  assert.deepEqual(change(one, 'two'), { action: 'update', id: one.logins[0].id, username: 'jo' })
+  assert.equal(change(one, 'one'), null)
+  assert.equal(change(put(one, 'al', 'x'), 'two').action, 'save')
+  // Signing in, it could be another account.
+  assert.deepEqual(offer(one, '', 'two'), { action: 'save', username: '' })
   assert.equal(offer(one, '', 'one'), null)
-  assert.equal(offer(put(one, 'al', 'x'), '', 'two').action, 'save')
 })
 
 test('put replaces the same login, and remove and askAgain undo', () => {

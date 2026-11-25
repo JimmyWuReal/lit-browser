@@ -1176,6 +1176,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       // loading, so it changes nothing here.
       if (!isSameDocument) tab.startedByFrame = Boolean(initiator?.parent)
       tab.startedByPage = Boolean(initiator)
+      // The address bar, Back or a reload is not the sign-in going on.
+      if (!isSameDocument && !initiator) tab.submitted = null
     })
     // Asked about in onAppRedirect, not here; a frame's is refused.
     page.on('will-redirect', (event) => { if (permissions.opensApp(event.url)) event.preventDefault() })
@@ -1665,8 +1667,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // that stayed lost its own. Then tab.offer asks, until it is answered or a
   // later page comes. The password never leaves main.
   const LOGIN_TIME = 60000
-  function loginSubmitted(tab, site, { username, password }) {
-    tab.submitted = profile.settings.savePasswords && !isPrivate ? { site, username, password, at: Date.now(), moved: false } : null
+  function loginSubmitted(tab, site, { username, password, changing }) {
+    const { loginName } = tab
+    const known = loginName?.site === site && Date.now() - loginName.at < LOGIN_TIME * 5 ? loginName.username : ''
+    tab.submitted = profile.settings.savePasswords && !isPrivate ? { site, username: username || known, password, changing, at: Date.now(), moved: false } : null
   }
   // A new page came, or an error page, after which nothing is saved.
   function moveLogin(tab, status) {
@@ -2386,7 +2390,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     pageMessage(contents, frame, site, message, value) {
       const tab = tabs.find((each) => each.page === contents)
       if (!tab) return
-      if (message === 'submitted') loginSubmitted(tab, site, value)
+      // Kept for the second step of a sign-in (loginSubmitted).
+      if (message === 'name') tab.loginName = isPrivate ? null : { site, username: value.username, at: Date.now() }
+      else if (message === 'abandoned') tab.submitted = null
+      else if (message === 'submitted') loginSubmitted(tab, site, value)
       else if (message === 'done') { if (tab.submitted?.site === site && !tab.submitted.moved) offerLogin(tab) }
       else if (message === 'field') showLogins(tab, frame, site, value)
       else if (logins?.tab === tab) hideLogins(true)
@@ -2855,7 +2862,9 @@ const fromPage = (message, read) => (event, value) => {
   if (!checked) return
   for (const controls of openWindows) controls.pageMessage(event.sender, frame, site, message, checked)
 }
-ipcMain.on('login-submitted', fromPage('submitted', (value) => (passwords.isText(value?.username) && passwords.isText(value?.password) && value.password ? { username: value.username, password: value.password } : null)))
+ipcMain.on('login-submitted', fromPage('submitted', (value) => (passwords.isText(value?.username) && passwords.isText(value?.password) && value.password ? { username: value.username, password: value.password, changing: value.changing === true } : null)))
+ipcMain.on('login-name', fromPage('name', (value) => (passwords.isText(value?.username) ? { username: value.username } : null)))
+ipcMain.on('login-abandoned', fromPage('abandoned', () => true))
 ipcMain.on('login-done', fromPage('done', () => true))
 ipcMain.on('login-field', fromPage('field', (value) => (value && ['request', 'x', 'y', 'width'].every((key) => Number.isFinite(value[key])) ? value : null)))
 ipcMain.on('login-field-left', fromPage('left', () => true))
