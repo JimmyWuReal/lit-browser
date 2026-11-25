@@ -147,12 +147,12 @@
     /* Pages, grouped by day. A row opens its page; its remove button shows
        on hover or keyboard focus, and always on touch. */
     .list { flex: 1; min-height: 0; overflow: auto; padding: 8px 24px 24px; scroll-padding-top: 36px; }
-    /* The day stays at the top while its pages scroll under it. */
+    /* The day stays at the top while its own pages scroll under it. */
     .day {
       position: sticky;
       top: -8px;
       z-index: 1;
-      margin: 6px 0 0;
+      margin: 0;
       padding: 12px 0 6px;
       background: #1c1c1c;
       font-size: 12px;
@@ -160,7 +160,8 @@
       color: var(--sub);
       letter-spacing: -.01em;
     }
-    .day:first-child { margin-top: -4px; }
+    .day-group + .day-group { margin-top: 6px; }
+    .day-group:first-child { margin-top: -4px; }
     .rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
     .row { display: flex; align-items: center; gap: 8px; }
     .page {
@@ -411,9 +412,10 @@
         const label = dayLabel(entry.time)
         if (label !== day) {
           day = label
-          children.push(el('h2', 'day', label))
+          const group = el('section', 'day-group')
           rows = el('ul', 'rows')
-          children.push(rows)
+          group.append(el('h2', 'day', label), rows)
+          children.push(group)
         }
         rows.append(row(entry))
       }

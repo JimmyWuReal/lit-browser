@@ -825,6 +825,7 @@
       } else if (tab.favicon) {
         const img = new Image()
         img.alt = ''
+        img.draggable = false
         img.src = tab.favicon
         // A favicon that fails to load falls back to the globe.
         img.onerror = () => { elements.iconKey = 'globe'; elements.icon.replaceChildren(globeTemplate.content.cloneNode(true)) }
@@ -1208,7 +1209,8 @@
       }
     }
 
-    // Dragging a tab along the strip moves it there.
+    // Dragging a tab along the strip moves it there. Near an end, Chromium
+    // scrolls a strip with more past it.
     const strip = document.getElementById('strip')
     let draggedTab = null
     // The tab it would land before, null for last, or undefined if it
