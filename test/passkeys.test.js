@@ -2,7 +2,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { refuse } = require('../src/passkeys')
 
-// The frame's credentials once refuse has run in it.
+// A page's credentials once refuse has run in it.
 function start(t, { keysOn = false } = {}) {
   globalThis.CredentialsContainer = class {
     async get(options) { return [this, 'got', options] }
@@ -14,7 +14,7 @@ function start(t, { keysOn = false } = {}) {
     delete globalThis.CredentialsContainer
     delete globalThis.PublicKeyCredential
   })
-  // As main sends it: the function's source, alone.
+  // As it runs in a page: the function's source, alone.
   ;(0, eval)(`(${refuse})()`)
   return new CredentialsContainer()
 }
@@ -32,8 +32,22 @@ test('passkey requests are refused, and other credentials still work', async (t)
   assert.equal(await credentials.store(), 'stored')
 })
 
-test('nothing is refused with Security Keys on, nor on an insecure page', async (t) => {
-  refuse()
+test('with Security Keys on, only requests no key could answer are refused', async (t) => {
   const credentials = start(t, { keysOn: true })
-  assert.equal((await credentials.get({ publicKey: {} }))[1], 'got')
+  const allow = (...lists) => ({ publicKey: { allowCredentials: lists.map((transports) => ({ transports })) } })
+  const once = function* () { yield { transports: ['usb'] } }
+  for (const options of [
+    { publicKey: {} }, allow(), allow(['usb', 'nfc']), allow(['internal'], ['usb']), allow([]), allow(undefined), allow(['internal', 'usb']),
+    allow(new Set(['usb'])), { publicKey: { allowCredentials: once() } }, { publicKey: { allowCredentials: [null] } },
+  ]) {
+    assert.equal((await credentials.get(options))[2], options)
+  }
+  for (const options of [allow(['internal']), allow(['internal', 'hybrid'], ['hybrid']), { publicKey: {}, mediation: 'conditional' }]) {
+    await assert.rejects(credentials.get(options), { name: 'NotAllowedError' })
+  }
+  const attached = (authenticatorAttachment) => ({ publicKey: { authenticatorSelection: { authenticatorAttachment } } })
+  assert.equal((await credentials.create(attached('cross-platform')))[1], 'created')
+  await assert.rejects(credentials.create(attached('platform')), { name: 'NotAllowedError' })
 })
+
+test('an insecure page, with no credentials, is left alone', () => refuse())
