@@ -2,7 +2,7 @@
 
 A minimal web browser built on Chromium (via [Electron](https://www.electronjs.org/)).
 
-It opens on a centered search box: type a search or an address and press Enter. After that the box becomes the address bar at the top of the window.
+It opens on a centered search box: type a search or an address and press Enter. After that the box becomes the address bar at the top of the window. It makes the page's site stand out, and leaves out `https://` until you click it to edit the address.
 
 Each window has tabs; every new tab starts on the same search box. Links that open a new window (and `window.open`) open as a tab next to their page, keeping their link to it, so sign-in popups work. Closing a window's last tab closes the window, and Lit keeps running with no windows open, like other Mac browsers.
 
@@ -27,6 +27,8 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | ⌘F | Find in page |
 | ⌘G / ⇧⌘G | Next / previous match |
 | ⌘P | Print the page |
+
+Back, forward and reload buttons sit before the address bar once a tab has a page. ⌘-click or middle-click Back or Forward to go there in a new tab, with the tab's back/forward history; right-click or hold it to list the pages that way. A plain click passes over pages a site added to the list without you doing anything there, as in Chrome; a new tab and the list don't, as Electron doesn't say which those are. Reload becomes Stop while the page loads, and ⇧-click reloads without the cache. Stopping a tab before its first page brings back its search box.
 
 Zoom is per site, as in Chrome: zooming a page zooms every tab on that site, and Lit remembers it for next time (in `zoom.json` in the app's data folder). A page that is not at the default zoom, or whose site has a zoom of its own, shows its zoom at the right of the address bar; click it, or press ⌘0, to go back to the default zoom set in Settings.
 
@@ -180,7 +182,7 @@ Right-clicking a tab offers Reload, Duplicate (which keeps the tab's back and fo
 
 General, Downloads, Passwords and Privacy are the profile's own; the rest are shared by every profile. With more than one profile, the sidebar groups them by whose they are.
 
-- **General:** search engine (Google, DuckDuckGo or Bing), what new tabs open (the search box, or an address or search), the page zoom for sites you have not zoomed, whether the address bar suggests bookmarks and pages from history, and whether the bookmark bar shows.
+- **General:** search engine (Google, DuckDuckGo or Bing), what new tabs open (the search box, or an address or search), the page zoom for sites you have not zoomed, whether the address bar suggests bookmarks and pages from history, whether the back, forward and reload buttons show, whether the address bar shows full addresses, and whether the bookmark bar shows.
 - **Downloads:** ask where to save, or save straight to Downloads.
 - **Passwords:** whether Lit offers to save passwords, and whether it suggests saved ones in login fields. Also lists the saved ones, to show, copy or remove, and the sites never asked about, to ask again.
 - **Privacy:** save history (pages visited and closed tabs; when off, nothing new is saved, closed tabs are forgotten, Reopen Closed Tab does nothing, and windows reopened at launch keep only each tab's page, not its back and forward history or what was typed into it), block ads and trackers (on by default, with Ghostery's prebuilt lists, downloaded the first time it is on, saved to `adblock.bin` in the app's data folder and refreshed when a week old; a saved copy is blocking before any tab loads, and a change shows or hides ads on open pages once they are reloaded), let sites ask to share your screen (on by default; when off they are refused), send Do Not Track and Global Privacy Control, and the site permissions you have given: switch each between Allow and Block, or remove it so the site is asked again.
@@ -200,6 +202,8 @@ npm start
 
 For development, `npm run dev` restarts the app whenever a file in `src/` changes (Node's built-in `--watch`, no extra tools). `npm test` runs the unit tests in `test/` with Node's built-in test runner.
 
+Run any other way from source (`npx electron .`, or a script that loads `src/main.js`), Lit stays hidden (`src/quiet.js`) so agents can test it without interrupting you: no Dock icon, no windows on screen, and it never takes focus. Pages still draw, take `sendInputEvent` and can be captured with `capturePage`. Set `LIT_FOREGROUND=1` for what needs a real window: focus (`isFocused`), full screen, or `screencapture`.
+
 ## Build the Mac app
 
 ```sh
@@ -217,7 +221,7 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 ## How it works
 
 - `src/main.js` opens windows and gives each tab its own Chromium `WebContentsView` under the toolbar in its profile's session (in a private window, in that window's in-memory session, from `session.fromPartition`); only the active tab's view is shown. It owns the tab list and sends it to the toolbar whenever it changes. The application menu holds every shortcut, so they work whether the toolbar or a page has focus.
-- `src/index.html` is the toolbar: the tab strip (also the window's title bar), the address bar and the find field. When the active tab has not loaded anything, the address bar fills the window as the centered search box and the tab's page view stays hidden.
+- `src/index.html` is the toolbar: the tab strip (also the window's title bar), the back, forward and reload buttons, the address bar and the find field. When the active tab has not loaded anything, the address bar fills the window as the centered search box and the tab's page view stays hidden.
 - `src/preload.js` is the bridge between Lit's own pages (the toolbar, the address bar's suggestions, and the Settings, History, Downloads, Bookmarks and screen sharing popups) and the main process.
 - `src/profiles.js` keeps the list of profiles and says where each one's files and session are; main opens each as an object holding its session, settings, history, bookmarks and the rest, and gives every window one.
 - `src/settings.js` lists every setting, grouped in sections (each a profile's own or shared), with its type and default; it also loads, checks and saves them. `src/settings.html` is the Settings popup, drawn entirely from that list, so a new setting only needs an entry there (plus a control in `settings.html` if it brings a new type). Each window shows the popup in its own transparent view over the tabs. While a shortcut is recorded, main passes the key presses to it instead of the menu.
@@ -228,4 +232,4 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 - `src/passkeys.js` runs in every web page and the frames inside it and refuses passkey requests. Unless Security Keys is on, main also runs Chromium without `PublicKeyCredential`, and Electron's `platformPasskeys`, which macOS refuses for want of the entitlement, fails any request made anyway (except in frames from another site than their page's). With it on, `passkeys.js` refuses only requests no key could answer.
 - `src/errors.js` words the page shown for a failed load, an empty HTTP error or a crash. Main notices each and hides the tab's view, and the toolbar draws the error page in the space under it.
 - `src/menus.js` decides what each right-click menu holds, for a page (from Chromium's context-menu details) and for a tab; main turns those items into native menus and runs what is chosen.
-- `src/quicksearch.js` lists the quick search sites and turns a shortcut and search into the site's address, and a half-typed shortcut into the sites it could be; main tries it before `src/url.js`, and the toolbar draws a typed shortcut as its site's chip. `src/url.js` turns typed text into a URL or a search with the chosen engine; `src/tabs.js` holds the tab and window rules (which tab to show after closing one, next/previous, ⌘1–9, how many closed tabs to remember, where one reopens, whether a window is still on screen). `url.js`, `quicksearch.js`, `tabs.js`, `menus.js`, `settings.js`, `history.js`, `bookmarks.js`, `session.js`, `shortcuts.js`, `downloads.js`, `find.js`, `zoom.js`, `permissions.js`, `passwords.js`, `page.js` (its choice of fields), `share.js`, `signin.js`, `passkeys.js`, `errors.js`, `profiles.js` and `adblock.js` (with the engine replaced) are plain Node, tested in `test/`.
+- `src/quicksearch.js` lists the quick search sites and turns a shortcut and search into the site's address, and a half-typed shortcut into the sites it could be; main tries it before `src/url.js`, and the toolbar draws a typed shortcut as its site's chip. `src/url.js` turns typed text into a URL or a search with the chosen engine, and splits a page's address into the parts the address bar draws; `src/tabs.js` holds the tab and window rules (which tab to show after closing one, next/previous, ⌘1–9, how many closed tabs to remember, where one reopens, whether a window is still on screen). `url.js`, `quicksearch.js`, `tabs.js`, `menus.js`, `settings.js`, `history.js`, `bookmarks.js`, `session.js`, `shortcuts.js`, `downloads.js`, `find.js`, `zoom.js`, `permissions.js`, `passwords.js`, `page.js` (its choice of fields), `share.js`, `signin.js`, `passkeys.js`, `errors.js`, `profiles.js` and `adblock.js` (with the engine replaced) are plain Node, tested in `test/`.

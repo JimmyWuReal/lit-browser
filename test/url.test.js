@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { toUrl, webAddress, searchUrl } = require('../src/url')
+const { toUrl, webAddress, searchUrl, addressParts } = require('../src/url')
 
 test('keeps full URLs', () => {
   assert.equal(toUrl(' https://example.com/a '), 'https://example.com/a')
@@ -34,6 +34,28 @@ test('searchUrl searches even for text that looks like an address', () => {
   assert.equal(searchUrl('a b', 'nope'), 'https://www.google.com/search?q=a%20b')
   // Half of an emoji's surrogate pair becomes U+FFFD instead of throwing.
   assert.equal(searchUrl('hi \uD83D'), 'https://www.google.com/search?q=hi%20%EF%BF%BD')
+})
+
+test('addressParts leaves out https:// and a lone slash', () => {
+  assert.deepEqual(addressParts('https://example.com/'), { before: '', host: 'example.com', after: '' })
+  assert.deepEqual(addressParts('https://www.example.com/a'), { before: '', host: 'www.example.com', after: '/a' })
+  assert.deepEqual(addressParts('https://docs.example.com:8443/a/b?q=1#top'), { before: '', host: 'docs.example.com:8443', after: '/a/b?q=1#top' })
+  assert.deepEqual(addressParts('https://example.com/?q=1'), { before: '', host: 'example.com', after: '/?q=1' })
+  // Not encrypted, so it still says so.
+  assert.deepEqual(addressParts('http://example.com/'), { before: 'http://', host: 'example.com', after: '' })
+})
+
+test('addressParts keeps everything when full', () => {
+  for (const url of ['https://www.example.com/', 'https://example.com/?#', 'http://example.com/a?b#c', 'https://example.com/#']) {
+    assert.equal(Object.values(addressParts(url, true)).join(''), url)
+  }
+  assert.deepEqual(addressParts('https://www.example.com/', true), { before: 'https://', host: 'www.example.com', after: '/' })
+})
+
+test('addressParts leaves other addresses as they are', () => {
+  for (const url of ['', 'about:blank', 'file:///Users/me/page.html', 'data:text/html,hi', 'https://bank.com@evil.com/', 'https://']) {
+    assert.equal(addressParts(url), null, url)
+  }
 })
 
 test('toUrl never gives an address that opens another app', () => {

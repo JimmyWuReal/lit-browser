@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { pageMenu, tabMenu, bookmarkMenu } = require('../src/menus')
+const { pageMenu, tabMenu, navigationMenu, bookmarkMenu } = require('../src/menus')
 
 const labels = (items) => items.map((item) => item.label || '—')
 const commands = (items) => items.filter((item) => item.command).map((item) => item.command)
@@ -132,4 +132,20 @@ test('the bookmark menu fits what was clicked', () => {
   assert.equal(commands({ kind: 'folder', count: 2 }), 'openAll - edit delete - addPage addFolder - hideBar')
   assert.equal(bookmarkMenu({ kind: 'folder' })[0].enabled, false)
   assert.equal(commands(), 'addPage addFolder - hideBar')
+})
+
+test('the back and forward menus list the pages that way, nearest first', () => {
+  const page = (name) => ({ title: name, url: `https://${name}.test/` })
+  const history = { entries: ['a', 'b', 'c', 'd', 'e'].map(page), index: 2 }
+  const items = (direction) => navigationMenu(history, direction).map(({ label, arg }) => [label, arg])
+  assert.deepEqual(items(-1), [['b', 1], ['a', 0]])
+  assert.deepEqual(items(1), [['d', 3], ['e', 4]])
+  assert.deepEqual(navigationMenu({ entries: [], index: -1 }, -1), [])
+  assert.deepEqual(navigationMenu({ entries: [], index: -1 }, 1), [])
+  // A page without a title shows its address; a long title is cut.
+  const named = navigationMenu({ entries: [{ title: '', url: 'https://x.test/' }, { title: `${'long '.repeat(40)}`, url: 'https://y.test/' }, page('z')], index: 2 }, -1)
+  assert.equal(named[0].label.length <= 60 && named[0].label.endsWith('…'), true)
+  assert.equal(named[1].label, 'https://x.test/')
+  const many = { entries: Array.from({ length: 40 }, (_, i) => page(`p${i}`)), index: 39 }
+  assert.deepEqual([navigationMenu(many, -1).length, navigationMenu(many, -1)[0].arg], [15, 38])
 })

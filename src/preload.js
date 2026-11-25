@@ -17,8 +17,10 @@ contextBridge.exposeInMainWorld('lit', {
   nudgeTab: (id, direction) => ipcRenderer.send('nudge-tab', id, direction),
   // Focus to the active tab's page, or what stands in for it.
   focusActive: () => ipcRenderer.send('focus-active'),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started, audio, find, zoom, signIn, prompt, error }] },
-  // `zoom` being '125%', or '' at the default zoom, `signIn` what asks for a
+  // { activeId, navigationButtons, tabs: [{ id, title, url, address, favicon, loading,
+  // started, canGoBack, canGoForward, audio, find, zoom, signIn, prompt, error }] },
+  // `address` being the url's parts to draw (addressParts in src/url.js),
+  // `zoom` '125%', or '' at the default zoom, `signIn` what asks for a
   // username and password, { id, name, asks, note, main }, `main` when it is
   // the page itself, and `prompt` the tab's permission request or offer to save
   // a password, { id, site, kinds, says, allow, block }: what to say after the
@@ -26,12 +28,19 @@ contextBridge.exposeInMainWorld('lit', {
   // be undefined. `audio` is
   // 'playing', 'muted' or null. `error` is
   // what to show instead of a page that failed, { title, detail, code,
-  // action, canGoBack }, or null.
+  // action }, or null.
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   // The error page's buttons, for the tab it is on.
   reload: (tabId) => ipcRenderer.send('reload', tabId),
   goBack: (tabId) => ipcRenderer.send('go-back', tabId),
+  // The toolbar's Back (`delta` -1), Forward (1) and Reload buttons, for the
+  // tab they showed. Back and Forward can open in a new tab instead, or list
+  // where they lead, at { x, y } in the window; Reload can skip the cache.
+  step: (tabId, delta, newTab = false) => ipcRenderer.send('step', tabId, delta, newTab),
+  showStepMenu: (tabId, delta, at) => ipcRenderer.send('step-menu', tabId, delta, at),
+  reloadTab: (tabId, ignoreCache = false) => ipcRenderer.send('reload-tab', tabId, ignoreCache),
+  stop: (tabId) => ipcRenderer.send('stop', tabId),
   // Main shows an error page and gives it focus; focusPage hands it to the
   // page once there is one again.
   onFocusError: (callback) => ipcRenderer.on('focus-error', () => callback()),
@@ -154,7 +163,7 @@ contextBridge.exposeInMainWorld('lit', {
     onChanged: (callback) => on('history-changed', callback),
   },
   // For the address bar's suggestions list only: it shows the items
-  // (onShow, { items, generation }, as `suggest` answers them), highlights the one
+  // (onShow, { items, text, generation }, as `suggest` answers them for `text`), highlights the one
   // the toolbar selects, and says which one was clicked, on which list.
   suggestions: {
     pick: (index, generation) => ipcRenderer.send('suggestions-pick', index, generation),

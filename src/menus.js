@@ -7,6 +7,9 @@
 
 // Long selections are cut short in the "Search for" label.
 const SEARCH_LABEL_LENGTH = 30
+// So are page titles in the Back and Forward menus, which list this many.
+const PAGE_LABEL_LENGTH = 60
+const MENU_PAGES = 15
 
 // Drops leading, trailing and repeated separators left by empty groups.
 function joinGroups(groups) {
@@ -24,10 +27,11 @@ const isWeb = (url) => /^https?:\/\//i.test(url || '')
 // Never file: ones, which a web page must not reach.
 const isSavable = (url) => isWeb(url) || /^(data|blob):/i.test(url || '')
 
-function quote(text) {
+function cut(text, length) {
   const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > SEARCH_LABEL_LENGTH ? `${flat.slice(0, SEARCH_LABEL_LENGTH - 1).trimEnd()}…` : flat
+  return flat.length > length ? `${flat.slice(0, length - 1).trimEnd()}…` : flat
 }
+const quote = (text) => cut(text, SEARCH_LABEL_LENGTH)
 
 // The menu for a right-click inside a page, from Electron's context-menu
 // `params`. `context` says what else applies:
@@ -141,6 +145,15 @@ function tabMenu({ index, count, started, muted = false, keys = {} }) {
   ])
 }
 
+// The menu of the toolbar's Back (`direction` -1) or Forward (1) button: the
+// pages that way in a back/forward list, { entries, index }, the nearest
+// first. Each item's arg is the entry's index.
+function navigationMenu({ entries, index }, direction) {
+  const pages = entries.map(({ title, url }, at) => ({ label: cut(title || url, PAGE_LABEL_LENGTH), command: 'go', arg: at }))
+  const ahead = direction < 0 ? pages.slice(0, index).reverse() : pages.slice(index + 1)
+  return ahead.slice(0, MENU_PAGES)
+}
+
 // The menu for a right-click on the bookmark bar or in one of its lists:
 // on a page, on a folder (`count` pages in it), or, with no `kind`, on the
 // bar itself. `key` is Show Bookmark Bar's accelerator.
@@ -174,4 +187,4 @@ function bookmarkMenu({ kind, count = 0, key } = {}) {
   return joinGroups([create, bar])
 }
 
-module.exports = { pageMenu, tabMenu, bookmarkMenu }
+module.exports = { pageMenu, tabMenu, navigationMenu, bookmarkMenu }
