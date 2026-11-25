@@ -1155,7 +1155,7 @@
         closeSuggestions()
         editing = false
         setChip(null)
-        if (shownUrl) address.value = shownUrl
+        address.value = shownUrl
       } else window.lit.reloadTab(state.activeId, event.shiftKey)
       toPage(event)
     })

@@ -28,7 +28,7 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | ⌘G / ⇧⌘G | Next / previous match |
 | ⌘P | Print the page |
 
-Back, forward and reload buttons sit before the address bar once a tab has a page. ⌘-click or middle-click Back or Forward to go there in a new tab, with the tab's back/forward history; right-click or hold it to list the pages that way. Reload becomes Stop while the page loads, and ⇧-click reloads without the cache. Stopping a tab before its first page brings back its search box.
+Back, forward and reload buttons sit before the address bar once a tab has a page. ⌘-click or middle-click Back or Forward to go there in a new tab, with the tab's back/forward history; right-click or hold it to list the pages that way. A plain click passes over pages a site added to the list without you doing anything there, as in Chrome; a new tab and the list don't, as Electron doesn't say which those are. Reload becomes Stop while the page loads, and ⇧-click reloads without the cache. Stopping a tab before its first page brings back its search box.
 
 Zoom is per site, as in Chrome: zooming a page zooms every tab on that site, and Lit remembers it for next time (in `zoom.json` in the app's data folder). A page that is not at the default zoom, or whose site has a zoom of its own, shows its zoom at the right of the address bar; click it, or press ⌘0, to go back to the default zoom set in Settings.
 

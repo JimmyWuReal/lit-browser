@@ -1287,7 +1287,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // Loads the failed address again. Chromium reloads nothing when that would
-  // send a form again, so its address is opened without the form instead.
+  // send a form again, so its address is opened without the form instead (past
+  // the cache, if asked, only for the page itself: Electron can't for the rest).
   function retry(tab, ignoreCache = false) {
     const url = tab.url || tab.page.getURL() || tab.pendingUrl
     if (tab.page.getURL() === url) {
