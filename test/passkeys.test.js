@@ -48,6 +48,10 @@ test('with Security Keys on, only requests no key could answer are refused', asy
   const attached = (authenticatorAttachment) => ({ publicKey: { authenticatorSelection: { authenticatorAttachment } } })
   assert.equal((await credentials.create(attached('cross-platform')))[1], 'created')
   await assert.rejects(credentials.create(attached('platform')), { name: 'NotAllowedError' })
+  await assert.rejects(credentials.create({ publicKey: {}, mediation: 'conditional' }), { name: 'NotAllowedError' })
+  // What only the other one reads is nothing to go by.
+  assert.equal((await credentials.get(attached('platform')))[1], 'got')
+  assert.equal((await credentials.create(allow(['internal'])))[1], 'created')
 })
 
 test('an insecure page, with no credentials, is left alone', () => refuse())

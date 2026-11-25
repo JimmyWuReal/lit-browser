@@ -120,7 +120,7 @@ Passwords are saved to `passwords.json` in the app's data folder, each encrypted
 
 Lit can't use passkeys yet. macOS shows its passkey sheet (iCloud Keychain, or a phone) only for browsers Apple has given the `com.apple.developer.web-browser.public-key-credential` entitlement, which takes a paid developer account, and Lit is ad-hoc signed. So Lit tells sites it has no passkey support, and refuses a request made anyway, so a site goes on to a password or another way to sign in rather than wait for a sheet that never shows.
 
-USB security keys use the same requests. To use one, turn on Security Keys in Settings and reopen Lit; Lit shows nothing while a site waits for the key. A request only a passkey on this Mac or a phone could answer is still refused; one either could waits for the key.
+USB security keys use the same requests. To use one, turn on Security Keys in Settings and reopen Lit; Lit shows nothing while a site waits for the key. A request only a passkey on this Mac or a phone could answer is still refused; one either could waits for the key, until the site gives up.
 
 ## Site permissions
 

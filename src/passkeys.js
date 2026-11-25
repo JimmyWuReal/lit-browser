@@ -18,15 +18,17 @@ function refuse() {
   const isPasskey = (credential) => Array.isArray(credential?.transports) && credential.transports.length > 0 &&
     credential.transports.every((transport) => transport === 'internal' || transport === 'hybrid')
   // Conditional requests list passkeys in a login field, which Lit can't.
-  const takesKey = ({ mediation, publicKey: { authenticatorSelection, allowCredentials } }) =>
-    mediation !== 'conditional' &&
-    authenticatorSelection?.authenticatorAttachment !== 'platform' &&
-    !(Array.isArray(allowCredentials) && allowCredentials.length > 0 && allowCredentials.every(isPasskey))
+  const takesKey = {
+    get: ({ mediation, publicKey: { allowCredentials } }) => mediation !== 'conditional' &&
+      !(Array.isArray(allowCredentials) && allowCredentials.length > 0 && allowCredentials.every(isPasskey)),
+    create: ({ mediation, publicKey: { authenticatorSelection } }) => mediation !== 'conditional' &&
+      authenticatorSelection?.authenticatorAttachment !== 'platform',
+  }
   for (const name of ['get', 'create']) {
     const real = CredentialsContainer.prototype[name]
     const { [name]: value } = {
       async [name](...args) {
-        if (!args[0]?.publicKey || (keysOn && takesKey(args[0]))) return real.apply(this, args)
+        if (!args[0]?.publicKey || (keysOn && takesKey[name](args[0]))) return real.apply(this, args)
         throw new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError')
       },
     }
