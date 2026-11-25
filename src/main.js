@@ -278,17 +278,20 @@ function siteFor(contents, asking, embedding) {
   return embedding && permissions.originOf(embedding) !== site ? null : site
 }
 
-// Pages being redirected to another app -> { to, site }, `site` being the
-// one that redirects. Filled from the network request, the only place that
-// knows it, and taken by the page's will-redirect, which follows. A page has
-// one navigation at a time, and each starts without one; two sites sending it
-// to the same address within one (a cancelled request's late news) leave none.
-const appRedirects = new WeakMap()
-function noteAppRedirect({ webContents: page, url, redirectURL }) {
+// A page's redirect to another app, `redirectURL`. Electron would ask for the
+// page the link was on, so a site allowed to open an app would vouch for every
+// address it links to. Lit asks itself instead, for the site that redirects
+// (`url`), which could as well load and open the app from its own page. Only
+// the network request knows that site, so it asks from here, and the
+// navigation is stopped (will-redirect). A service worker's redirect makes no
+// request, so it is only stopped.
+function onAppRedirect(store, { webContents: page, url, redirectURL }) {
   if (!page || !permissions.opensApp(redirectURL)) return
-  const site = permissions.originOf(url)
-  const waiting = appRedirects.get(page)
-  appRedirects.set(page, { to: redirectURL, site: waiting?.to === redirectURL && waiting.site !== site ? null : site })
+  // One a frame started is refused, as its other requests are.
+  if ([...openWindows].some((controls) => controls.startedByFrame(page))) return
+  answerRequest(store, page, permissions.originOf(url), permissions.kindsOf('openExternal', [], redirectURL), (allowed) => {
+    if (allowed) shell.openExternal(permissions.escapeAppURL(redirectURL)).catch(() => {})
+  })
 }
 
 // Requests for a kind Lit asks about are answered from the saved choices,
@@ -341,7 +344,7 @@ function setUpSession(ses, profile, store) {
   ses.setPermissionRequestHandler((...args) => onPermissionRequest(store, ...args))
   ses.setPermissionCheckHandler((...args) => onPermissionCheck(store, ...args))
   ses.on('will-download', (_event, item) => trackDownload(item, ses, profile))
-  ses.webRequest.onBeforeRedirect({ urls: ['<all_urls>'], types: ['mainFrame'] }, noteAppRedirect)
+  ses.webRequest.onBeforeRedirect({ urls: ['<all_urls>'], types: ['mainFrame'] }, (details) => onAppRedirect(store, details))
   applyDoNotTrack(ses, profile)
 }
 
@@ -991,29 +994,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     page.on('did-start-navigation', ({ url, isMainFrame, initiator }) => {
       if (!isMainFrame) return
       tab.pendingUrl = url
-      // What an earlier navigation, now cancelled, left behind.
-      appRedirects.delete(page)
       // Read now: a frame can be gone by the time its navigation redirects.
       tab.startedByFrame = Boolean(initiator?.parent)
       tab.startedByPage = Boolean(initiator)
     })
-    // A redirect to another app. Electron would ask for the page the link was
-    // on, so a site allowed to open an app would vouch for every address it
-    // links to. Lit asks itself, for the site that redirects, which could as
-    // well load and open the app from its own page. One a frame started is
-    // refused, as its other requests are, and one with no known site, as from
-    // a service worker.
-    page.on('will-redirect', (event) => {
-      const { url, isMainFrame } = event
-      if (!permissions.opensApp(url)) return
-      event.preventDefault()
-      const redirect = appRedirects.get(page)
-      if (!isMainFrame || tab.startedByFrame || redirect?.to !== url) return
-      appRedirects.delete(page)
-      answerRequest(permissionStore, page, redirect.site, permissions.kindsOf('openExternal', [], url), (allowed) => {
-        if (allowed) shell.openExternal(url).catch(() => {})
-      })
-    })
+    // Asked about in onAppRedirect, not here; a frame's is refused.
+    page.on('will-redirect', (event) => { if (permissions.opensApp(event.url)) event.preventDefault() })
     // A click, key press, touch or scroll on the page since its last page
     // committed, for `committed`: a page moving on with none is redirecting.
     page.on('input-event', (_event, input) => {
@@ -1967,6 +1953,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     },
     isActive: (id) => id === activeId,
     askPermission,
+    // Whether a frame started the page's current navigation.
+    startedByFrame: (contents) => Boolean(tabs.find((tab) => tab.page === contents)?.startedByFrame),
     answerPrompt,
     settlePrompts,
     openFind,

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { isKind, isApp, opensApp, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, list, load, save } = require('../src/permissions')
+const { isKind, isApp, opensApp, escapeAppURL, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, list, load, save } = require('../src/permissions')
 
 test('kindsOf maps the requests Lit asks about, and leaves the rest alone', () => {
   assert.deepEqual(kindsOf('media', ['video', 'audio']), ['camera', 'microphone'])
@@ -42,6 +42,13 @@ test('opening another app is a kind per scheme', () => {
 test('opensApp leaves out the schemes Chromium handles itself', () => {
   for (const url of ['mailto:a@b.com', 'zoommtg://join', 'ssh://host']) assert.equal(opensApp(url), true)
   for (const url of ['https://a.com', 'HTTP://a.com', 'about:blank', 'blob:https://a.com/1', 'data:,hi', '', 'not a url']) assert.equal(opensApp(url), false)
+})
+
+test('escapeAppURL escapes as Electron does, and keeps existing escapes', () => {
+  const plain = "x://a.b/c?d=e&f=(g)*!$+,;~[1]#h@i'j_k-l%20%C3%A9"
+  assert.equal(escapeAppURL(plain), plain)
+  assert.equal(escapeAppURL('x:a "b" <c>|`{d}\\^'), 'x:a%20%22b%22%20%3Cc%3E%7C%60%7Bd%7D%5C%5E')
+  assert.equal(escapeAppURL('x:100% %zz é😀'), 'x:100%25%20%25zz%20%C3%A9%F0%9F%98%80')
 })
 
 test('checkKindsOf names one device, and an untyped media check is camera controls', () => {

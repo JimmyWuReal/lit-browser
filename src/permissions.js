@@ -81,6 +81,11 @@ function kindsOf(permission, mediaTypes = [], externalURL = '') {
   return BY_PERMISSION[permission] ? [BY_PERMISSION[permission]] : []
 }
 
+// `url` as Electron escapes one before handing it to another app, so a
+// redirect reaches the app as a link does: what no address needs bare (spaces,
+// quotes, brackets) is percent-encoded, and escapes already there are kept.
+const escapeAppURL = (url) => url.replace(/%(?![0-9A-Fa-f]{2})|[^A-Za-z0-9_!#$%&'()*+,\-./:;=?@[\]~]/gu, encodeURIComponent)
+
 // The kinds a check (Notification.permission, navigator.permissions.query)
 // is about, as in kindsOf. A media check names one device, or 'unknown'
 // for the camera's other streams; one without is pan, tilt and zoom.
@@ -194,4 +199,4 @@ function save(file, sites) {
   fs.renameSync(temporary, file)
 }
 
-module.exports = { CHOICES, isKind, isApp, opensApp, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, privateView, list, load, save }
+module.exports = { CHOICES, isKind, isApp, opensApp, escapeAppURL, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, privateView, list, load, save }
