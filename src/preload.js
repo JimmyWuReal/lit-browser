@@ -11,9 +11,10 @@ contextBridge.exposeInMainWorld('lit', {
   // `focus: false` keeps keyboard focus in the toolbar.
   closeTab: (id, focus = true) => ipcRenderer.send('close-tab', id, focus),
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started, find, zoom, prompt, error }] },
+  // { activeId, tabs: [{ id, title, url, favicon, loading, started, audio, find, zoom, prompt, error }] },
   // `zoom` being '125%', or '' at the default zoom, and `prompt` the tab's
-  // permission request, { id, site, kinds, does }, or undefined. `error` is
+  // permission request, { id, site, kinds, does }, or undefined. `audio` is
+  // 'playing', 'muted' or null. `error` is
   // what to show instead of a page that failed, { title, detail, code,
   // action, canGoBack }, or null.
   onTabs: (callback) => on('tabs', callback),
@@ -60,6 +61,8 @@ contextBridge.exposeInMainWorld('lit', {
   // suggestions, { id, alias }, to show as the field's chip.
   onQuickSearch: (callback) => on('quick-search', callback),
   onQuickSearchPick: (callback) => on('quick-search-pick', callback),
+  // Mutes or unmutes a tab.
+  toggleMute: (id) => ipcRenderer.send('mute-tab', id),
   // The right-click menu for a tab.
   showTabMenu: (id) => ipcRenderer.send('tab-menu', id),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.

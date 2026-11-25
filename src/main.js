@@ -461,6 +461,8 @@ function takeBack(profile, visit) {
 // How soon after loading a page that loads another by itself, untouched,
 // counts as redirecting rather than as a page someone read.
 const REDIRECT_AFTER = 5000
+// How long (ms) a tab must be silent to stop showing as playing audio.
+const SILENCE_AFTER = 1500
 // Run on a page to end its full screen. A page can have one element full
 // screen over another, so it leaves each (up to a point, as a page can break
 // exitFullscreen). One told it may enter has not done so yet, and can't leave
@@ -881,8 +883,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     win.setTitle(isPrivate ? `${named} (Private)` : named)
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts, error }) => ({
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts, error, audible }) => ({
         id, title, url, favicon, loading, started,
+        audio: profile.settings.tabAudio ? audioOf({ page, audible }) : null,
         // The tab's oldest unanswered permission request; the rest wait.
         prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
@@ -1031,7 +1034,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], fullScreen: null, error: null }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], fullScreen: null, error: null, audible: false }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -1115,6 +1118,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tab.favicon = favicons[0] || null
       if (!isPrivate) addIcon(profile, tab.url, tab.favicon, ses)
       sync()
+    })
+    // A short silence (between songs) doesn't count as stopping, so the
+    // tab's speaker doesn't come and go.
+    page.on('audio-state-changed', ({ audible }) => {
+      clearTimeout(tab.silence)
+      if (audible) { tab.audible = true; sync() }
+      else tab.silence = setTimeout(() => { tab.audible = false; sync() }, SILENCE_AFTER)
     })
     page.on('did-stop-loading', () => { if (tab.fullScreen === 'leaving') leaveFullScreen(tab) })
     // The page asked to be full screen (a video's button), or stopped;
@@ -1627,6 +1637,18 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     })
   }
 
+  // What a tab's speaker shows: 'muted' (even while nothing plays),
+  // 'playing', or null.
+  const audioOf = ({ page, audible }) => (!page.isDestroyed() && page.isAudioMuted() ? 'muted' : audible ? 'playing' : null)
+
+  // Muting belongs to the tab: it lasts across pages, until it closes.
+  function toggleMute(id) {
+    const tab = find(id)
+    if (!tab || tab.page.isDestroyed()) return
+    tab.page.setAudioMuted(!tab.page.isAudioMuted())
+    sync()
+  }
+
   // A copy of the tab right after it, with its back/forward history. A
   // tab whose first page has not committed yet has no history, so its copy
   // loads the address being opened, as does a copy whose history fails to
@@ -1664,13 +1686,14 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function showTabMenu(id) {
     const tab = find(id)
     if (!tab) return
-    const keys = Object.fromEntries(['reload', 'duplicateTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
+    const keys = Object.fromEntries(['reload', 'duplicateTab', 'muteTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
       .map((command) => [command, profile.settings[`shortcuts.${command}`]]))
-    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, keys }), (command) => {
+    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, muted: audioOf(tab) === 'muted', keys }), (command) => {
       if (!find(id)) return
       switch (command) {
         case 'reload': return reload(tab)
         case 'duplicate': return duplicateTab(id)
+        case 'mute': return toggleMute(id)
         case 'close': return closeTab(id)
         case 'closeOthers': return closeOtherTabs(id)
         case 'closeToRight': return closeTabsToRight(id)
@@ -2082,6 +2105,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       else popups.bookmarks.webContents.send('bookmarks-changed', state)
     },
     duplicateTab: () => duplicateTab(activeId),
+    toggleMute: (id = activeId) => toggleMute(id),
     closeOtherTabs: () => closeOtherTabs(activeId),
     closeTabsToRight: () => closeTabsToRight(activeId),
     setRecording: (on, keys) => {
@@ -2090,6 +2114,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     },
     settingsChanged() {
       sendShortcuts()
+      sync()
       sendQuickSearch()
       sendBookmarks()
       popups.settings?.webContents.send('settings-changed', settingsState(profile))
@@ -2290,6 +2315,7 @@ function buildMenu() {
         { label: 'New Private Window', accelerator: key('newPrivateWindow'), click: (_item, win) => createWindow({ profile: controlsOf(win)?.profile, isPrivate: true }) },
         { type: 'separator' },
         { label: 'Duplicate Tab', accelerator: key('duplicateTab'), click: inFocused((c) => { c.closePopup(); c.duplicateTab() }) },
+        { label: 'Mute or Unmute Tab', accelerator: key('muteTab'), click: inFocused((c) => c.toggleMute()) },
         { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closePopup(); c.focusAddress() }) },
         { type: 'separator' },
         // With a popup open, Close Tab closes the popup instead.
@@ -2404,6 +2430,7 @@ ipcMain.on('find-again', fromToolbar((c, tabId, forward) => c.isActive(tabId) &&
 ipcMain.on('close-find', fromToolbar((c, tabId) => c.isActive(tabId) && c.closeFind()))
 ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 ipcMain.on('open-downloads', fromToolbar((c) => c.openPopup('downloads')))
+ipcMain.on('mute-tab', fromToolbar((c, id) => Number.isInteger(id) && c.toggleMute(id)))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
 ipcMain.on('profile-menu', fromToolbar((c, at) => isPoint(at) && c.showProfileMenu(at)))
 // Bookmarks, from the bar or the popup's lists, which share these.
