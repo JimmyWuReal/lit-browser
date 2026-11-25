@@ -148,4 +148,16 @@ contextBridge.exposeInMainWorld('lit', {
     onOpen: (callback) => on('downloads-open', callback),
     onChanged: (callback) => on('downloads-changed', callback),
   },
+  // For the screen sharing picker only. State is { site, audio, allowed, tabs,
+  // windows, screens } (see shareState in main), or null once it is over.
+  share: {
+    get: () => ipcRenderer.invoke('share-get'),
+    // `kind` is 'tabs', 'windows' or 'screens'; `audio` adds a tab's sound.
+    choose: (kind, id, audio) => ipcRenderer.send('share-choose', kind, id, audio),
+    // Opens macOS's Screen Recording permission.
+    allow: () => ipcRenderer.send('share-allow'),
+    close: () => ipcRenderer.send('share-close'),
+    onOpen: (callback) => on('share-open', callback),
+    onChanged: (callback) => on('share-changed', callback),
+  },
 })

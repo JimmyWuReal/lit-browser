@@ -11,7 +11,7 @@
 // A private window (⇧⌘N) browses in an in-memory session of its own and
 // keeps nothing once it closes (see privateSession), except the bookmarks
 // someone adds in it. Every window belongs to one profile (see openProfile).
-const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, screen, session, shell } = require('electron')
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, screen, session, shell, systemPreferences } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl, searchUrl, engineOf } = require('./url')
@@ -25,6 +25,7 @@ const shortcuts = require('./shortcuts')
 const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
 const permissions = require('./permissions')
+const shareStore = require('./share')
 const errors = require('./errors')
 const profileStore = require('./profiles')
 const findState = require('./find')
@@ -306,11 +307,57 @@ function onAppRedirect(store, { webContents: page, url, redirectURL }) {
 // or duplicated tab, not yet on a page, has no site. Anything not from a tab (Lit's own pages, a
 // service worker) is refused too. `store` is the session's choices.
 function onPermissionRequest(store, contents, permission, callback, details) {
+  if (permission === 'display-capture') return onShareRequest(contents, callback, details)
   const kinds = permissions.kindsOf(permission, details.mediaTypes, details.externalURL)
   if (!kinds) return callback(true)
   const site = siteFor(contents, details.securityOrigin ?? details.requestingUrl)
   if (!details.isMainFrame && !details.securityOrigin) return callback(false)
   answerRequest(store, contents, site, kinds, callback)
+}
+
+// A site wants to share the screen (getDisplayMedia, as Meet and Zoom do).
+// Asked each time, in the picker of the tab that asked; the page or a frame
+// of its own site, as for the camera.
+function onShareRequest(contents, callback, details) {
+  const site = siteFor(contents, details.securityOrigin ?? details.requestingUrl)
+  if (site) {
+    for (const controls of openWindows) {
+      if (controls.askShare(contents, site, Boolean(details.mediaTypes?.includes('audio')), callback)) return
+    }
+  }
+  callback(false)
+}
+
+// What grantShare is granting, for onDisplayMedia, which Electron calls from
+// within `callback(true)`.
+// getUserMedia with chromeMediaSource makes the same request, but then captures
+// whatever the page names, without onDisplayMedia. Nothing tells the two apart
+// sooner, so a page that does that is stopped there and then, before it gets
+// a picture of anything but what was picked.
+let granting = null
+function grantShare(contents, callback, streams) {
+  granting = streams
+  callback(true)
+  const taken = !granting
+  granting = null
+  if (!taken && !contents.isDestroyed()) contents.forcefullyCrashRenderer()
+}
+
+// Captures only what grantShare grants.
+function onDisplayMedia(_request, callback) {
+  const streams = granting
+  granting = null
+  callback(streams)
+}
+
+// Whether macOS lets Lit see windows and screens. Tabs need no permission.
+const canCaptureScreen = () => process.platform !== 'darwin' || systemPreferences.getMediaAccessStatus('screen') === 'granted'
+
+// Opens where macOS grants that. Trying to list them first is what puts Lit
+// on the list there.
+function openScreenPermission() {
+  desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } }).catch(() => {})
+  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture').catch(() => {})
 }
 
 // Answers `site`'s request for `kinds` from its choices, or asks on the tab.
@@ -345,6 +392,7 @@ function onPermissionCheck(store, contents, permission, requestingOrigin, detail
 function setUpSession(ses, profile, store) {
   ses.setPermissionRequestHandler((...args) => onPermissionRequest(store, ...args))
   ses.setPermissionCheckHandler((...args) => onPermissionCheck(store, ...args))
+  ses.setDisplayMediaRequestHandler(onDisplayMedia)
   ses.on('will-download', (_event, item) => trackDownload(item, ses, profile))
   ses.webRequest.onBeforeRedirect({ urls: ['<all_urls>'], types: ['mainFrame'] }, (details) => onAppRedirect(store, details))
   applyDoNotTrack(ses, profile)
@@ -679,6 +727,7 @@ const popupState = (name, c) => ({
   settings: () => ({ ...settingsState(c.profile), section: c.settingsSection() }),
   history: () => historyState(c.profile),
   downloads: () => downloadsState(c.session),
+  share: () => c.shareState(),
 })[name]()
 
 // What the Settings popup draws in a window of `profile`: the values, plus
@@ -1005,6 +1054,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function activate(id, focus = true) {
     const tab = find(id)
     if (!tab) return
+    // Sharing is asked by the tab on show.
+    if (share && share.tab !== tab) closePopup()
     activeId = id
     // A page stays full screen only while it is the one on show.
     for (const other of tabs) if (other !== tab) leaveFullScreen(other)
@@ -1450,6 +1501,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   // Refuses the tab's waiting requests, without saving anything.
   function dropPrompts(tab) {
+    if (share?.tab === tab) closePopup(!tab.page.isDestroyed())
     if (!tab.prompts.length) return
     for (const prompt of tab.prompts.splice(0)) for (const callback of prompt.callbacks) callback(false)
     sync()
@@ -1496,6 +1548,67 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       }
     }
     sync()
+  }
+
+  // Screen sharing. The tab's request waiting in the picker (src/share.html):
+  // { tab, site, audio, callback, sources }, `audio` being whether it wants
+  // sound too, and `sources` the windows and screens, null until listed. One
+  // at a time, for the tab on show; others are refused, as is one while another
+  // popup is open. Closing the picker, however that comes about, refuses it.
+  let share = null
+  function askShare(contents, site, audio, callback) {
+    const tab = tabs.find((each) => each.page === contents)
+    if (!tab) return false
+    if (!profile.settings.screenSharing || share || popupOpen || tab.id !== activeId) {
+      callback(false)
+      return true
+    }
+    const asked = share = { tab, site, audio, callback, allowed: canCaptureScreen(), sources: null }
+    openPopup('share')
+    const listed = asked.allowed
+      ? desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 340, height: 212 }, fetchWindowIcons: true })
+      : Promise.resolve([])
+    listed.catch(() => []).then((sources) => {
+      if (share !== asked) return
+      asked.sources = shareStore.sourceRows(sources)
+      popups.share.webContents.send('share-changed', shareState())
+    })
+    return true
+  }
+  const dropShare = () => {
+    if (!share) return
+    const { callback } = share
+    share = null
+    callback(false)
+  }
+  // The tabs a share can be of: those of the windows on the same session (so
+  // never across profiles, or in and out of private windows), but for the one
+  // asking, which would show itself.
+  const shareTabs = () => [...openWindows].filter((c) => c.session === ses).flatMap((c) => c.shareableTabs()).filter((tab) => tab !== share?.tab)
+  const shareState = () => share && {
+    site: permissions.label(share.site),
+    audio: share.audio,
+    allowed: share.allowed,
+    tabs: shareTabs().map(({ id, title, url, favicon }) => ({ id, name: title || url, icon: favicon })),
+    windows: share.sources && share.sources.windows,
+    screens: share.sources && share.sources.screens,
+  }
+  // Shares what was picked; what has since gone is refused.
+  function chooseShare(kind, id, audio) {
+    if (!share) return
+    const { tab, callback, sources, audio: wantsAudio } = share
+    let streams = null
+    if (kind === 'tabs') {
+      const frame = shareTabs().find((each) => each.id === id)?.page.mainFrame
+      if (frame && !frame.isDestroyed()) streams = shareStore.tabStreams(frame, wantsAudio && audio === true)
+    } else {
+      const source = (kind === 'windows' || kind === 'screens') && sources?.[kind].find((each) => each.id === id)
+      if (source) streams = shareStore.sourceStreams(source)
+    }
+    if (!streams) return closePopup()
+    share = null
+    closePopup()
+    grantShare(tab.page, callback, streams)
   }
 
   function navigate(input) {
@@ -1684,8 +1797,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     Menu.buildFromTemplate(profileItems(profile)).popup({ window: win, x: Math.round(x), y: Math.round(y) })
   }
 
-  // The Settings, History, Downloads and Bookmarks popups (src/settings.html,
-  // src/history.html, src/downloads.html, src/bookmarks.html): each is made on first use, then hidden and shown; one is open at a time.
+  // The Settings, History, Downloads, Bookmarks and screen sharing popups
+  // (src/settings.html, src/history.html, src/downloads.html,
+  // src/bookmarks.html, src/share.html): each is made on first use, then hidden and shown; one is open at a time.
   // While a shortcut is being recorded in Settings, key presses go to it
   // instead of the menu, so ⌘T records ⌘T rather than opening a tab.
   function popupView(name) {
@@ -1723,6 +1837,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     else if (popupOpen !== name) {
       popups[popupOpen].setVisible(false)
       recording = false
+      dropShare()
     }
     popupOpen = name
     settingsSection = section
@@ -1736,11 +1851,15 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // Popups have no exit animation, so they just hide. Focus goes back
   // where it was: the toolbar (its settings button, or the address bar)
   // keeps its own focused element, otherwise the page gets it.
-  function closePopup() {
+  // `focus` is false when the active page has gone, and whatever comes next
+  // takes it.
+  function closePopup(focus = true) {
     if (!popupOpen) return
     popups[popupOpen].setVisible(false)
     popupOpen = null
     recording = false
+    dropShare()
+    if (!focus) return
     if (toolbarHadFocus) return win.webContents.focus()
     const tab = active()
     if (tab) show(tab)
@@ -2037,6 +2156,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     },
     isActive: (id) => id === activeId,
     askPermission,
+    askShare,
+    shareState,
+    chooseShare,
+    shareableTabs: () => tabs.filter((tab) => tab.started && !tab.error && tab.url && !tab.page.isDestroyed()),
     hasTab: (contents) => tabs.some((tab) => tab.page === contents),
     // Whether a frame started the page's current navigation.
     startedByFrame: (contents) => Boolean(tabs.find((tab) => tab.page === contents)?.startedByFrame),
@@ -2173,6 +2296,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendQuickSearch(); sendBookmarks(); sendDownloads(); sendProfile() })
   win.on('closed', () => {
     openWindows.delete(controls)
+    dropShare()
     changed()
     if (closingWindow) rememberClosed(profile, closingWindow)
     // Its own pages too, read before they close.
@@ -2512,6 +2636,11 @@ ipcMain.on('downloads-clear', fromDownloads((c) => {
   if (!downloadsOf(c.session).length) c.closePopup()
 }))
 ipcMain.on('downloads-close', fromDownloads((c) => c.closePopup()))
+
+ipcMain.handle('share-get', fromPopup('share', (c) => c.shareState()))
+ipcMain.on('share-choose', fromPopup('share', (c, kind, id, audio) => c.chooseShare(kind, id, audio)))
+ipcMain.on('share-allow', fromPopup('share', openScreenPermission))
+ipcMain.on('share-close', fromPopup('share', (c) => c.closePopup()))
 
 app.whenReady().then(async () => {
   const root = app.getPath('userData')

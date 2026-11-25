@@ -108,6 +108,13 @@ const SECTIONS = [
         default: true,
       },
       {
+        key: 'screenSharing',
+        label: 'Let sites ask to share your screen',
+        description: 'You choose the tab, window or screen each time. When off, sites are refused.',
+        type: 'toggle',
+        default: true,
+      },
+      {
         key: 'doNotTrack',
         label: 'Ask sites not to track me',
         description: 'Sends Do Not Track and Global Privacy Control with every request.',
