@@ -8,7 +8,7 @@
 // A private window (⇧⌘N) browses in an in-memory session of its own and
 // keeps nothing once it closes (see privateSession), except the bookmarks
 // someone adds in it. Every window belongs to one profile (see openProfile).
-const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, screen, session, shell } = require('electron')
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, screen, session, shell, webContents: allContents } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl, searchUrl, engineOf } = require('./url')
@@ -274,6 +274,28 @@ function siteFor(contents, asking, embedding) {
   return embedding && permissions.originOf(embedding) !== site ? null : site
 }
 
+// Pages being redirected to another app: WebContents id -> { to, site },
+// `site` being the one that redirected. Electron's request names the page
+// the link was on instead, which would let a site allowed to open an app
+// vouch for every address it links to. Filled from the network request
+// itself, so navigations that overlap are never mixed up.
+const appRedirects = new Map()
+function noteAppRedirect({ webContentsId, url, redirectURL }) {
+  if (permissions.opensApp(redirectURL)) appRedirects.set(webContentsId, { to: redirectURL, site: permissions.originOf(url) })
+}
+
+// The redirect, if any, that a request to open `url` came from, and the page
+// redirected: the one asking, or a new tab it opened.
+function takeAppRedirect(asking, url) {
+  for (const [id, { to, site }] of appRedirects) {
+    const contents = allContents.fromId(id)
+    if (!url || to !== url || contents?.session !== asking.session) continue
+    appRedirects.delete(id)
+    return { site, contents }
+  }
+  return null
+}
+
 // Requests for a kind Lit asks about are answered from the saved choices,
 // or by a prompt on the tab that asked, for the kinds not yet decided.
 // A frame from the page's own site is treated like the page for the camera
@@ -286,14 +308,11 @@ function siteFor(contents, asking, embedding) {
 function onPermissionRequest(store, contents, permission, callback, details) {
   const kinds = permissions.kindsOf(permission, details.mediaTypes, details.externalURL)
   if (!kinds) return callback(true)
-  const site = siteFor(contents, details.securityOrigin ?? details.requestingUrl)
-  if (!details.isMainFrame && !details.securityOrigin) return callback(false)
-  answerRequest(store, contents, site, kinds, callback)
-}
-
-// Answers `site`'s request for `kinds` from its choices, or asks on the tab.
-function answerRequest(store, contents, site, kinds, callback) {
+  const redirect = takeAppRedirect(contents, details.externalURL)
+  if (redirect) contents = redirect.contents
+  const site = redirect ? redirect.site : siteFor(contents, details.securityOrigin ?? details.requestingUrl)
   if (!site || !kinds.length) return callback(false)
+  if (!details.isMainFrame && !details.securityOrigin) return callback(false)
   const answer = permissions.status(store.sites, site, kinds)
   if (answer !== 'ask') return callback(answer === 'allow')
   for (const controls of openWindows) {
@@ -322,6 +341,7 @@ function setUpSession(ses, profile, store) {
   ses.setPermissionRequestHandler((...args) => onPermissionRequest(store, ...args))
   ses.setPermissionCheckHandler((...args) => onPermissionCheck(store, ...args))
   ses.on('will-download', (_event, item) => trackDownload(item, ses, profile))
+  ses.webRequest.onBeforeRedirect({ urls: ['<all_urls>'], types: ['mainFrame'] }, noteAppRedirect)
   applyDoNotTrack(ses, profile)
 }
 
@@ -356,6 +376,7 @@ async function forgetSession(ses, pages) {
   ses.setPermissionCheckHandler(() => false)
   ses.removeAllListeners('will-download')
   ses.on('will-download', (event) => event.preventDefault())
+  ses.webRequest.onBeforeRedirect(null)
   ses.webRequest.onBeforeSendHeaders(null)
   ses.webRequest.onBeforeRequest((_details, callback) => callback({ cancel: true }))
   await Promise.all(pages.map((page) => !page || page.isDestroyed() || new Promise((resolve) => page.once('destroyed', resolve))))
@@ -924,25 +945,18 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     page.on('did-start-navigation', ({ url, isMainFrame, initiator }) => {
       if (!isMainFrame) return
       tab.pendingUrl = url
-      tab.hop = url
       tab.startedByPage = Boolean(initiator)
     })
-    // A redirect to another app. Electron would ask for the page the link was
-    // on, however many sites the redirects went through, so a site allowed
-    // to open an app would vouch for every address it links to or frames.
-    // Lit asks itself, for the site that redirected (tab.hop: the last
-    // address of the navigation); a frame's redirect is refused, as its
-    // other requests are.
-    page.on('did-redirect-navigation', ({ url, isMainFrame }) => { if (isMainFrame) tab.hop = url })
+    // A redirect to another app is let through to its request only when
+    // it is known who redirected (appRedirects), so it is never taken for a
+    // link on the page. A frame's is refused, as its other requests are.
     page.on('will-redirect', (event) => {
-      const { url, isMainFrame } = event
-      if (!permissions.opensApp(url)) return
-      event.preventDefault()
-      if (!isMainFrame) return
-      answerRequest(permissionStore, page, permissions.originOf(tab.hop), permissions.kindsOf('openExternal', [], url), (allowed) => {
-        if (allowed) shell.openExternal(url).catch(() => {})
-      })
+      if (permissions.opensApp(event.url) && (!event.isMainFrame || appRedirects.get(page.id)?.to !== event.url)) event.preventDefault()
     })
+    page.on('did-stop-loading', () => appRedirects.delete(page.id))
+    // Taken now: a destroyed page has no id.
+    const pageId = page.id
+    page.on('destroyed', () => appRedirects.delete(pageId))
     // A click, key press, touch or scroll on the page since its last page
     // committed, for `committed`: a page moving on with none is redirecting.
     page.on('input-event', (_event, input) => {

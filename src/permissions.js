@@ -70,7 +70,7 @@ const BY_MEDIA = { video: 'camera', audio: 'microphone' }
 // `externalURL`; one without it (a check) is refused.
 function kindsOf(permission, mediaTypes = [], externalURL = '') {
   if (permission === 'openExternal') {
-    const kind = `app:${externalURL.slice(0, externalURL.indexOf(':')).toLowerCase()}`
+    const kind = `app:${externalURL.slice(0, Math.max(externalURL.indexOf(':'), 0)).toLowerCase()}`
     return isApp(kind) ? [kind] : []
   }
   if (permission === 'media') {

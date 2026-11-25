@@ -25,7 +25,7 @@ test('opening another app is a kind per scheme', () => {
   assert.deepEqual(kindsOf('openExternal', [], 'ZOOMMTG://join?x=a:b'), ['app:zoommtg'])
   // Refused: nothing to open, or a scheme too long to name.
   assert.deepEqual(kindsOf('openExternal'), [])
-  assert.deepEqual(kindsOf('openExternal', [], 'no scheme'), [])
+  assert.deepEqual(kindsOf('openExternal', [], 'mailto'), [])
   assert.deepEqual(kindsOf('openExternal', [], `${'a'.repeat(101)}:x`), [])
   assert.deepEqual(checkKindsOf('openExternal'), [])
   assert.ok(isApp('app:mailto') && isKind('app:mailto') && isKind('camera'))
