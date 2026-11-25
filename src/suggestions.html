@@ -150,9 +150,8 @@
     function draw(list) {
       generation = list.generation
       const items = list.items
-      // As history.js matches them: every word, an address without its
-      // scheme and www.; longest first, so a longer one is marked whole.
-      const words = bare(list.text.trim().toLowerCase()).split(/\s+/).filter(Boolean)
+      // As history.js matches them; longest first, so a longer one is marked whole.
+      const words = list.text.toLowerCase().split(/\s+/).filter(Boolean)
         .sort((a, b) => b.length - a.length)
       // Left out of an address, its scheme and www. could hide what matched.
       const shownAddress = ({ title, url }) => {

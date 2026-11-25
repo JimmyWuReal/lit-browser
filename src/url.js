@@ -34,14 +34,11 @@ function addressParts(url, full = false) {
   const { href, protocol, username, password, host } = new URL(url)
   if (!/^https?:$/.test(protocol) || username || password) return null
   const scheme = `${protocol}//`
-  // Drawn with the scheme rather than left out: in www.co.uk it is the site's
-  // own name. From www.com itself it can't be taken.
-  const www = /^www\.(?=[^.]+\.)/.test(host) ? 'www.' : ''
   // Cut from the address itself: a URL's own parts lose a bare ? or #.
   const after = href.slice(href.indexOf('/', scheme.length))
   return {
-    before: (full || protocol === 'http:' ? scheme : '') + www,
-    host: host.slice(www.length),
+    before: full || protocol === 'http:' ? scheme : '',
+    host,
     after: !full && after === '/' ? '' : after,
   }
 }
