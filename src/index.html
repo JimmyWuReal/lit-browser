@@ -273,8 +273,6 @@
     .reload svg { grid-area: 1 / 1; transition: opacity 200ms ease, transform 240ms var(--settle); }
     .reload:not(.is-loading) .icon-stop,
     .reload.is-loading .icon-reload { opacity: 0; transform: scale(.6); }
-    /* Find needs the room in a narrow window. */
-    @media (max-width: 600px) { .bar:has(.find.is-open) .nav { display: none; } }
 
     .address { position: relative; flex: 1; min-width: 0; margin: 0; }
     .address input {
@@ -439,6 +437,13 @@
       white-space: nowrap;
     }
     .find-count:empty { display: none; }
+    /* In a narrow window, the buttons, the address and find share the row. */
+    @media (max-width: 600px) {
+      .find { flex-basis: 204px; min-width: 204px; }
+      .find-count { padding: 0 2px; font-size: 11px; }
+      body:not(.home) .bar:has(.find.is-open) .address > svg { display: none; }
+      body:not(.home) .bar:has(.find.is-open) .address:not(.has-chip) input { padding-left: 12px; }
+    }
     .find .icon-button { width: 24px; height: 24px; flex: 0 0 auto; border-radius: 6px; }
     .find .icon-button:disabled { opacity: .4; pointer-events: none; }
 
@@ -1085,14 +1090,14 @@
       { button: document.getElementById('back'), delta: -1, can: 'canGoBack' },
       { button: document.getElementById('forward'), delta: 1, can: 'canGoForward' },
     ]
-    // When Reload last became Stop, or Stop Reload, by the tab itself.
-    let swappedAt = -Infinity
+    // When Stop last became Reload, as the page finished.
+    let loadedAt = -Infinity
     function drawNav(tab, switched) {
       nav.hidden = !state.navigationButtons
       for (const { button, can } of stepButtons) button.setAttribute('aria-disabled', String(!tab?.[can]))
       const loading = Boolean(tab?.loading)
       if (loading === reloadButton.classList.contains('is-loading')) return
-      swappedAt = switched ? -Infinity : performance.now()
+      if (!loading) loadedAt = switched ? -Infinity : performance.now()
       reloadButton.classList.toggle('is-loading', loading)
       // Stop has no shortcut.
       reloadButton.dataset.shortcut = loading ? '' : 'shortcuts.reload'
@@ -1133,11 +1138,15 @@
       button.addEventListener('contextmenu', (event) => { event.preventDefault(); clearTimeout(hold); list() })
     }
 
+    // What the button was as a press began: a click is for that. One aimed at
+    // Stop just as the page finished does nothing rather than reload it, nor
+    // does a double-click's second click stop what the first started.
+    const isStop = () => reloadButton.classList.contains('is-loading')
+    let pressedStop = false
+    reloadButton.addEventListener('pointerdown', () => { pressedStop = isStop() })
     reloadButton.addEventListener('click', (event) => {
-      // A click aimed at the button as it was a moment ago, or the second of
-      // a double-click, does nothing rather than the opposite.
-      if (event.detail && performance.now() - swappedAt < 400) return
-      if (reloadButton.classList.contains('is-loading')) {
+      if (event.detail && (pressedStop !== isStop() || event.detail > 1 || (!isStop() && performance.now() - loadedAt < 400))) return
+      if (isStop()) {
         window.lit.stop(state.activeId)
         // The page that stays is the one to name, not what was being opened.
         closeSuggestions()

@@ -1241,7 +1241,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // Reload, for a page as it is or one that failed.
   function reload(tab, ignoreCache = false) {
     if (!tab?.started || tab.page.isDestroyed()) return
-    if (tab.error) retry(tab)
+    if (tab.error) retry(tab, ignoreCache)
     else if (ignoreCache) tab.page.reloadIgnoringCache()
     else tab.page.reload()
   }
@@ -1285,10 +1285,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   // Loads the failed address again. Chromium reloads nothing when that would
   // send a form again, so its address is opened without the form instead.
-  function retry(tab) {
+  function retry(tab, ignoreCache = false) {
     const url = tab.url || tab.page.getURL() || tab.pendingUrl
-    if (tab.page.getURL() === url) tab.page.reload()
-    if (!tab.page.isLoading()) tab.page.loadURL(url).catch(() => {})
+    if (tab.page.getURL() === url) {
+      if (ignoreCache) tab.page.reloadIgnoringCache()
+      else tab.page.reload()
+    }
+    if (!tab.page.isLoading()) tab.page.loadURL(url, ignoreCache ? { extraHeaders: 'Cache-Control: no-cache\nPragma: no-cache' } : {}).catch(() => {})
   }
 
   function activate(id, focus = true) {
