@@ -1727,6 +1727,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       if (status >= 400 || Date.now() - tab.submitted.at > LOGIN_TIME) tab.submitted = null
       else tab.submitted.moved = true
     }
+    // The second step's page comes by itself; one the person went on to from
+    // there is no part of it.
+    if (tab.loginName?.moved && tab.touched) tab.loginName = null
+    else if (tab.loginName) tab.loginName.moved = true
     // Signing in often passes through more pages by itself.
     if (tab.offer && Date.now() - tab.offer.at > LOGIN_TIME) tab.offer = null
   }

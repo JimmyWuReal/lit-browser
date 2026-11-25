@@ -68,6 +68,8 @@ function start({ ipcRenderer }) {
   // save it once the sign-in seems to have worked: another page comes, or, in
   // a page that stays, its password field goes away for good.
   let watch = null
+  // A name was sent, for a password that may come later.
+  let named = false
   // With `maybe`, taken back if the password is no longer one a moment after:
   // a button that shows it has made it text by then. Said at once all the same,
   // as signing in may leave the page before that.
@@ -80,7 +82,10 @@ function start({ ipcRenderer }) {
     if (!password) {
       // The second step may not repeat it.
       const name = nameAlone(fields)
-      if (name?.value) ipcRenderer.send('login-name', { username: name.value.trim() })
+      if (name?.value) {
+        named = true
+        ipcRenderer.send('login-name', { username: name.value.trim() })
+      }
       return
     }
     const name = nameOf(fields, password, visible)
@@ -99,12 +104,16 @@ function start({ ipcRenderer }) {
     watch = setInterval(() => {
       // Another password field in its place is the form, drawn again.
       gone = visible(password) || passwords(inputsIn(document)).length ? 0 : gone + 1
-      if (gone < 3 && --left > 0) return
+      // Refused, by the page's own word, or never heard of again.
+      if (!gone && (password.matches('[aria-invalid=true]') || --left <= 0)) return abandon()
+      if (gone < 3) return
       clearInterval(watch)
-      if (gone >= 3) ipcRenderer.send('login-done')
+      watch = null
+      ipcRenderer.send('login-done')
     }, 500)
   }
-  // Typing again, or following a link, after a sign-in that led nowhere.
+  // Typing again, following a link or pressing another button, after a sign-in
+  // that led nowhere.
   function abandon() {
     if (watch === null) return
     clearInterval(watch)
@@ -126,10 +135,15 @@ function start({ ipcRenderer }) {
   }, true)
   addEventListener('click', (event) => {
     if (!event.isTrusted) return
-    if (event.composedPath().some((each) => each instanceof Element && each.matches('a[href]'))) return abandon()
+    if (event.composedPath().some((each) => each instanceof Element && each.matches('a[href]:not([href^="#"])'))) {
+      if (named && watch === null) ipcRenderer.send('login-abandoned')
+      named = false
+      return abandon()
+    }
     const button = event.composedPath().find((each) => each instanceof Element && each.matches('button, input[type=submit], input[type=button], [role=button]'))
-    if (!button || button.type === 'reset' || button.formMethod === 'dialog' || button.form?.method === 'dialog') return
-    if (!signsIn([button.textContent, button.value, button.getAttribute('aria-label'), button.title].join(' '))) return
+    if (!button) return
+    if (button.type === 'reset' || button.formMethod === 'dialog' || button.form?.method === 'dialog') return abandon()
+    if (!signsIn([button.textContent, button.value, button.getAttribute('aria-label'), button.title].join(' '))) return abandon()
     const form = button.closest('form')
     if (button.type === 'submit') {
       if (allowed(button)) submitted(fieldsWith(button))
@@ -141,7 +155,7 @@ function start({ ipcRenderer }) {
   function loginAt(target) {
     if (!isField(target) || !visible(target) || isNew(target)) return null
     const fields = fieldsWith(target)
-    const password = target.type === 'password' ? target : passwords(fields).find((field) => !isNew(field)) || null
+    const password = target.type === 'password' ? target : passwords(fields).find((field) => isField(field) && !isNew(field)) || null
     // A form that only makes a new password is for signing up.
     if (!password && fields.some((field) => field.type === 'password' && isNew(field))) return null
     const name = password ? nameOf(fields, password, visible) : nameAlone(fields)
