@@ -13,8 +13,9 @@
 // someone adds in it. Every window belongs to one profile (see openProfile).
 const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, screen, session, shell } = require('electron')
 const path = require('node:path')
+const { pathToFileURL } = require('node:url')
 const fs = require('node:fs')
-const { toUrl, searchUrl, engineOf } = require('./url')
+const { toUrl, webAddress, searchUrl, engineOf } = require('./url')
 const quickSearch = require('./quicksearch')
 const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
@@ -689,7 +690,52 @@ function settingsState(profile, error) {
   for (const setting of settingsStore.SETTINGS) {
     if (setting.type === 'shortcut') labels[setting.key] = settings[setting.key] ? shortcuts.label(settings[setting.key]) : ''
   }
-  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, ...(error && { error }) }
+  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, defaultBrowser: defaultBrowser(), ...(error && { error }) }
+}
+
+// Whether Lit is the Mac's default browser: 'yes', 'no', or 'unavailable' when
+// run from source, where macOS would take Electron for the browser.
+function defaultBrowser() {
+  if (!app.isPackaged || process.platform !== 'darwin') return 'unavailable'
+  return ['http', 'https'].every((scheme) => app.isDefaultProtocolClient(scheme)) ? 'yes' : 'no'
+}
+
+// The answer changes outside Lit, in macOS's question or System Settings, so
+// it is read again when Lit comes to the front, and every second for a minute
+// after asking.
+let lastDefaultBrowser
+let defaultBrowserTimer = null
+function checkDefaultBrowser() {
+  const now = defaultBrowser()
+  if (now === lastDefaultBrowser) return
+  lastDefaultBrowser = now
+  for (const controls of openWindows) controls.settingsChanged()
+}
+
+// Asks macOS, which asks the person; changing http changes https and HTML
+// files with it. Returns why it couldn't, if so.
+function makeDefaultBrowser() {
+  if (defaultBrowser() !== 'no') return
+  if (!app.setAsDefaultProtocolClient('http')) return 'Couldn’t ask macOS. Choose Lit in System Settings › Desktop & Dock instead.'
+  clearInterval(defaultBrowserTimer)
+  let left = 60
+  defaultBrowserTimer = setInterval(() => {
+    checkDefaultBrowser()
+    if (!--left || lastDefaultBrowser === 'yes') clearInterval(defaultBrowserTimer)
+  }, 1000)
+}
+
+// Links and files other apps open in Lit. Those that arrive before Lit is
+// ready, as when one launches it, wait in `waitingLinks`; null once ready.
+let waitingLinks = []
+function openExternalLink(url) {
+  if (waitingLinks) return waitingLinks.push(url)
+  // In the profile used last, and never in a private window.
+  const controls = windowsOf(currentProfile).filter((each) => !each.isPrivate).at(-1)
+  if (!controls || shared().externalLinks === 'window') return createWindow({ url })
+  if (controls.win.isMinimized()) controls.win.restore()
+  controls.win.focus()
+  controls.openLink(url)
 }
 
 // Where typed text goes: a quick search shortcut's site (`!yt lofi`), else
@@ -1238,10 +1284,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // A new tab from ⌘T or the + button, placed and filled as Settings says.
-  function newTab() {
+  function newTab(url = profile.settings.newTabPage ? toUrl(profile.settings.newTabPage, profile.settings.searchEngine) : undefined) {
     const current = active()
     addTab({
-      url: profile.settings.newTabPage ? toUrl(profile.settings.newTabPage, profile.settings.searchEngine) : undefined,
+      url,
       index: profile.settings.newTabPosition === 'next' && current ? tabs.indexOf(current) + 1 : tabs.length,
     })
   }
@@ -2005,7 +2051,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     isPrivate,
     session: ses,
     pages,
-    newTab,
+    newTab: () => newTab(),
+    // A link from another app, in a new tab over any popup.
+    openLink(url) {
+      closePopup()
+      newTab(url)
+    },
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
     reopenTab(history, index) {
       closePopup()
@@ -2468,6 +2519,7 @@ ipcMain.handle('permissions-set', fromSettings((c, site, kind, choice) => {
   }
   return settingsState(c.profile)
 }))
+ipcMain.handle('default-browser-make', fromSettings((c) => settingsState(c.profile, makeDefaultBrowser())))
 ipcMain.on('settings-record', fromSettings((c, on, keys) => c.setRecording(on === true, keys)))
 ipcMain.on('settings-close', fromSettings((c) => c.closePopup()))
 
@@ -2513,6 +2565,17 @@ ipcMain.on('downloads-clear', fromDownloads((c) => {
 }))
 ipcMain.on('downloads-close', fromDownloads((c) => c.closePopup()))
 
+// Other apps opening links and HTML files. Registered before Lit is ready,
+// as macOS sends the link that launched it early.
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  if (webAddress(url)) openExternalLink(url)
+})
+app.on('open-file', (event, file) => {
+  event.preventDefault()
+  openExternalLink(pathToFileURL(file).href)
+})
+
 app.whenReady().then(async () => {
   const root = app.getPath('userData')
   profilesFile = path.join(root, 'profiles.json')
@@ -2536,7 +2599,13 @@ app.whenReady().then(async () => {
     .map((saved) => ({ ...saved, profile: profiles.find(({ id }) => id === (saved.profile ?? profileStore.DEFAULT)) }))
     .filter(({ profile }) => profile)
   if (restored.length) for (const saved of restored) createWindow(saved)
-  else createWindow()
+  // A link that launched Lit opens in a window of its own, if none reopened.
+  else if (!waitingLinks.length) createWindow()
+  const links = waitingLinks
+  waitingLinks = null
+  links.forEach(openExternalLink)
+  lastDefaultBrowser = defaultBrowser()
+  app.on('did-become-active', checkDefaultBrowser)
   // Like other Mac browsers, Lit keeps running with no windows open;
   // clicking the Dock icon opens a fresh one. Registered after the first
   // window so a launch-time activate cannot open a second.

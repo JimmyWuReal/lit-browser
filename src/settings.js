@@ -15,7 +15,7 @@ const quickSearch = require('./quicksearch')
 // person or their accounts goes in a profile's, how Lit itself works (tabs,
 // shortcuts) in a shared one. The profile ones come first.
 // A section can also name a `list` the popup draws after its settings, from
-// state main sends with them (sitePermissions, quickSearchSites, profiles).
+// state main sends with them (sitePermissions, quickSearchSites, profiles, defaultBrowser).
 // Each setting: { key, label, description?, type, default, ...type fields }.
 // Types the popup can draw:
 //   choice    `options` is [{ value, label }]; a segmented control.
@@ -113,6 +113,22 @@ const SECTIONS = [
         description: 'Sends Do Not Track and Global Privacy Control with every request.',
         type: 'toggle',
         default: false,
+      },
+    ],
+  },
+  {
+    id: 'defaultBrowser',
+    title: 'Default Browser',
+    // Also makes Lit the Mac's default browser, after the settings.
+    list: 'defaultBrowser',
+    settings: [
+      {
+        key: 'externalLinks',
+        label: 'Open links from other apps in',
+        description: 'Never in a private window.',
+        type: 'choice',
+        options: [{ value: 'tab', label: 'New tab' }, { value: 'window', label: 'New window' }],
+        default: 'tab',
       },
     ],
   },
