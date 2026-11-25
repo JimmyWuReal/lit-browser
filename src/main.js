@@ -17,6 +17,7 @@ const { app, BrowserWindow, Menu, WebContentsView, clipboard, desktopCapturer, d
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const fs = require('node:fs')
+const { quiet } = require('./quiet')
 const { toUrl, webAddress, searchUrl, engineOf } = require('./url')
 const quickSearch = require('./quicksearch')
 const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
@@ -1054,6 +1055,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     : { width: bounds?.width || 1200, height: bounds?.height || 800 }
   const win = new BrowserWindow({
     ...place,
+    // See src/quiet.js. Going full screen would show a hidden window.
+    show: !quiet,
+    fullscreenable: !quiet,
     minWidth: 480,
     minHeight: 320,
     // Matches body's background in index.html.

@@ -195,6 +195,8 @@ npm start
 
 For development, `npm run dev` restarts the app whenever a file in `src/` changes (Node's built-in `--watch`, no extra tools). `npm test` runs the unit tests in `test/` with Node's built-in test runner.
 
+Run any other way from source (`npx electron .`, or a script that loads `src/main.js`), Lit stays hidden (`src/quiet.js`) so agents can test it without interrupting you: no Dock icon, no windows on screen, and it never takes focus. Pages still draw, take `sendInputEvent` and can be captured with `capturePage`. Set `LIT_FOREGROUND=1` for what needs a real window: focus (`isFocused`), full screen, or `screencapture`.
+
 ## Build the Mac app
 
 ```sh
