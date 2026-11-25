@@ -314,8 +314,10 @@ function onPermissionRequest(store, contents, permission, callback, details) {
 }
 
 // Answers `site`'s request for `kinds` from its choices, or asks on the tab.
+// Only a tab opens apps, whatever was saved.
 function answerRequest(store, contents, site, kinds, callback) {
   if (!site || !kinds.length) return callback(false)
+  if (permissions.isApp(kinds[0]) && ![...openWindows].some((controls) => controls.hasTab(contents))) return callback(false)
   const answer = permissions.status(store.sites, site, kinds)
   if (answer !== 'ask') return callback(answer === 'allow')
   for (const controls of openWindows) {
@@ -1390,6 +1392,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (prompt?.id !== promptId || !Array.isArray(kinds) || kinds.join() !== asking(prompt).join()) return
     if (choice) {
       const kinds = asking(prompt)
+      prompt.answered = true
       if (permissionStore.choose(prompt.site, kinds, choice) || win.isDestroyed()) return
       // The choice still holds; say it won't outlast this run.
       dialog.showMessageBox(win, {
@@ -1405,14 +1408,17 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // Answers every waiting request the saved choices now decide. The rest
-  // are redrawn too, as what they ask about may have changed.
+  // are redrawn too, as what they ask about may have changed. Allow opens an
+  // app only for the prompt it was clicked on: a request waiting elsewhere,
+  // in a tab that may be hidden, has its own link, and is dropped.
   function settlePrompts() {
     for (const tab of tabs) {
       for (const prompt of [...tab.prompts]) {
         const answer = permissions.status(permissionStore.sites, prompt.site, prompt.kinds)
         if (answer === 'ask') continue
         tab.prompts.splice(tab.prompts.indexOf(prompt), 1)
-        for (const callback of prompt.callbacks) callback(answer === 'allow')
+        const allowed = answer === 'allow' && (prompt.answered || !permissions.isApp(prompt.kinds[0]))
+        for (const callback of prompt.callbacks) callback(allowed)
       }
     }
     sync()
@@ -1956,6 +1962,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     },
     isActive: (id) => id === activeId,
     askPermission,
+    hasTab: (contents) => tabs.some((tab) => tab.page === contents),
     // Whether a frame started the page's current navigation.
     startedByFrame: (contents) => Boolean(tabs.find((tab) => tab.page === contents)?.startedByFrame),
     answerPrompt,
