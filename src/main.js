@@ -152,12 +152,13 @@ function switchProfile(profile) {
   return controls
 }
 
-// Returns why it couldn't, if so.
-function addProfile() {
+// Returns why it couldn't, if so. A saved ad blocking engine is in use before
+// the profile can be opened, as at launch.
+async function addProfile() {
   const { state, profile } = profileStore.add(profileList)
   if (!setProfileList(state)) return 'Couldn’t save profiles.'
   const opened = openProfile(profile)
-  adblock.set(opened.session, opened.settings.blockAds)
+  await adblock.set(opened.session, opened.settings.blockAds)
   profilesChanged()
 }
 
@@ -1982,8 +1983,8 @@ const togglePopup = (name) => (_item, win) => {
 // Settings at its Profiles section, in the focused window or a new one; New
 // Profile adds one there first, to name it.
 const manageProfiles = (_item, win) => (controlsOf(win) || createWindow()).openPopup('settings', 'profiles')
-function newProfile(item, win) {
-  const error = addProfile()
+async function newProfile(item, win) {
+  const error = await addProfile()
   if (!error) return manageProfiles(item, win)
   dialog.showMessageBox({ type: 'warning', message: error }).catch(() => {})
 }
@@ -2197,7 +2198,7 @@ ipcMain.on('suggestions-pick', fromPopup('suggestions', (c, index, generation) =
 ipcMain.handle('settings-get', fromSettings((c) => popupState('settings', c)))
 ipcMain.handle('settings-set', fromSettings((c, key, value) => settingsState(c.profile, changeSetting(c.profile, key, value))))
 // Profiles: adding, changing and deleting answer with the state.
-ipcMain.handle('profiles-add', fromSettings((c) => settingsState(c.profile, addProfile())))
+ipcMain.handle('profiles-add', fromSettings(async (c) => settingsState(c.profile, await addProfile())))
 ipcMain.handle('profiles-update', fromSettings((c, id, changes) => settingsState(c.profile, updateProfile(id, { name: changes?.name, color: changes?.color }))))
 ipcMain.handle('profiles-delete', fromSettings(async (c, id) => settingsState(c.profile, await deleteProfile(c.win, id))))
 ipcMain.on('profiles-open', fromSettings((c, id) => {
