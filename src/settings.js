@@ -79,7 +79,7 @@ const SECTIONS = [
       {
         key: 'fullAddress',
         label: 'Show full addresses',
-        description: 'Otherwise https:// and www. only show while you edit the address.',
+        description: 'Otherwise https:// only shows while you edit the address.',
         type: 'toggle',
         default: false,
       },

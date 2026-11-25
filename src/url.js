@@ -25,23 +25,24 @@ function searchUrl(text, engine = 'google') {
 }
 
 // How the address bar draws a page's address while it isn't being edited:
-// { before, host, after }, the host standing out. Without `full`, what says
-// little is left out: https://, www. and a lone slash; http:// stays, since
-// it says the page isn't encrypted. Null for an address shown as it is: not
-// a web one, or one with a user name, which could pass for the host.
+// { before, host, after }, the host standing out. Without `full`, https:// and
+// a lone slash, which say little, are left out; http:// stays, since it says
+// the page isn't encrypted. Null for an address shown as it is: not a web one,
+// or one with a user name, which could pass for the host.
 function addressParts(url, full = false) {
   if (!URL.canParse(url)) return null
   const { href, protocol, username, password, host } = new URL(url)
   if (!/^https?:$/.test(protocol) || username || password) return null
-  // From the path on, cut from the address itself: a URL's own parts lose a
-  // bare ? or #.
-  const after = href.slice(href.indexOf('/', `${protocol}//`.length))
-  if (full) return { before: `${protocol}//`, host, after }
+  const scheme = `${protocol}//`
+  // Drawn with the scheme rather than left out: in www.co.uk it is the site's
+  // own name. From www.com itself it can't be taken.
+  const www = /^www\.(?=[^.]+\.)/.test(host) ? 'www.' : ''
+  // Cut from the address itself: a URL's own parts lose a bare ? or #.
+  const after = href.slice(href.indexOf('/', scheme.length))
   return {
-    before: protocol === 'https:' ? '' : 'http://',
-    // Not from www.com itself.
-    host: host.replace(/^www\.(?=[^.]+\.)/, ''),
-    after: after === '/' ? '' : after,
+    before: (full || protocol === 'http:' ? scheme : '') + www,
+    host: host.slice(www.length),
+    after: !full && after === '/' ? '' : after,
   }
 }
 

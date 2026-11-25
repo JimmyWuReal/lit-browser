@@ -60,6 +60,7 @@
     /* The words typed stand out from the rest of the title and address. */
     mark { color: #fff; background: none; font-weight: 500; }
     .url mark { color: #bdbdbd; font-weight: 400; }
+    .shortcut mark { font-weight: 400; }
 
     /* A quick search site: its icon, name and shortcut, and on the
        highlighted row, the key that turns it into the field's chip. */
@@ -134,7 +135,7 @@
     // `text` with each of the words typed in it marked.
     function marked(text, words) {
       if (!words.length) return [text]
-      const pattern = new RegExp(`(${words.join('|')})`, 'giu')
+      const pattern = new RegExp(`(${words.map((word) => RegExp.escape(word)).join('|')})`, 'giu')
       // Splitting on a group puts what matched at the odd places.
       return text.split(pattern).map((part, i) => {
         if (i % 2 === 0) return part
@@ -151,22 +152,27 @@
       const items = list.items
       // As history.js matches them: every word, an address without its
       // scheme and www.; longest first, so a longer one is marked whole.
-      const words = bare(list.text.trim()).split(/\s+/).filter(Boolean)
-        .sort((a, b) => b.length - a.length).map((word) => RegExp.escape(word))
+      const words = bare(list.text.trim().toLowerCase()).split(/\s+/).filter(Boolean)
+        .sort((a, b) => b.length - a.length)
+      // Left out of an address, its scheme and www. could hide what matched.
+      const shownAddress = ({ title, url }) => {
+        const shown = `${title}\n${bare(url)}`.toLowerCase()
+        return words.every((word) => shown.includes(word)) ? bare(url) : url
+      }
       menu.replaceChildren(...items.map((item, index) => {
         let row
         if (item.kind === 'site') {
           row = siteTemplate.content.firstElementChild.cloneNode(true)
           row.querySelector('img').src = item.icon
           row.querySelector('.site-name').textContent = item.name
-          row.querySelector('.shortcut').textContent = item.shortcut
+          row.querySelector('.shortcut').replaceChildren(...marked(item.shortcut, words))
           row.setAttribute('aria-label', `Search ${item.name}, ${item.shortcut}`)
         } else {
           row = rowTemplate.content.firstElementChild.cloneNode(true)
           row.querySelector('.kind').replaceWith((item.bookmarked ? bookmarkIcon : historyIcon).content.cloneNode(true))
           if (item.bookmarked) row.setAttribute('aria-description', 'Bookmark')
-          row.querySelector('.title').replaceChildren(...marked(item.title || bare(item.url), words))
-          row.querySelector('.url').replaceChildren(...(item.title ? marked(bare(item.url), words) : []))
+          row.querySelector('.title').replaceChildren(...marked(item.title || shownAddress(item), words))
+          row.querySelector('.url').replaceChildren(...(item.title ? marked(shownAddress(item), words) : []))
         }
         // Picked on press: the address field closes the list as it loses
         // focus to this click, and the list only lasts while it fades out.

@@ -31,20 +31,26 @@ test('searchUrl searches even for text that looks like an address', () => {
   assert.equal(searchUrl('hi \uD83D'), 'https://www.google.com/search?q=hi%20%EF%BF%BD')
 })
 
-test('addressParts leaves out what says little', () => {
-  assert.deepEqual(addressParts('https://www.example.com/'), { before: '', host: 'example.com', after: '' })
+test('addressParts leaves out https:// and a lone slash', () => {
+  assert.deepEqual(addressParts('https://example.com/'), { before: '', host: 'example.com', after: '' })
   assert.deepEqual(addressParts('https://docs.example.com:8443/a/b?q=1#top'), { before: '', host: 'docs.example.com:8443', after: '/a/b?q=1#top' })
   assert.deepEqual(addressParts('https://example.com/?q=1'), { before: '', host: 'example.com', after: '/?q=1' })
   // Not encrypted, so it still says so.
-  assert.deepEqual(addressParts('http://www.example.com/'), { before: 'http://', host: 'example.com', after: '' })
-  // www. is the site's own name here, not a prefix.
-  assert.equal(addressParts('https://www.com/').host, 'www.com')
+  assert.deepEqual(addressParts('http://example.com/'), { before: 'http://', host: 'example.com', after: '' })
+})
+
+test('addressParts keeps www., apart from the host', () => {
+  assert.deepEqual(addressParts('https://www.example.com/a'), { before: 'www.', host: 'example.com', after: '/a' })
+  assert.deepEqual(addressParts('http://www.example.com/'), { before: 'http://www.', host: 'example.com', after: '' })
+  assert.deepEqual(addressParts('https://www.co.uk/'), { before: 'www.', host: 'co.uk', after: '' })
+  assert.deepEqual(addressParts('https://www.com/'), { before: '', host: 'www.com', after: '' })
 })
 
 test('addressParts keeps everything when full', () => {
-  assert.deepEqual(addressParts('https://www.example.com/', true), { before: 'https://', host: 'www.example.com', after: '/' })
-  assert.deepEqual(addressParts('https://example.com/?#', true), { before: 'https://', host: 'example.com', after: '/?#' })
-  assert.deepEqual(addressParts('http://example.com/a?b#c', true), { before: 'http://', host: 'example.com', after: '/a?b#c' })
+  for (const url of ['https://www.example.com/', 'https://example.com/?#', 'http://example.com/a?b#c', 'https://example.com/#']) {
+    assert.equal(Object.values(addressParts(url, true)).join(''), url)
+  }
+  assert.deepEqual(addressParts('https://www.example.com/', true), { before: 'https://www.', host: 'example.com', after: '/' })
 })
 
 test('addressParts leaves other addresses as they are', () => {

@@ -2,7 +2,7 @@
 
 A minimal web browser built on Chromium (via [Electron](https://www.electronjs.org/)).
 
-It opens on a centered search box: type a search or an address and press Enter. After that the box becomes the address bar at the top of the window, with Back, Forward and Reload (Stop while the page loads) beside it. The address bar makes the page's site stand out, and leaves out `https://` and `www.` until you click it to edit the address.
+It opens on a centered search box: type a search or an address and press Enter. After that the box becomes the address bar at the top of the window, with Back, Forward and Reload (Stop while the page loads) beside it. The address bar makes the page's site stand out, and leaves out `https://` until you click it to edit the address.
 
 Each window has tabs; every new tab starts on the same search box. Links that open a new window (and `window.open`) open as a tab next to their page, keeping their link to it, so sign-in popups work. Closing a window's last tab closes the window, and Lit keeps running with no windows open, like other Mac browsers.
 
