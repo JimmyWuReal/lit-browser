@@ -5,8 +5,8 @@
   "description": "Lit, a minimal Chromium browser",
   "main": "src/main.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "node --watch-path=src node_modules/electron/cli.js .",
+    "start": "LIT_FOREGROUND=1 electron .",
+    "dev": "LIT_FOREGROUND=1 node --watch-path=src node_modules/electron/cli.js .",
     "build": "electron-builder",
     "app": "sh scripts/install-app.sh",
     "test": "node --test"
@@ -20,7 +20,24 @@
       "icon": "build/icon.png",
       "category": "public.app-category.productivity",
       "identity": "-",
-      "hardenedRuntime": false
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "Web site URL",
+            "CFBundleTypeRole": "Viewer",
+            "CFBundleURLSchemes": ["http", "https"]
+          }
+        ],
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "HTML document",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["public.html", "public.xhtml"]
+          }
+        ]
+      }
     }
   },
   "license": "MIT",

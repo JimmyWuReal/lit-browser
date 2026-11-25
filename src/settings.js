@@ -15,8 +15,11 @@ const quickSearch = require('./quicksearch')
 // person or their accounts goes in a profile's, how Lit itself works (tabs,
 // shortcuts) in a shared one. The profile ones come first.
 // A section can also name a `list` the popup draws after its settings, from
-// state main sends with them (sitePermissions, quickSearchSites, profiles).
-// Each setting: { key, label, description?, type, default, ...type fields }.
+// state main sends with them (sitePermissions, passwords, quickSearchSites, profiles, defaultBrowser),
+// with `listWords`, the words that find it in Settings' search.
+// Each setting: { key, label, description?, group?, type, default, ...type
+// fields }. Settings next to each other with the same `group` get it as a
+// heading.
 // Types the popup can draw:
 //   choice    `options` is [{ value, label }]; a segmented control.
 //   toggle    true or false; a switch.
@@ -24,6 +27,7 @@ const quickSearch = require('./quicksearch')
 //   shortcut  an accelerator from src/shortcuts.js, or '' for none; recorded
 //             by pressing it. Each one is a menu command (see buildMenu).
 const shortcut = (command, label, accelerator) => ({ key: `shortcuts.${command}`, label, type: 'shortcut', default: accelerator })
+const group = (name, settings) => settings.map((setting) => ({ ...setting, group: name }))
 
 const SECTIONS = [
   {
@@ -63,16 +67,16 @@ const SECTIONS = [
         default: true,
       },
       {
-        key: 'bookmarkBar',
-        label: 'Show bookmark bar',
-        description: 'A row of your bookmarks below the address bar.',
+        key: 'navigationButtons',
+        label: 'Show back, forward and reload',
+        description: 'Buttons before the address bar. Their shortcuts work either way.',
         type: 'toggle',
         default: true,
       },
       {
-        key: 'navigationButtons',
-        label: 'Show navigation buttons',
-        description: 'Back, Forward and Reload, beside the address bar.',
+        key: 'bookmarkBar',
+        label: 'Show bookmark bar',
+        description: 'A row of your bookmarks below the address bar. Hidden while there are none.',
         type: 'toggle',
         default: true,
       },
@@ -100,12 +104,38 @@ const SECTIONS = [
     ],
   },
   {
+    id: 'passwords',
+    title: 'Passwords',
+    scope: 'profile',
+    // Also lists every saved login and the sites never asked about (see
+    // src/passwords.js), after the settings.
+    list: 'passwords',
+    listWords: 'Saved passwords logins usernames never saved',
+    settings: [
+      {
+        key: 'savePasswords',
+        label: 'Offer to save passwords',
+        description: 'Asks after you sign in to a site, or change its password. Never in a private window.',
+        type: 'toggle',
+        default: true,
+      },
+      {
+        key: 'fillPasswords',
+        label: 'Suggest saved passwords',
+        description: 'Lists a site’s saved logins when you click its login fields. Nothing is filled until you pick one.',
+        type: 'toggle',
+        default: true,
+      },
+    ],
+  },
+  {
     id: 'privacy',
     title: 'Privacy',
     scope: 'profile',
     // Also lists the sites given or refused a permission (see
     // src/permissions.js), after the settings.
     list: 'sitePermissions',
+    listWords: 'Site permissions camera microphone location notifications clipboard allow block',
     settings: [
       {
         key: 'saveHistory',
@@ -122,6 +152,13 @@ const SECTIONS = [
         default: true,
       },
       {
+        key: 'screenSharing',
+        label: 'Let sites ask to share your screen',
+        description: 'You choose the tab, window or screen each time. When off, sites are refused.',
+        type: 'toggle',
+        default: true,
+      },
+      {
         key: 'doNotTrack',
         label: 'Ask sites not to track me',
         description: 'Sends Do Not Track and Global Privacy Control with every request.',
@@ -131,10 +168,28 @@ const SECTIONS = [
     ],
   },
   {
+    id: 'defaultBrowser',
+    title: 'Default Browser',
+    // Also makes Lit the Mac's default browser, after the settings.
+    list: 'defaultBrowser',
+    listWords: 'Default browser make default',
+    settings: [
+      {
+        key: 'externalLinks',
+        label: 'Open links from other apps in',
+        description: 'Never in a private window.',
+        type: 'choice',
+        options: [{ value: 'tab', label: 'New tab' }, { value: 'window', label: 'New window' }],
+        default: 'tab',
+      },
+    ],
+  },
+  {
     id: 'quickSearch',
     title: 'Quick Search',
     // Also lists every site and its shortcuts, after the settings.
     list: 'quickSearchSites',
+    listWords: 'Search sites shortcuts',
     settings: [
       {
         key: 'quickSearch',
@@ -172,6 +227,13 @@ const SECTIONS = [
         default: false,
       },
       {
+        key: 'tabAudio',
+        label: 'Show sound on tabs',
+        description: 'A speaker on tabs that are playing sound or muted; click it to mute or unmute the tab.',
+        type: 'toggle',
+        default: true,
+      },
+      {
         key: 'closeWindowWithLastTab',
         label: 'Close window with its last tab',
         description: 'Otherwise closing the last tab leaves a new one.',
@@ -200,42 +262,54 @@ const SECTIONS = [
     title: 'Profiles',
     // Only the profiles themselves (src/profiles.js), to manage.
     list: 'profiles',
+    listWords: 'Manage profiles name color new delete',
     settings: [],
   },
   {
     id: 'shortcuts',
     title: 'Keyboard Shortcuts',
     settings: [
-      shortcut('newTab', 'New Tab', 'CmdOrCtrl+T'),
-      shortcut('newWindow', 'New Window', 'CmdOrCtrl+N'),
-      shortcut('newPrivateWindow', 'New Private Window', 'Shift+CmdOrCtrl+N'),
-      shortcut('reopenTab', 'Reopen Closed Tab', 'Shift+CmdOrCtrl+T'),
-      shortcut('history', 'Show History', 'CmdOrCtrl+Y'),
-      shortcut('downloads', 'Show Downloads', 'Alt+CmdOrCtrl+L'),
-      shortcut('openLocation', 'Open Location', 'CmdOrCtrl+L'),
-      shortcut('closeTab', 'Close Tab', 'CmdOrCtrl+W'),
-      shortcut('closeWindow', 'Close Window', 'Shift+CmdOrCtrl+W'),
-      shortcut('duplicateTab', 'Duplicate Tab', ''),
-      shortcut('closeOtherTabs', 'Close Other Tabs', 'Alt+CmdOrCtrl+W'),
-      shortcut('closeTabsToRight', 'Close Tabs to the Right', ''),
-      shortcut('bookmarkPage', 'Bookmark This Page', 'CmdOrCtrl+D'),
-      shortcut('bookmarkBar', 'Show Bookmark Bar', 'Shift+CmdOrCtrl+B'),
-      shortcut('print', 'Print', 'CmdOrCtrl+P'),
-      shortcut('reload', 'Reload', 'CmdOrCtrl+R'),
-      shortcut('back', 'Back', 'CmdOrCtrl+['),
-      shortcut('forward', 'Forward', 'CmdOrCtrl+]'),
-      shortcut('zoomIn', 'Zoom In', 'CmdOrCtrl+='),
-      shortcut('zoomOut', 'Zoom Out', 'CmdOrCtrl+-'),
-      shortcut('resetZoom', 'Reset Zoom', 'CmdOrCtrl+0'),
-      shortcut('find', 'Find', 'CmdOrCtrl+F'),
-      shortcut('findNext', 'Find Next', 'CmdOrCtrl+G'),
-      shortcut('findPrevious', 'Find Previous', 'Shift+CmdOrCtrl+G'),
-      shortcut('nextTab', 'Show Next Tab', 'Ctrl+Tab'),
-      shortcut('previousTab', 'Show Previous Tab', 'Ctrl+Shift+Tab'),
-      shortcut('devTools', 'Developer Tools', 'Alt+CmdOrCtrl+I'),
-      shortcut('newProfile', 'New Profile', ''),
-      shortcut('profiles', 'Manage Profiles', 'Shift+CmdOrCtrl+M'),
-      shortcut('settings', 'Settings', 'CmdOrCtrl+,'),
+      ...group('Tabs and windows', [
+        shortcut('newTab', 'New Tab', 'CmdOrCtrl+T'),
+        shortcut('newWindow', 'New Window', 'CmdOrCtrl+N'),
+        shortcut('newPrivateWindow', 'New Private Window', 'Shift+CmdOrCtrl+N'),
+        shortcut('reopenTab', 'Reopen Closed Tab', 'Shift+CmdOrCtrl+T'),
+        shortcut('closeTab', 'Close Tab', 'CmdOrCtrl+W'),
+        shortcut('closeWindow', 'Close Window', 'Shift+CmdOrCtrl+W'),
+        shortcut('duplicateTab', 'Duplicate Tab', ''),
+        shortcut('muteTab', 'Mute or Unmute Tab', ''),
+        shortcut('closeOtherTabs', 'Close Other Tabs', 'Alt+CmdOrCtrl+W'),
+        shortcut('closeTabsToRight', 'Close Tabs to the Right', ''),
+        shortcut('nextTab', 'Show Next Tab', 'Ctrl+Tab'),
+        shortcut('previousTab', 'Show Previous Tab', 'Ctrl+Shift+Tab'),
+      ]),
+      ...group('Page', [
+        shortcut('openLocation', 'Open Location', 'CmdOrCtrl+L'),
+        shortcut('reload', 'Reload', 'CmdOrCtrl+R'),
+        shortcut('back', 'Back', 'CmdOrCtrl+['),
+        shortcut('forward', 'Forward', 'CmdOrCtrl+]'),
+        shortcut('print', 'Print', 'CmdOrCtrl+P'),
+        shortcut('zoomIn', 'Zoom In', 'CmdOrCtrl+='),
+        shortcut('zoomOut', 'Zoom Out', 'CmdOrCtrl+-'),
+        shortcut('resetZoom', 'Reset Zoom', 'CmdOrCtrl+0'),
+        shortcut('devTools', 'Developer Tools', 'Alt+CmdOrCtrl+I'),
+      ]),
+      ...group('Find', [
+        shortcut('find', 'Find', 'CmdOrCtrl+F'),
+        shortcut('findNext', 'Find Next', 'CmdOrCtrl+G'),
+        shortcut('findPrevious', 'Find Previous', 'Shift+CmdOrCtrl+G'),
+      ]),
+      ...group('Bookmarks, history and downloads', [
+        shortcut('bookmarkPage', 'Bookmark This Page', 'CmdOrCtrl+D'),
+        shortcut('bookmarkBar', 'Show Bookmark Bar', 'Shift+CmdOrCtrl+B'),
+        shortcut('history', 'Show History', 'CmdOrCtrl+Y'),
+        shortcut('downloads', 'Show Downloads', 'Alt+CmdOrCtrl+L'),
+      ]),
+      ...group('Lit', [
+        shortcut('settings', 'Settings', 'CmdOrCtrl+,'),
+        shortcut('profiles', 'Manage Profiles', 'Shift+CmdOrCtrl+M'),
+        shortcut('newProfile', 'New Profile', ''),
+      ]),
     ],
   },
 ]

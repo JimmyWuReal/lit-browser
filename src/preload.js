@@ -1,6 +1,6 @@
 // The only bridge between Lit's own pages (the toolbar, the address bar's
 // suggestions, and the Settings, History and Downloads popups) and the
-// main process.
+// main process. Web pages get src/page.js instead.
 const { contextBridge, ipcRenderer } = require('electron')
 
 const on = (channel, callback) => ipcRenderer.on(channel, (_event, value) => callback(value))
@@ -11,17 +11,40 @@ contextBridge.exposeInMainWorld('lit', {
   // `focus: false` keeps keyboard focus in the toolbar.
   closeTab: (id, focus = true) => ipcRenderer.send('close-tab', id, focus),
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
-  // { activeId, navigationButtons, tabs: [{ id, title, url, address, canGoBack,
-  // canGoForward, favicon, loading, started, find, zoom, prompt }] },
-  // `navigationButtons` being whether they show, `address` the url's parts to
-  // draw (addressParts in src/url.js), `zoom` '125%', or '' at the default
-  // zoom, and `prompt` the tab's permission request, { id, site, kinds, does },
-  // or undefined.
+  // Before another tab, or last (null).
+  moveTab: (id, beforeId) => ipcRenderer.send('move-tab', id, beforeId),
+  // One place left (-1) or right (1), from where it is by then.
+  nudgeTab: (id, direction) => ipcRenderer.send('nudge-tab', id, direction),
+  // Focus to the active tab's page, or what stands in for it.
+  focusActive: () => ipcRenderer.send('focus-active'),
+  // { activeId, navigationButtons, tabs: [{ id, title, url, address, favicon, loading,
+  // started, canGoBack, canGoForward, audio, find, zoom, signIn, prompt, error }] },
+  // `address` being the url's parts to draw (addressParts in src/url.js),
+  // `zoom` '125%', or '' at the default zoom, `signIn` what asks for a
+  // username and password, { id, name, asks, note, main }, `main` when it is
+  // the page itself, and `prompt` the tab's permission request or offer to save
+  // a password, { id, site, kinds, says, allow, block }: what to say after the
+  // site, and the two buttons, { text, label } (block null for none). Both can
+  // be undefined. `audio` is
+  // 'playing', 'muted' or null. `error` is
+  // what to show instead of a page that failed, { title, detail, code,
+  // action }, or null.
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
-  // 'back', 'forward', 'reload' or 'stop', on the tab the toolbar shows.
-  // `focus: false` keeps keyboard focus in the toolbar.
-  navigatePage: (tabId, action, focus = true) => ipcRenderer.send('navigate-page', tabId, action, focus),
+  // The error page's buttons, for the tab it is on.
+  reload: (tabId) => ipcRenderer.send('reload', tabId),
+  goBack: (tabId) => ipcRenderer.send('go-back', tabId),
+  // The toolbar's Back (`delta` -1), Forward (1) and Reload buttons, for the
+  // tab they showed. Back and Forward can open in a new tab instead, or list
+  // where they lead, at { x, y } in the window; Reload can skip the cache.
+  step: (tabId, delta, newTab = false) => ipcRenderer.send('step', tabId, delta, newTab),
+  showStepMenu: (tabId, delta, at) => ipcRenderer.send('step-menu', tabId, delta, at),
+  reloadTab: (tabId, ignoreCache = false) => ipcRenderer.send('reload-tab', tabId, ignoreCache),
+  stop: (tabId) => ipcRenderer.send('stop', tabId),
+  // Main shows an error page and gives it focus; focusPage hands it to the
+  // page once there is one again.
+  onFocusError: (callback) => ipcRenderer.on('focus-error', () => callback()),
+  focusPage: (tabId) => ipcRenderer.send('focus-page', tabId),
   openSettings: () => ipcRenderer.send('open-settings'),
   // The profile button: { name, color, shown }, not shown while there is only
   // one profile. Its menu opens at { x, y }, in the window.
@@ -34,6 +57,10 @@ contextBridge.exposeInMainWorld('lit', {
   // Answers a permission prompt: 'allow', 'block', or null to dismiss it.
   // `kinds` is what the prompt showed, so a stale answer is ignored.
   answerPermission: (tabId, promptId, kinds, choice) => ipcRenderer.send('answer-permission', tabId, promptId, kinds, choice),
+  // Answers a sign-in prompt: { username, password }, or null to cancel.
+  // Main gives the prompt with that id the focus, maybe before it is drawn.
+  answerSignIn: (tabId, promptId, credentials) => ipcRenderer.send('answer-sign-in', tabId, promptId, credentials),
+  onFocusSignIn: (callback) => on('focus-sign-in', callback),
   // Puts the active page back at the default zoom.
   resetZoom: () => ipcRenderer.send('reset-zoom'),
   // Find in page, on the tab the toolbar shows (main ignores a tab that is
@@ -57,6 +84,8 @@ contextBridge.exposeInMainWorld('lit', {
   // suggestions, { id, alias }, to show as the field's chip.
   onQuickSearch: (callback) => on('quick-search', callback),
   onQuickSearchPick: (callback) => on('quick-search-pick', callback),
+  // Mutes or unmutes a tab.
+  toggleMute: (id) => ipcRenderer.send('mute-tab', id),
   // The right-click menu for a tab.
   showTabMenu: (id) => ipcRenderer.send('tab-menu', id),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
@@ -87,14 +116,21 @@ contextBridge.exposeInMainWorld('lit', {
     onChanged: (callback) => on('bookmarks-changed', callback),
   },
   // For the Settings popup only; main ignores these from anywhere else.
-  // State is { sections, values, labels, sitePermissions, quickSearchSites,
-  // profileId, profiles, profileColors, error? } (see settingsState in main),
+  // State is { sections, values, labels, sitePermissions, passwords, quickSearchSites,
+  // profileId, profiles, profileColors, defaultBrowser, error? } (see settingsState in main),
   // for the window's profile, with the `section` to show as it opens, if any.
   settings: {
     get: () => ipcRenderer.invoke('settings-get'),
     set: (key, value) => ipcRenderer.invoke('settings-set', key, value),
     // A site's choice for one kind: 'allow', 'block', or null to forget it.
     setPermission: (site, kind, choice) => ipcRenderer.invoke('permissions-set', site, kind, choice),
+    // Saved passwords. Removing answers with the state; revealing (after
+    // Touch ID, where there is one) with { password } or { error }, and
+    // copying with {} or { error }.
+    removePassword: (id) => ipcRenderer.invoke('passwords-remove', id),
+    askAgain: (site) => ipcRenderer.invoke('passwords-ask-again', site),
+    revealPassword: (id) => ipcRenderer.invoke('passwords-reveal', id),
+    copyPassword: (id) => ipcRenderer.invoke('passwords-copy', id),
     // Profiles. All but openProfile answer with the new state.
     addProfile: () => ipcRenderer.invoke('profiles-add'),
     // { name? , color? }
@@ -102,6 +138,8 @@ contextBridge.exposeInMainWorld('lit', {
     // Asks first.
     deleteProfile: (id) => ipcRenderer.invoke('profiles-delete', id),
     openProfile: (id) => ipcRenderer.send('profiles-open', id),
+    // Asks macOS to make Lit the default browser; answers with the state.
+    makeDefaultBrowser: () => ipcRenderer.invoke('default-browser-make'),
     close: () => ipcRenderer.send('settings-close'),
     // While on, key presses come back through onShortcutPressed as
     // { accelerator } ('' clears) or { cancel: true }, not to the menu.
@@ -133,6 +171,15 @@ contextBridge.exposeInMainWorld('lit', {
     onSelect: (callback) => on('suggestions-select', callback),
     onHide: (callback) => ipcRenderer.on('suggestions-hide', () => callback()),
   },
+  // For the list of saved logins under a page's login field only: it shows
+  // them (onShow, { logins: [{ id, username }], site, generation }),
+  // highlights the one main selects, and says which was clicked.
+  logins: {
+    pick: (id, generation) => ipcRenderer.send('logins-pick', id, generation),
+    onShow: (callback) => on('logins-show', callback),
+    onSelect: (callback) => on('logins-select', callback),
+    onHide: (callback) => ipcRenderer.on('logins-hide', () => callback()),
+  },
   // For the Downloads popup only. State is { downloads: [{ id, name, state,
   // progress, status }] }, newest first (see row in src/downloads.js).
   downloads: {
@@ -144,5 +191,19 @@ contextBridge.exposeInMainWorld('lit', {
     close: () => ipcRenderer.send('downloads-close'),
     onOpen: (callback) => on('downloads-open', callback),
     onChanged: (callback) => on('downloads-changed', callback),
+  },
+  // For the screen sharing picker only. State is { id, site, audio, allowed,
+  // tabs, windows, screens } (see shareState in main), or null once it is over.
+  // Each call names the request it answers, `shareId`.
+  share: {
+    get: () => ipcRenderer.invoke('share-get'),
+    // `kind` is 'tabs', 'windows' or 'screens'; `audio` adds a tab's sound,
+    // and `page` is the page the tab was shown with.
+    choose: (shareId, kind, id, audio, page) => ipcRenderer.send('share-choose', shareId, kind, id, audio, page),
+    // Opens macOS's Screen Recording permission.
+    allow: (shareId) => ipcRenderer.send('share-allow', shareId),
+    close: (shareId) => ipcRenderer.send('share-close', shareId),
+    onOpen: (callback) => on('share-open', callback),
+    onChanged: (callback) => on('share-changed', callback),
   },
 })

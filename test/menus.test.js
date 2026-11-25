@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { pageMenu, tabMenu, bookmarkMenu } = require('../src/menus')
+const { pageMenu, tabMenu, navigationMenu, bookmarkMenu } = require('../src/menus')
 
 const labels = (items) => items.map((item) => item.label || '—')
 const commands = (items) => items.filter((item) => item.command).map((item) => item.command)
@@ -107,13 +107,14 @@ test("Lit's own fields get only editing items, and nothing elsewhere", () => {
 
 test('tab menu enables what fits the tab', () => {
   const only = tabMenu({ index: 0, count: 1, started: false })
-  assert.deepEqual(labels(only), ['Reload', 'Duplicate', '—', 'Close Tab', 'Close Other Tabs', 'Close Tabs to the Right'])
+  assert.deepEqual(labels(only), ['Reload', 'Duplicate', 'Mute Tab', '—', 'Close Tab', 'Close Other Tabs', 'Close Tabs to the Right'])
   assert.deepEqual(only.filter((item) => item.enabled === false).map((item) => item.label), ['Reload', 'Close Other Tabs', 'Close Tabs to the Right'])
   const middle = tabMenu({ index: 1, count: 3, started: true })
   assert.ok(middle.every((item) => item.enabled !== false))
   assert.equal(tabMenu({ index: 2, count: 3, started: true }).at(-1).enabled, false)
-  const keys = { reload: 'R', duplicateTab: 'D', closeTab: 'W', closeOtherTabs: 'O', closeTabsToRight: 'T' }
-  assert.deepEqual(tabMenu({ index: 0, count: 1, started: true, keys }).map((item) => item.accelerator), ['R', 'D', undefined, 'W', 'O', 'T'])
+  assert.equal(tabMenu({ index: 0, count: 1, started: true, muted: true })[2].label, 'Unmute Tab')
+  const keys = { reload: 'R', duplicateTab: 'D', muteTab: 'M', closeTab: 'W', closeOtherTabs: 'O', closeTabsToRight: 'T' }
+  assert.deepEqual(tabMenu({ index: 0, count: 1, started: true, keys }).map((item) => item.accelerator), ['R', 'D', 'M', undefined, 'W', 'O', 'T'])
 })
 
 test('a private window offers no Add to Dictionary or Inspect Element', () => {
@@ -131,4 +132,20 @@ test('the bookmark menu fits what was clicked', () => {
   assert.equal(commands({ kind: 'folder', count: 2 }), 'openAll - edit delete - addPage addFolder - hideBar')
   assert.equal(bookmarkMenu({ kind: 'folder' })[0].enabled, false)
   assert.equal(commands(), 'addPage addFolder - hideBar')
+})
+
+test('the back and forward menus list the pages that way, nearest first', () => {
+  const page = (name) => ({ title: name, url: `https://${name}.test/` })
+  const history = { entries: ['a', 'b', 'c', 'd', 'e'].map(page), index: 2 }
+  const items = (direction) => navigationMenu(history, direction).map(({ label, arg }) => [label, arg])
+  assert.deepEqual(items(-1), [['b', 1], ['a', 0]])
+  assert.deepEqual(items(1), [['d', 3], ['e', 4]])
+  assert.deepEqual(navigationMenu({ entries: [], index: -1 }, -1), [])
+  assert.deepEqual(navigationMenu({ entries: [], index: -1 }, 1), [])
+  // A page without a title shows its address; a long title is cut.
+  const named = navigationMenu({ entries: [{ title: '', url: 'https://x.test/' }, { title: `${'long '.repeat(40)}`, url: 'https://y.test/' }, page('z')], index: 2 }, -1)
+  assert.equal(named[0].label.length <= 60 && named[0].label.endsWith('…'), true)
+  assert.equal(named[1].label, 'https://x.test/')
+  const many = { entries: Array.from({ length: 40 }, (_, i) => page(`p${i}`)), index: 39 }
+  assert.deepEqual([navigationMenu(many, -1).length, navigationMenu(many, -1)[0].arg], [15, 38])
 })

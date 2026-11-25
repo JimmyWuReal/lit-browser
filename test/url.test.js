@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { toUrl, searchUrl, addressParts } = require('../src/url')
+const { toUrl, webAddress, searchUrl, addressParts } = require('../src/url')
 
 test('keeps full URLs', () => {
   assert.equal(toUrl(' https://example.com/a '), 'https://example.com/a')
@@ -15,6 +15,11 @@ test('adds a scheme to domains and local addresses', () => {
 
 test('searches everything else', () => {
   assert.equal(toUrl('lit browser'), 'https://www.google.com/search?q=lit%20browser')
+})
+
+test('searches what only looks like an address', () => {
+  assert.equal(toUrl('http://'), 'https://www.google.com/search?q=http%3A%2F%2F')
+  assert.equal(toUrl('example.com:99999'), 'https://www.google.com/search?q=example.com%3A99999')
 })
 
 test('searches with the chosen engine, falling back to Google', () => {
@@ -51,4 +56,17 @@ test('addressParts leaves other addresses as they are', () => {
   for (const url of ['', 'about:blank', 'file:///Users/me/page.html', 'data:text/html,hi', 'https://bank.com@evil.com/', 'https://']) {
     assert.equal(addressParts(url), null, url)
   }
+})
+
+test('toUrl never gives an address that opens another app', () => {
+  const { opensApp } = require('../src/permissions')
+  for (const input of ['mailto:a@b.com', 'zoommtg://zoom.us/join', 'slack://open', 'tel:123', 'javascript:alert(1)', 'x:a.com', 'itms-apps://apps.apple.com/app']) {
+    assert.equal(opensApp(toUrl(input)), false, input)
+  }
+})
+
+test('only web addresses are taken from other apps', () => {
+  assert.equal(webAddress('https://example.com/a?b=c#d'), 'https://example.com/a?b=c#d')
+  assert.equal(webAddress('HTTP://example.com'), 'HTTP://example.com')
+  for (const url of ['javascript:alert(1)', 'file:///etc/hosts', 'chrome://gpu', 'example.com', 'http://', '']) assert.equal(webAddress(url), null, url)
 })

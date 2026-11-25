@@ -20,6 +20,33 @@ const KINDS = {
 }
 const CHOICES = ['allow', 'block']
 
+// Opening another app is one kind per scheme, "app:mailto", so a site allowed
+// to open Mail still asks before it opens anything else, as in Chrome. The
+// page picks the scheme, so a very long one is no kind, and is refused.
+const APP = /^app:([a-z][a-z0-9+.-]{0,99})$/
+const isApp = (kind) => APP.test(kind)
+const isKind = (kind) => Object.hasOwn(KINDS, kind) || isApp(kind)
+
+// The kind's `label` and `does`, as in KINDS.
+function infoOf(kind) {
+  if (!isApp(kind)) return KINDS[kind]
+  const links = `${kind.match(APP)[1]} links`
+  return { label: links, does: `open ${links} in another app` }
+}
+
+// A site's kinds in the order Settings lists them: KINDS, then apps by name.
+const kindsIn = (saved) => [...Object.keys(KINDS).filter((kind) => Object.hasOwn(saved, kind)), ...Object.keys(saved).filter(isApp).sort()]
+
+// Schemes Chromium handles itself; a link to any other opens another app.
+const OWN_SCHEMES = ['http:', 'https:', 'file:', 'about:', 'data:', 'blob:', 'filesystem:', 'javascript:', 'chrome:', 'chrome-extension:', 'devtools:', 'view-source:']
+function opensApp(url) {
+  try {
+    return !OWN_SCHEMES.includes(new URL(url).protocol)
+  } catch {
+    return false
+  }
+}
+
 // Chromium permission names -> kinds. A camera or microphone request is
 // `media`, with its devices in `mediaTypes`.
 const BY_PERMISSION = {
@@ -37,8 +64,13 @@ const BY_MEDIA = { video: 'camera', audio: 'microphone' }
 // for a permission Lit does not ask about, which keeps Electron's default
 // (allowed): fullscreen, pointer lock, protected video and the like.
 // A `media` request without devices is camera pan, tilt and zoom, which
-// Electron also calls `media`.
-function kindsOf(permission, mediaTypes = []) {
+// Electron also calls `media`. `openExternal` is a link to another app,
+// `externalURL`; one without it (a check) is refused.
+function kindsOf(permission, mediaTypes = [], externalURL = '') {
+  if (permission === 'openExternal') {
+    const kind = `app:${externalURL.slice(0, Math.max(externalURL.indexOf(':'), 0)).toLowerCase()}`
+    return isApp(kind) ? [kind] : []
+  }
   if (permission === 'media') {
     const kinds = [...new Set(mediaTypes.filter((type) => Object.hasOwn(BY_MEDIA, type)).map((type) => BY_MEDIA[type]))]
     return kinds.length ? kinds : ['cameraControls']
@@ -46,6 +78,11 @@ function kindsOf(permission, mediaTypes = []) {
   if (!Object.hasOwn(BY_PERMISSION, permission)) return null
   return BY_PERMISSION[permission] ? [BY_PERMISSION[permission]] : []
 }
+
+// `url` as Electron escapes one before handing it to another app, so a
+// redirect reaches the app as a link does: what no address needs bare (spaces,
+// quotes, brackets) is percent-encoded, and escapes already there are kept.
+const escapeAppURL = (url) => url.replace(/%(?![0-9A-Fa-f]{2})|[^A-Za-z0-9_!#$%&'()*+,\-./:;=?@[\]~]/gu, encodeURIComponent)
 
 // The kinds a check (Notification.permission, navigator.permissions.query)
 // is about, as in kindsOf. A media check names one device, or 'unknown'
@@ -74,7 +111,7 @@ const label = (site) => site.replace(/^https:\/\//, '')
 // "use your camera and microphone", "know your location".
 function describe(kinds) {
   if (kinds.length === 2 && kinds.includes('camera') && kinds.includes('microphone')) return 'use your camera and microphone'
-  return kinds.map((kind) => KINDS[kind].does).join(' and ')
+  return kinds.map((kind) => infoOf(kind).does).join(' and ')
 }
 
 // 'allow' when the site was allowed every kind, 'block' when it was
@@ -125,7 +162,7 @@ function list(sites) {
     .map(([site, saved]) => ({
       site,
       label: label(site),
-      kinds: Object.keys(KINDS).filter((kind) => saved[kind]).map((kind) => ({ kind, label: KINDS[kind].label, choice: saved[kind] })),
+      kinds: kindsIn(saved).map((kind) => ({ kind, label: infoOf(kind).label, choice: saved[kind] })),
     }))
     .sort((a, b) => a.label.localeCompare(b.label))
 }
@@ -144,7 +181,7 @@ function load(file) {
   for (const [site, choices] of Object.entries(saved)) {
     if (originOf(site) !== site || !choices || typeof choices !== 'object') continue
     const kept = {}
-    for (const kind of Object.keys(KINDS)) {
+    for (const kind of kindsIn(choices)) {
       if (CHOICES.includes(choices[kind])) kept[kind] = choices[kind]
     }
     if (Object.keys(kept).length) sites.set(site, kept)
@@ -160,4 +197,4 @@ function save(file, sites) {
   fs.renameSync(temporary, file)
 }
 
-module.exports = { KINDS, CHOICES, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, privateView, list, load, save }
+module.exports = { CHOICES, isKind, isApp, opensApp, escapeAppURL, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, privateView, list, load, save }

@@ -12,6 +12,17 @@ test('sections and settings have unique ids and keys', () => {
   assert.equal(new Set(SETTINGS.map((s) => s.key)).size, SETTINGS.length)
 })
 
+test('each heading in a section covers one run of its settings', () => {
+  for (const { id, settings } of SECTIONS) {
+    const headings = settings.map(({ group }) => group).filter((group, i, all) => group !== all[i - 1])
+    assert.equal(new Set(headings).size, headings.length, id)
+  }
+})
+
+test('each list has words to find it by', () => {
+  for (const { id, list, listWords } of SECTIONS) assert.equal(Boolean(list), Boolean(listWords), id)
+})
+
 test('every default is valid, so clean keeps them all', () => {
   for (const setting of SETTINGS) assert.equal(defaults[setting.key], setting.default, setting.key)
 })

@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src https: http: data:; script-src 'self' 'unsafe-inline'">
   <title>Lit</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400&family=Inter:wght@400;500;600&display=swap">
   <style>
     :root {
       color-scheme: dark;
@@ -34,7 +34,8 @@
       padding: 0 10px 0 80px;
       -webkit-app-region: drag;
     }
-    /* Tabs shrink to their icons, then scroll sideways (without a bar). */
+    /* Tabs shrink to their icons, then scroll sideways (without a bar),
+       fading at an end with more past it (see fadeTabs). */
     .tabs {
       position: relative;
       display: flex;
@@ -43,6 +44,8 @@
       flex: 0 1 auto;
       overflow: auto hidden;
       scrollbar-width: none;
+      scroll-padding-inline: 28px;
+      mask-image: linear-gradient(to right, transparent, #000 var(--fade-left, 0px), #000 calc(100% - var(--fade-right, 0px)), transparent);
     }
 
     /* One thumb slides to the active tab instead of each tab fading its own fill. */
@@ -70,6 +73,7 @@
       min-width: 40px;
       height: 28px;
       container-type: inline-size;
+      transition: opacity 160ms ease-out;
       -webkit-app-region: no-drag;
     }
     .tab-select {
@@ -91,11 +95,27 @@
     }
     .tab:not(.is-active):hover .tab-select { color: #e6e6e6; background: rgba(255, 255, 255, .05); }
     .tab.is-active .tab-select { color: #ededed; }
+    /* A tab being dragged, and the edge of the one it would land at. */
+    .tab.is-dragged { opacity: .4; }
+    .tab::before, .tab::after {
+      content: '';
+      position: absolute;
+      z-index: 2;
+      top: 4px;
+      bottom: 4px;
+      width: 2px;
+      border-radius: 1px;
+      background: #fff;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease-out;
+    }
+    .tab::before { left: 0; }
+    .tab::after { right: 0; }
+    .tab.drop-before::before, .tab.drop-after::after { opacity: 1; }
     .tab-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     /* The title makes room for the close button only while that shows. */
-    .tab.is-active .tab-select,
-    .tab:hover .tab-select,
-    .tab:has(.tab-close:focus-visible) .tab-select { padding-right: 28px; }
+    .tab:where(.is-active, :hover, :has(.tab-close:focus-visible)) .tab-select { padding-right: 28px; }
 
     .tab-icon { width: 14px; height: 14px; flex: 0 0 auto; display: grid; place-items: center; }
     .tab-icon img { width: 14px; height: 14px; border-radius: 3px; }
@@ -145,6 +165,22 @@
     .tab.is-active .tab-close,
     .tab:hover .tab-close,
     .tab-close:focus-visible { opacity: 1; }
+    /* The speaker of a tab that plays sound or is muted, left of its close
+       button. Its waves and its cross trade places as it is muted. */
+    .tab-audio {
+      position: absolute;
+      top: 4px;
+      right: 26px;
+      width: 20px;
+      height: 20px;
+      border-radius: 6px;
+      animation: profile-in 200ms var(--settle);
+    }
+    .tab-audio[hidden] { display: none; }
+    .tab.has-audio .tab-select { padding-right: 50px; }
+    .tab-audio path { transition: opacity 180ms ease-out, transform 240ms var(--settle); transform-origin: 18px 12px; }
+    .tab-audio:not(.is-muted) .cross,
+    .tab-audio.is-muted .wave { opacity: 0; transform: scale(.5); }
     .new-tab,
     .open-downloads,
     .open-profile,
@@ -205,10 +241,18 @@
 
     /* Narrow tabs keep just the icon; the active one keeps its close button. */
     @container (max-width: 72px) {
-      .tab .tab-select { justify-content: center; padding: 0; }
+      .tab .tab-select,
+      .tab.has-audio .tab-select { justify-content: center; padding: 0; }
       .tab-title { display: none; }
       .tab:not(.is-active) .tab-close { display: none; }
       .tab.is-active .tab-icon { display: none; }
+      /* The speaker takes the icon's place, only to look at, so clicking the
+         tab still switches to it. On the active tab it sits by the close button. */
+      .tab.has-audio .tab-icon { display: none; }
+      .tab-audio { left: 50%; right: auto; margin-left: -10px; }
+      .tab:not(.is-active) .tab-audio { pointer-events: none; }
+      .tab.is-active .tab-audio { margin-left: -20px; }
+      .tab.is-active.has-audio .tab-close { margin-left: 10px; }
       .tab.is-active .tab-close { left: 50%; right: auto; transform: translateX(-50%); }
       .tab.is-active .tab-close:active { transform: translateX(-50%) scale(.94); }
     }
@@ -221,18 +265,17 @@
       padding: 0 12px 4px;
     }
 
-    /* Back, Forward and Reload, which is Stop while the page loads. A narrow
-       window gives their room to the find field. */
-    .nav { display: none; flex: 0 0 auto; gap: 2px; margin-right: 8px; }
-    .has-nav .nav { display: flex; }
-    .home .nav { display: none; }
-    .nav .icon-button { width: 30px; height: 30px; border-radius: 8px; }
-    .nav .icon-button:disabled { color: #3d3d3d; box-shadow: none; transform: none; }
-    /* The kit's state swap: the two icons crossfade in one cell. */
-    .nav .icon-button > svg { grid-area: 1 / 1; transition: opacity 200ms ease, transform 240ms var(--settle); }
-    .nav .icon-in, .nav .is-on .icon-out { opacity: 0; transform: scale(.6); }
-    .nav .is-on .icon-in { opacity: 1; transform: none; }
-    @media (max-width: 640px) { .bar:has(.find.is-open) .nav { display: none; } }
+    /* Back, forward and reload, before the address; not on home, where
+       there is no page to move from. */
+    .nav { display: flex; flex: 0 0 auto; gap: 2px; margin: 0 8px 0 -2px; }
+    .nav[hidden], .home .nav { display: none; }
+    .nav .icon-button { width: 28px; height: 28px; border-radius: 8px; }
+    /* Not `disabled`, so a button keeps focus as it runs out of pages. */
+    .nav .icon-button[aria-disabled="true"] { opacity: .35; pointer-events: none; }
+    /* Reload and Stop trade places as the page loads. */
+    .reload svg { grid-area: 1 / 1; transition: opacity 200ms ease, transform 240ms var(--settle); }
+    .reload:not(.is-loading) .icon-stop,
+    .reload.is-loading .icon-reload { opacity: 0; transform: scale(.6); }
 
     .address { position: relative; flex: 1; min-width: 0; margin: 0; }
     .address input {
@@ -419,6 +462,14 @@
       white-space: nowrap;
     }
     .find-count:empty { display: none; }
+    /* In a narrow window, the buttons, the address and find share the row. */
+    @media (max-width: 600px) {
+      .find { flex-basis: 204px; min-width: 204px; }
+      .find-count { padding: 0 2px; font-size: 11px; }
+      body:not(.home) .bar:has(.find.is-open) .address > svg { display: none; }
+      body:not(.home) .bar:has(.find.is-open) .address:not(.has-chip) input { padding-left: 12px; }
+      .bar:has(.find.is-open) .shown { left: 12px; }
+    }
     .find .icon-button { width: 24px; height: 24px; flex: 0 0 auto; border-radius: 6px; }
     .find .icon-button:disabled { opacity: .4; pointer-events: none; }
 
@@ -469,7 +520,6 @@
       transition: opacity 120ms ease-out, transform 160ms var(--settle);
     }
     .drop-mark.is-on { opacity: 1; }
-    .bookmark-hint { align-self: center; padding: 0 4px; overflow: hidden; color: var(--dim); font-size: 12px; letter-spacing: -.01em; white-space: nowrap; text-overflow: ellipsis; }
     .more-bookmarks { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; }
     .more-bookmarks[hidden] { display: none; }
 
@@ -506,11 +556,13 @@
       white-space: nowrap;
     }
     .prompt-text strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; direction: rtl; color: #ededed; font-weight: 500; }
-    .prompt-text span { flex: none; margin-left: .3em; }
+    /* Only an app's link can be named at such length that it would take the
+       site's room too; it is cut, and the row's tooltip has it whole. */
+    .prompt-text span { flex: none; max-width: 70%; margin-left: .3em; overflow: hidden; text-overflow: ellipsis; }
     @media (max-width: 720px) {
       .prompt-text { flex-direction: column; justify-content: center; font-size: 12px; line-height: 15px; }
       .prompt-text strong { align-self: flex-start; max-width: 100%; }
-      .prompt-text span { margin-left: 0; overflow: hidden; text-overflow: ellipsis; }
+      .prompt-text span { max-width: 100%; margin-left: 0; }
     }
     .home .prompt { display: none; }
     /* The kit's buttons, small: outline for Block, solid for Allow. */
@@ -527,11 +579,102 @@
       box-shadow: inset 0 0 0 1px var(--line);
       transition: box-shadow 200ms ease, background-color 200ms ease, transform 140ms var(--settle);
     }
+    .prompt-button[hidden] { display: none; }
     .prompt-button:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
     .prompt-button:active { transform: scale(.97); transition-duration: 55ms; }
     .prompt-button.is-primary { background: #ededed; color: #0a0a0a; box-shadow: none; }
     .prompt-button.is-primary:hover { background: #fff; }
     .prompt .icon-button { width: 26px; height: 26px; flex: 0 0 auto; border-radius: 7px; }
+
+    /* A server or proxy asking for a username and password: a row in the
+       prompt's place. Its height matches SIGN_IN_HEIGHT in main.js, and
+       SIGN_IN_NOTE more with a note. */
+    .sign-in { display: none; height: 88px; padding: 0 12px 8px; }
+    .sign-in.is-open { display: block; }
+    .sign-in.has-note { height: 106px; }
+    .home .sign-in { display: none; }
+    .sign-in-box {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 9px;
+      padding: 0 8px 0 12px;
+      border-radius: 10px;
+      background: #141414;
+      box-shadow: inset 0 0 0 1px var(--line);
+      animation: prompt-in 240ms var(--settle);
+    }
+    .private .sign-in-box { background: #15111f; }
+    .sign-in-about { display: flex; align-items: flex-start; gap: 10px; }
+    .sign-in-about > svg { flex: 0 0 auto; margin-top: 1px; color: var(--dim); }
+    .sign-in-about > div { flex: 1; min-width: 0; }
+    .sign-in .prompt-text { flex-direction: row; justify-content: flex-start; font-size: 12.5px; line-height: 16px; }
+    .sign-in .prompt-text strong { align-self: auto; }
+    .sign-in .prompt-text span { margin-left: .3em; }
+    .sign-in-note { height: 16px; margin-top: 2px; overflow: hidden; color: #f0b866; font-size: 12px; line-height: 16px; letter-spacing: -.01em; white-space: nowrap; text-overflow: ellipsis; }
+    .sign-in-note:empty { display: none; }
+    .sign-in-fields { display: flex; align-items: center; gap: 8px; }
+    .sign-in-fields input {
+      flex: 1;
+      min-width: 0;
+      max-width: 260px;
+      height: 30px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 7px;
+      outline: 0;
+      color: #ededed;
+      background: transparent;
+      box-shadow: inset 0 0 0 1px var(--line);
+      font: inherit;
+      font-size: 13px;
+      letter-spacing: -.01em;
+      transition: box-shadow 200ms ease;
+    }
+    .sign-in-fields input::placeholder { color: var(--dim); }
+    .sign-in-fields input:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .sign-in-fields input:focus { box-shadow: inset 0 0 0 1px var(--line-live); }
+    .sign-in-fields .prompt-button { height: 30px; }
+    .sign-in-fields .prompt-button:first-of-type { margin-left: auto; }
+
+    /* The page shown in place of one that failed or crashed, as the kit's
+       empty state: the rest of the window, under the rows above. */
+    .error { display: none; }
+    .failed { display: flex; flex-direction: column; height: 100vh; }
+    .failed > * { flex-shrink: 0; }
+    .failed .error { flex: 1; min-height: 0; display: flex; overflow: auto; outline: 0; }
+    .error-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      max-width: 100%;
+      margin: auto;
+      padding: 32px 24px;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+    .error h1 { margin: 0; font-size: 16px; font-weight: 500; letter-spacing: -.01em; color: #fff; }
+    .error p { max-width: 44ch; margin: 0; color: #a0a0a0; font-size: 13px; line-height: 1.7; text-wrap: pretty; user-select: text; }
+    .error code { margin-top: 6px; color: var(--dim); font: 400 11px/1.5 'DM Mono', ui-monospace, monospace; user-select: text; }
+    .error-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 16px; }
+    /* The kit's outline button, small. */
+    .outline-button {
+      height: 36px;
+      padding: 0 14px;
+      border: 0;
+      border-radius: 10px;
+      color: #fff;
+      background: transparent;
+      box-shadow: inset 0 0 0 1px var(--line);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -.01em;
+      transition: box-shadow 200ms ease, transform 140ms var(--settle);
+    }
+    .outline-button:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .outline-button:active { transform: scale(.97); transition-duration: 55ms; }
 
     /* A private window (?private in its address, from main) is a shade of
        violet instead of grey, with a Private badge in the strip and a note
@@ -589,7 +732,7 @@
   </style>
 </head>
 <body class="home">
-  <div class="strip">
+  <div class="strip" id="strip">
     <div class="tabs" id="tabs" role="tablist" aria-label="Tabs">
       <span class="tab-thumb" id="thumb" aria-hidden="true"></span>
     </div>
@@ -627,18 +770,18 @@
   <!-- Two separate fields, so Enter in each does its own thing. -->
   <div class="bar">
     <div class="nav" id="nav" role="group" aria-label="Navigation">
-      <button class="icon-button" id="back" type="button" aria-label="Back" title="Back" data-shortcut="shortcuts.back" disabled>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      <button class="icon-button" id="back" type="button" aria-label="Back" title="Back" data-shortcut="shortcuts.back" aria-disabled="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7"></path><path d="M19 12H5"></path></svg>
       </button>
-      <button class="icon-button" id="forward" type="button" aria-label="Forward" title="Forward" data-shortcut="shortcuts.forward" disabled>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 5 7 7-7 7"></path><path d="M5 12h14"></path></svg>
+      <button class="icon-button" id="forward" type="button" aria-label="Forward" title="Forward" data-shortcut="shortcuts.forward" aria-disabled="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
       </button>
-      <button class="icon-button" id="reload" type="button" aria-label="Reload" title="Reload" data-shortcut="shortcuts.reload">
-        <svg class="icon-out" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      <button class="icon-button reload" id="reload" type="button" aria-label="Reload" title="Reload" data-shortcut="shortcuts.reload">
+        <svg class="icon-reload" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
-        <svg class="icon-in" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        <svg class="icon-stop" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
       </button>
     </div>
@@ -686,8 +829,9 @@
     </button>
   </div>
 
-  <!-- Allow and Block are remembered for the site; × only answers this time. -->
-  <div class="prompt" id="prompt" role="region" aria-label="Permission request">
+  <!-- A permission request, or an offer to save a password. Allow and Block
+       (or Save and Never) are remembered for the site; × only answers this time. -->
+  <div class="prompt" id="prompt" role="region" aria-label="Request">
     <div class="prompt-box">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -703,11 +847,54 @@
     </div>
   </div>
 
+  <!-- What is typed is sent to main once and never kept. -->
+  <form class="sign-in" id="sign-in" role="region" aria-label="Sign in" autocomplete="off">
+    <div class="sign-in-box">
+      <div class="sign-in-about">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"></path><path d="m21 2-9.6 9.6"></path><circle cx="7.5" cy="15.5" r="5.5"></circle>
+        </svg>
+        <div aria-live="polite">
+          <div class="prompt-text" id="sign-in-text"></div>
+          <div class="sign-in-note" id="sign-in-note"></div>
+        </div>
+      </div>
+      <div class="sign-in-fields">
+        <input id="sign-in-username" type="text" placeholder="Username" aria-label="Username" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <input id="sign-in-password" type="password" placeholder="Password" aria-label="Password" autocomplete="off">
+        <button class="prompt-button" id="sign-in-cancel" type="button">Cancel</button>
+        <button class="prompt-button is-primary" id="sign-in-submit" type="submit">Sign in</button>
+      </div>
+    </div>
+  </form>
+
+  <!-- The active tab's error page (see errors.js). -->
+  <main class="error" id="error" tabindex="-1" aria-labelledby="error-title" aria-describedby="error-detail">
+    <div class="error-box">
+      <h1 id="error-title"></h1>
+      <p id="error-detail"></p>
+      <code id="error-code"></code>
+      <div class="error-actions">
+        <button class="outline-button" id="error-back" type="button">Go back</button>
+        <button class="outline-button" id="error-retry" type="button"></button>
+      </div>
+    </div>
+  </main>
+
   <template id="tab-template">
     <div class="tab">
       <button class="tab-select" type="button" role="tab">
         <span class="tab-icon"></span>
         <span class="tab-title"></span>
+      </button>
+      <button class="icon-button tab-audio" type="button" title="Mute Tab" hidden>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z"></path>
+          <path class="wave" d="M16 9a5 5 0 0 1 0 6"></path><path class="wave" d="M19.4 18.4a9 9 0 0 0 0-12.8"></path>
+          <path class="cross" d="m22 9-6 6"></path><path class="cross" d="m16 9 6 6"></path>
+        </svg>
       </button>
       <button class="icon-button tab-close" type="button" aria-label="Close tab" title="Close Tab" data-shortcut="shortcuts.closeTab">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"
@@ -775,6 +962,7 @@
     function createTab(id) {
       const root = tabTemplate.content.firstElementChild.cloneNode(true)
       const select = root.querySelector('.tab-select')
+      const audio = root.querySelector('.tab-audio')
       const close = root.querySelector('.tab-close')
       select.addEventListener('click', () => window.lit.activateTab(id))
       close.addEventListener('click', () => window.lit.closeTab(id))
@@ -783,8 +971,31 @@
       // Main shows the tab's menu; preventing the default keeps the
       // toolbar's own text menu from showing too.
       root.addEventListener('contextmenu', (event) => { event.preventDefault(); window.lit.showTabMenu(id) })
+      root.draggable = true
+      root.addEventListener('dragstart', (event) => {
+        draggedTab = id
+        event.dataTransfer.effectAllowed = 'move'
+        // A type of Lit's own, so a page or a field it is dropped on gets nothing.
+        event.dataTransfer.setData('application/x-lit-tab', String(id))
+        root.classList.add('is-dragged')
+      })
+      // The press of a drag takes focus, so it goes back to the toolbar's
+      // control that had it, or else the page (or its search box).
+      root.addEventListener('pointerdown', () => { pressedFrom = document.hasFocus() && performance.now() - focusedAt > 100 ? document.activeElement : null })
+      root.addEventListener('dragend', () => {
+        endTabDrag()
+        if (pressedFrom?.isConnected && pressedFrom !== document.body) pressedFrom.focus({ preventScroll: true })
+        else window.lit.focusActive()
+      })
       labelShortcut(close)
-      const elements = { root, select, close, icon: root.querySelector('.tab-icon'), title: root.querySelector('.tab-title'), iconKey: null }
+      // Like the rest of the strip, a mouse click leaves focus with the page;
+      // Enter and Space keep it here.
+      audio.addEventListener('mousedown', (event) => event.preventDefault())
+      audio.addEventListener('click', (event) => {
+        window.lit.toggleMute(id)
+        if (event.detail) window.lit.focusPage(state.activeId)
+      })
+      const elements = { root, select, audio, close, icon: root.querySelector('.tab-icon'), title: root.querySelector('.tab-title'), iconKey: null }
       tabElements.set(id, elements)
       return elements
     }
@@ -799,6 +1010,7 @@
       } else if (tab.favicon) {
         const img = new Image()
         img.alt = ''
+        img.draggable = false
         img.src = tab.favicon
         // A favicon that fails to load falls back to the globe.
         img.onerror = () => { elements.iconKey = 'globe'; elements.icon.replaceChildren(globeTemplate.content.cloneNode(true)) }
@@ -808,13 +1020,39 @@
       }
     }
 
+    // The tab's speaker, named with its command's shortcut on the active
+    // tab, which is the one the shortcut mutes.
+    function drawAudio({ root, audio }, tab, isActive) {
+      const muted = tab.audio === 'muted'
+      // A focused speaker that goes away leaves focus on its tab.
+      if (!tab.audio && document.activeElement === audio) root.querySelector('.tab-select').focus()
+      audio.hidden = !tab.audio
+      root.classList.toggle('has-audio', Boolean(tab.audio))
+      // Keeps its icon as it was while silent.
+      if (!tab.audio) return
+      audio.classList.toggle('is-muted', muted)
+      const name = muted ? 'Unmute Tab' : 'Mute Tab'
+      const shortcut = isActive && shortcutLabels['shortcuts.muteTab']
+      audio.title = shortcut ? `${name} (${shortcut})` : name
+      audio.setAttribute('aria-label', muted ? 'Unmute tab' : 'Mute tab')
+      audio.tabIndex = isActive ? 0 : -1
+    }
+
     function render(next) {
       const switched = next.activeId !== state.activeId
+      const ids = new Set(next.tabs.map((tab) => tab.id))
+      // The same tabs in another order, so one was moved.
+      const reordered = next.tabs.length === state.tabs.length && state.tabs.every(({ id }) => ids.has(id)) &&
+        state.tabs.some(({ id }, index) => id !== next.tabs[index].id)
+      const lefts = reordered && new Map([...tabElements].map(([id, { root }]) => [id, tabLeft(root)]))
+      const focused = tabList.contains(document.activeElement) ? document.activeElement : null
       state = next
 
-      const ids = new Set(state.tabs.map((tab) => tab.id))
       for (const [id, elements] of tabElements) {
-        if (!ids.has(id)) { elements.root.remove(); tabElements.delete(id) }
+        if (ids.has(id)) continue
+        elements.root.remove()
+        tabElements.delete(id)
+        if (id === draggedTab) endTabDrag()
       }
       state.tabs.forEach((tab, index) => {
         const elements = tabElements.get(tab.id) || createTab(tab.id)
@@ -829,10 +1067,20 @@
         elements.title.textContent = label
         elements.select.title = label
         // Narrow tabs hide their title text, so name the tab directly.
-        elements.select.setAttribute('aria-label', label)
+        elements.select.setAttribute('aria-label', tab.audio ? `${label}, ${tab.audio === 'muted' ? 'muted' : 'playing sound'}` : label)
         drawIcon(elements, tab)
+        drawAudio(elements, tab, isActive)
       })
       placeThumb()
+      fadeTabs()
+      if (reordered) {
+        for (const { glide } of tabElements.values()) glide?.cancel()
+        // A tab put elsewhere in the page loses focus. The focused tab is the
+        // one moved, by keys or a drag, so it stays in view.
+        if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true })
+        focused?.closest('.tab')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        glideTabs(lefts)
+      }
       if (refocusTabs) { refocusTabs = false; tabElements.get(state.activeId)?.select.focus() }
       if (switched) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 
@@ -847,7 +1095,6 @@
       shownUrl = url
       measureChip()
       drawAddress()
-      drawNavigation(tab)
 
       // The zoom button keeps its last text while it fades out.
       const zoom = tab?.started ? tab.zoom : ''
@@ -857,9 +1104,12 @@
         zoomButton.textContent = zoom
         zoomButton.setAttribute('aria-label', `Zoom ${zoom}, reset zoom`)
       }
+      drawNav(tab, switched)
       drawStar()
       drawFind(tab?.find, switched)
       drawPrompt(tab)
+      drawSignIn(tab)
+      drawError(tab)
     }
 
     // The drawn address stands in for the field's text only while that is
@@ -872,39 +1122,82 @@
       for (const part of ['before', 'host', 'after']) document.getElementById(`shown-${part}`).textContent = parts?.[part] ?? ''
     }
 
-    // Back, Forward and Reload, which is Stop while the page loads.
-    const back = document.getElementById('back')
-    const forward = document.getElementById('forward')
-    const reload = document.getElementById('reload')
-    function drawNavigation(tab) {
-      document.body.classList.toggle('has-nav', state.navigationButtons)
-      // A button that turns off hands its focus on, so it isn't lost.
-      for (const [button, on] of [[back, tab?.canGoBack], [forward, tab?.canGoForward]]) {
-        if (!on && button === document.activeElement) reload.focus()
-        button.disabled = !on
-      }
+    // Back, forward and reload, for the active tab.
+    const nav = document.getElementById('nav')
+    const reloadButton = document.getElementById('reload')
+    const stepButtons = [
+      { button: document.getElementById('back'), delta: -1, can: 'canGoBack' },
+      { button: document.getElementById('forward'), delta: 1, can: 'canGoForward' },
+    ]
+    // When Stop last became Reload, as the page finished.
+    let loadedAt = -Infinity
+    function drawNav(tab, switched) {
+      nav.hidden = !state.navigationButtons
+      for (const { button, can } of stepButtons) button.setAttribute('aria-disabled', String(!tab?.[can]))
       const loading = Boolean(tab?.loading)
-      reload.classList.toggle('is-on', loading)
-      reload.dataset.name = loading ? 'Stop' : 'Reload'
-      // Reload's shortcut reloads a loading page too, so Stop has none.
-      reload.dataset.shortcut = loading ? '' : 'shortcuts.reload'
-      reload.setAttribute('aria-label', reload.dataset.name)
-      labelShortcut(reload)
+      if (loading === reloadButton.classList.contains('is-loading')) return
+      if (!loading) loadedAt = switched ? -Infinity : performance.now()
+      reloadButton.classList.toggle('is-loading', loading)
+      // Stop has no shortcut.
+      reloadButton.dataset.shortcut = loading ? '' : 'shortcuts.reload'
+      reloadButton.dataset.name = loading ? 'Stop' : 'Reload'
+      reloadButton.setAttribute('aria-label', reloadButton.dataset.name)
+      labelShortcut(reloadButton)
     }
-    // `detail` is 0 for a press from the keyboard, which keeps focus here.
-    back.addEventListener('click', (event) => window.lit.navigatePage(state.activeId, 'back', event.detail > 0))
-    forward.addEventListener('click', (event) => window.lit.navigatePage(state.activeId, 'forward', event.detail > 0))
-    reload.addEventListener('click', (event) => {
-      const loading = activeTab()?.loading
-      // A double click's second click would stop the reload it started.
-      if (loading && event.detail > 1) return
-      // What was sent isn't coming, so the field goes back to the page it is
-      // on; on none yet, main goes back to the search box, keeping it.
-      if (loading && !editing && currentUrl()) {
-        address.value = currentUrl()
-        drawAddress()
+    // A mouse click leaves focus with the page, as other browsers do; Enter
+    // and Space keep it here.
+    nav.addEventListener('mousedown', (event) => event.preventDefault())
+    const toPage = (event) => { if (event.detail) window.lit.focusActive() }
+
+    for (const { button, delta } of stepButtons) {
+      const isOff = () => button.getAttribute('aria-disabled') === 'true'
+      // ⌘-click or middle click opens a new tab, as for a link.
+      const go = (event) => {
+        if (isOff()) return
+        const newTab = event.metaKey || event.button === 1
+        window.lit.step(state.activeId, delta, newTab)
+        toPage(event)
       }
-      window.lit.navigatePage(state.activeId, loading ? 'stop' : 'reload', event.detail > 0)
+      // A right-click or a long press lists the pages that way, under the
+      // button. The press is then no click.
+      let hold
+      let held = false
+      const list = (tabId) => {
+        const { left, bottom } = button.getBoundingClientRect()
+        if (!isOff()) window.lit.showStepMenu(tabId, delta, { x: left, y: bottom + 4 })
+      }
+      button.addEventListener('pointerdown', (event) => {
+        held = false
+        clearTimeout(hold)
+        // Main ignores a tab no longer the active one.
+        const tabId = state.activeId
+        if (event.button === 0 && !event.ctrlKey) hold = setTimeout(() => { held = true; list(tabId) }, 500)
+      })
+      for (const end of ['pointerup', 'pointerleave', 'pointercancel']) button.addEventListener(end, () => clearTimeout(hold))
+      button.addEventListener('click', (event) => { if (!held || !event.detail) go(event) })
+      button.addEventListener('auxclick', (event) => { if (event.button === 1) go(event) })
+      button.addEventListener('contextmenu', (event) => { event.preventDefault(); clearTimeout(hold); list(state.activeId) })
+    }
+
+    // What the button was as a press began: a click is for that, so one on
+    // Stop as the page finishes doesn't reload it. It counts as Stop until its
+    // icon has changed, sooner than anyone could press it for Reload. Nor does
+    // a double-click's second click stop what the first started.
+    const isStop = () => reloadButton.classList.contains('is-loading')
+    let pressedStop = false
+    reloadButton.addEventListener('pointerdown', () => { pressedStop = isStop() || performance.now() - loadedAt < 200 })
+    reloadButton.addEventListener('click', (event) => {
+      if (event.detail && (pressedStop !== isStop() || event.detail > 1)) return
+      if (isStop()) {
+        window.lit.stop(state.activeId)
+        // The page that stays is the one to name, not what was being opened.
+        closeSuggestions()
+        editing = false
+        setChip(null)
+        address.value = shownUrl
+        drawAddress()
+      } else window.lit.reloadTab(state.activeId, event.shiftKey)
+      toPage(event)
     })
 
     // The bookmark bar ({ visible, items } from main; see src/bookmarks.js).
@@ -920,7 +1213,8 @@
 
     function drawStar() {
       const url = currentUrl()
-      const can = /^(https?|file):/i.test(url)
+      // A page asking to sign in is not there yet.
+      const can = /^(https?|file):/i.test(url) && !activeTab().signIn?.main
       const on = can && bookmarks.items.some((item) => item.url === url || item.items?.some((each) => each.url === url))
       addressForm.classList.toggle('has-star', can)
       star.tabIndex = can ? 0 : -1
@@ -982,17 +1276,14 @@
 
     function drawBookmarks(next) {
       const items = JSON.stringify(next.items)
-      const changed = items !== JSON.stringify(bookmarks.items) || !bookmarkList.querySelector('.bookmark, .bookmark-hint')
+      const changed = items !== JSON.stringify(bookmarks.items)
       bookmarks = next
       bookmarkBar.classList.toggle('is-open', next.visible)
       if (changed) {
         // Redrawn whole; focus stays on the same bookmark.
         const focused = bookmarkButtons.find(({ root }) => root === document.activeElement)?.item.id
         bookmarkButtons = next.items.map((item) => ({ item, root: createBookmark(item) }))
-        const hint = document.createElement('span')
-        hint.className = 'bookmark-hint'
-        hint.textContent = 'Bookmark a page with the star in the address bar to keep it here'
-        bookmarkList.replaceChildren(dropMark, ...(next.items.length ? bookmarkButtons.map(({ root }) => root) : [hint]))
+        bookmarkList.replaceChildren(dropMark, ...bookmarkButtons.map(({ root }) => root))
         bookmarkButtons.find(({ item }) => item.id === focused)?.root.focus()
         endDrag()
       }
@@ -1066,7 +1357,7 @@
       endDrag()
     })
 
-    // The active tab's permission request. The row slides in for each new
+    // The active tab's permission request, or offer to save a password. The row slides in for each new
     // request, and stays put while the same one is redrawn; its text
     // follows what it asks about, which a choice made elsewhere can narrow.
     const promptRow = document.getElementById('prompt')
@@ -1077,7 +1368,7 @@
       const prompt = tab?.started ? tab.prompt : null
       const key = prompt ? `${tab.id}:${prompt.id}` : null
       // Only a change of text touches the live region, so it is read once.
-      if (prompt && promptText.textContent !== `${prompt.site} wants to ${prompt.does}`) {
+      if (prompt && promptText.textContent !== `${prompt.site} ${prompt.says}`) {
         // The name reads left to right inside its right-to-left box.
         const site = document.createElement('strong')
         const name = document.createElement('bdi')
@@ -1085,14 +1376,18 @@
         name.textContent = prompt.site
         site.append(name)
         const does = document.createElement('span')
-        does.textContent = `wants to ${prompt.does}`
+        does.textContent = prompt.says
         // The space is for screen readers; flex layout drops it, and the
         // margin spaces the two on screen.
         promptText.replaceChildren(site, ' ', does)
-        promptRow.title = `${prompt.site} wants to ${prompt.does}`
+        promptRow.title = `${prompt.site} ${prompt.says}`
         // The buttons name the whole site, however short the row.
-        document.getElementById('prompt-allow').setAttribute('aria-label', `Allow ${prompt.site} to ${prompt.does}`)
-        document.getElementById('prompt-block').setAttribute('aria-label', `Block ${prompt.site} from being able to ${prompt.does}`)
+        for (const name of ['allow', 'block']) {
+          const button = document.getElementById(`prompt-${name}`)
+          button.hidden = !prompt[name]
+          button.textContent = prompt[name]?.text ?? ''
+          button.setAttribute('aria-label', prompt[name]?.label ?? '')
+        }
       }
       // A different request, or a change in what it asks about, takes focus
       // off the buttons, so a repeated Enter never answers it unseen.
@@ -1124,6 +1419,112 @@
     document.getElementById('prompt-allow').addEventListener('click', answerPrompt('allow'))
     document.getElementById('prompt-block').addEventListener('click', answerPrompt('block'))
     document.getElementById('prompt-dismiss').addEventListener('click', answerPrompt(null))
+
+    // The active tab's sign-in prompt. Another prompt empties the fields and
+    // takes focus off them, so nothing typed for one is sent to the next.
+    // Answered as the permission prompt is: for the one the click began on.
+    const signInForm = document.getElementById('sign-in')
+    const signInText = document.getElementById('sign-in-text')
+    const signInNote = document.getElementById('sign-in-note')
+    const username = document.getElementById('sign-in-username')
+    const password = document.getElementById('sign-in-password')
+    let shownSignIn = null
+    let signInTab = null
+    let focusSignIn = null
+    function drawSignIn(tab) {
+      const prompt = tab?.started ? tab.signIn : null
+      if (prompt && (signInForm.title !== `${prompt.name} ${prompt.asks}` || signInNote.textContent !== prompt.note)) {
+        const site = document.createElement('strong')
+        const name = document.createElement('bdi')
+        name.dir = 'ltr'
+        name.textContent = prompt.name
+        site.append(name)
+        const asks = document.createElement('span')
+        asks.textContent = prompt.asks
+        signInText.replaceChildren(site, ' ', asks)
+        signInNote.textContent = prompt.note
+        signInForm.title = `${prompt.name} ${prompt.asks}`
+        signInForm.setAttribute('aria-label', `Sign in to ${prompt.name}`)
+      }
+      const id = prompt?.id ?? null
+      if (id !== shownSignIn) {
+        const focused = signInForm.contains(document.activeElement)
+        const sameTab = tab?.id === signInTab
+        shownSignIn = id
+        signInTab = prompt ? tab.id : null
+        username.value = ''
+        password.value = ''
+        if (focused) document.activeElement.blur()
+        signInForm.classList.toggle('is-open', Boolean(prompt))
+        signInForm.classList.toggle('has-note', Boolean(prompt?.note))
+        // The page comes back, unless it was another tab's.
+        if (!prompt && focused && sameTab && document.hasFocus()) window.lit.focusPage(tab.id)
+        if (prompt) {
+          const box = signInForm.firstElementChild
+          box.style.animation = 'none'
+          box.getBoundingClientRect()
+          box.style.animation = ''
+        }
+      }
+      if (prompt && focusSignIn === id) username.focus()
+      focusSignIn = null
+    }
+    window.lit.onFocusSignIn((id) => {
+      if (id === shownSignIn) username.focus()
+      else focusSignIn = id
+    })
+    let signInPressed = null
+    signInForm.addEventListener('pointerdown', () => { signInPressed = shownSignIn })
+    const answerSignIn = (credentials) => (event) => {
+      event.preventDefault()
+      const started = event.detail === 0 ? shownSignIn : signInPressed
+      signInPressed = null
+      if (shownSignIn === null || started !== shownSignIn) return
+      // Enter in the username goes on to the password. Two empty fields are
+      // sent only from the button itself, not by an Enter meant for something
+      // else as the prompt appeared.
+      const byEnter = event.detail === 0 && document.activeElement !== event.currentTarget
+      if (credentials && byEnter && !password.value && document.activeElement === username) return password.focus()
+      if (credentials && byEnter && !username.value && !password.value) return
+      window.lit.answerSignIn(signInTab, shownSignIn, credentials ? { username: username.value, password: password.value } : null)
+    }
+    // Enter in a field clicks the button too.
+    document.getElementById('sign-in-submit').addEventListener('click', answerSignIn(true))
+    document.getElementById('sign-in-cancel').addEventListener('click', answerSignIn(false))
+    signInForm.addEventListener('submit', (event) => event.preventDefault())
+    signInForm.addEventListener('keydown', (event) => {
+      if (event.isComposing || event.keyCode === 229) return
+      if (event.key === 'Escape' && !event.repeat) { event.preventDefault(); answerSignIn(false)(new CustomEvent('cancel', { detail: 0 })) }
+    })
+
+    // The active tab's error page, in place of a page that failed. Main
+    // gives it focus before it is drawn, so that waits for it; a page that
+    // comes back takes the focus the error page had.
+    const errorPage = document.getElementById('error')
+    const errorBack = document.getElementById('error-back')
+    const errorRetry = document.getElementById('error-retry')
+    let errorTab = null
+    let focusError = false
+    function drawError(tab) {
+      const error = tab?.started ? tab.error : null
+      const cameBack = !error && tab && tab.id === errorTab && document.hasFocus() && errorPage.contains(document.activeElement)
+      errorTab = error ? tab.id : null
+      document.body.classList.toggle('failed', Boolean(error))
+      if (cameBack) window.lit.focusPage(tab.id)
+      if (!error) { focusError = false; return }
+      document.getElementById('error-title').textContent = error.title
+      document.getElementById('error-detail').textContent = error.detail
+      document.getElementById('error-code').textContent = error.code
+      errorRetry.textContent = error.action
+      errorBack.hidden = !tab.canGoBack
+      if (focusError) { focusError = false; errorPage.focus() }
+    }
+    window.lit.onFocusError(() => {
+      if (errorTab === null) focusError = true
+      else errorPage.focus()
+    })
+    errorRetry.addEventListener('click', () => window.lit.reload(errorTab))
+    errorBack.addEventListener('click', () => window.lit.goBack(errorTab))
 
     // The find field shows the active tab's find. Its text comes from main
     // only on opening or switching tabs; otherwise the field is the source.
@@ -1165,8 +1566,80 @@
     }
     window.addEventListener('resize', () => placeThumb({ animate: false }))
 
-    // Arrow keys move between tabs like other tab lists; Delete closes one.
-    // Both start from the focused tab, not the last state from the main
+    // Fades the ends of the strip that have more tabs past them.
+    function fadeTabs() {
+      const past = tabList.scrollWidth - tabList.clientWidth - tabList.scrollLeft
+      tabList.style.setProperty('--fade-left', `${Math.min(28, Math.max(0, tabList.scrollLeft))}px`)
+      tabList.style.setProperty('--fade-right', `${Math.min(28, Math.max(0, past))}px`)
+    }
+    tabList.addEventListener('scroll', fadeTabs)
+    new ResizeObserver(fadeTabs).observe(tabList)
+
+    // Where a tab is along the strip's length, wherever its glide has got to.
+    const tabLeft = (root) => root.getBoundingClientRect().left + tabList.scrollLeft
+    // Tabs glide from where they were (`lefts`, by id), along with the thumb.
+    function glideTabs(lefts) {
+      for (const [id, elements] of tabElements) {
+        const from = lefts.get(id) - tabLeft(elements.root)
+        if (!from || matchMedia('(prefers-reduced-motion: reduce)').matches) continue
+        elements.glide = elements.root.animate([{ transform: `translateX(${from}px)` }, { transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.22, 1, .36, 1)' })
+      }
+    }
+
+    // Dragging a tab along the strip moves it there. Near an end, Chromium
+    // scrolls a strip with more past it.
+    const strip = document.getElementById('strip')
+    let draggedTab = null
+    // The tab it would land before at `x`, null for last, or undefined if it
+    // would stay where it is. By where the tabs are laid out, as some may
+    // still be gliding there.
+    function tabDropAt(x) {
+      const ids = state.tabs.map((tab) => tab.id)
+      const along = x - tabList.getBoundingClientRect().left + tabList.scrollLeft
+      const at = ids.findIndex((id) => {
+        const { offsetLeft, offsetWidth } = tabElements.get(id).root
+        return along < offsetLeft + offsetWidth / 2
+      })
+      const to = at === -1 ? ids.length : at
+      const from = ids.indexOf(draggedTab)
+      return to === from || to === from + 1 ? undefined : ids[to] ?? null
+    }
+    function markTabDrop(before) {
+      const last = state.tabs.at(-1)?.id
+      for (const [id, { root }] of tabElements) {
+        root.classList.toggle('drop-before', id === before)
+        root.classList.toggle('drop-after', before === null && id === last)
+      }
+    }
+    // What had focus in the toolbar as a tab was pressed, or null if the page
+    // did. Pressing the toolbar then focuses its window just before.
+    let pressedFrom = null
+    let focusedAt = -Infinity
+    window.addEventListener('focus', () => { focusedAt = performance.now() })
+    function endTabDrag() {
+      tabElements.get(draggedTab)?.root.classList.remove('is-dragged')
+      draggedTab = null
+      markTabDrop(undefined)
+    }
+    strip.addEventListener('dragover', (event) => {
+      if (draggedTab === null) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      markTabDrop(tabDropAt(event.clientX))
+    })
+    strip.addEventListener('dragleave', (event) => { if (!strip.contains(event.relatedTarget)) markTabDrop(undefined) })
+    strip.addEventListener('drop', (event) => {
+      if (draggedTab === null) return
+      event.preventDefault()
+      // Read again, as the strip may have scrolled since.
+      const before = tabDropAt(event.clientX)
+      if (before !== undefined) window.lit.moveTab(draggedTab, before)
+      endTabDrag()
+    })
+
+    // Arrow keys move between tabs like other tab lists, and with ⇧ move the
+    // tab itself; Delete closes one.
+    // All start from the focused tab, not the last state from the main
     // process, so held or quick keys never act on a stale tab.
     let refocusTabs = false
     const focusedTabId = () => {
@@ -1183,6 +1656,9 @@
         // Focus moves to whichever tab takes its place once the list updates.
         refocusTabs = true
         window.lit.closeTab(focusedId, false)
+      } else if (event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        event.preventDefault()
+        window.lit.nudgeTab(focusedId, event.key === 'ArrowLeft' ? -1 : 1)
       } else if (target !== undefined) {
         event.preventDefault()
         const id = ids[(target + ids.length) % ids.length]
@@ -1433,11 +1909,11 @@
     // caret where it landed, which the drawn address may not match, so the
     // click that focused it selects again, unless it dragged a selection.
     // Clicking back into the window focuses the field just before its press.
-    let focusedAt = -Infinity
+    let fieldFocusedAt = -Infinity
     let clickSelects = false
-    address.addEventListener('focus', () => { focusedAt = performance.now(); address.select() })
+    address.addEventListener('focus', () => { fieldFocusedAt = performance.now(); address.select() })
     address.addEventListener('pointerdown', () => {
-      clickSelects = document.activeElement !== address || performance.now() - focusedAt < 100
+      clickSelects = document.activeElement !== address || performance.now() - fieldFocusedAt < 100
     })
     address.addEventListener('click', () => {
       if (clickSelects && address.selectionStart === address.selectionEnd) address.select()

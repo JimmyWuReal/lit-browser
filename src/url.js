@@ -6,13 +6,18 @@ const SEARCH_ENGINES = {
 }
 
 // Turn whatever was typed into a URL: keep full URLs, add https:// to
-// things that look like a domain, and send everything else to search.
+// things that look like a domain, and send everything else to search, such
+// as what only looks like an address (http://, example.com:99999).
 function toUrl(input, engine = 'google') {
-  const text = input.trim()
+  const url = addressOf(input.trim())
+  return url && URL.canParse(url) ? url : searchUrl(input, engine)
+}
+
+function addressOf(text) {
   if (/^(https?|file|about|data|chrome):/i.test(text)) return text
   if (/^(localhost|(\d{1,3}\.){3}\d{1,3})(:\d+)?(\/|$)/i.test(text)) return `http://${text}`
   if (!/\s/.test(text) && /^[^/]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(text)) return `https://${text}`
-  return searchUrl(text, engine)
+  return null
 }
 
 // The engine, falling back to Google for an unknown one.
@@ -23,6 +28,10 @@ const engineOf = (engine) => (Object.hasOwn(SEARCH_ENGINES, engine) ? SEARCH_ENG
 function searchUrl(text, engine = 'google') {
   return `${engineOf(engine).url}${encodeURIComponent(text.trim().toWellFormed())}`
 }
+
+// An address another app asks Lit to open, as it is, or null for one that is
+// not a web address: nothing else (javascript:, chrome:) is let in from outside.
+const webAddress = (url) => (/^https?:/i.test(url) && URL.canParse(url) ? url : null)
 
 // How the address bar draws a page's address while it isn't being edited:
 // { before, host, after }, the host standing out. Without `full`, https:// and
@@ -43,4 +52,4 @@ function addressParts(url, full = false) {
   }
 }
 
-module.exports = { toUrl, searchUrl, engineOf, addressParts, SEARCH_ENGINES }
+module.exports = { toUrl, webAddress, searchUrl, engineOf, addressParts, SEARCH_ENGINES }
