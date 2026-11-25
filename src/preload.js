@@ -91,7 +91,7 @@ contextBridge.exposeInMainWorld('lit', {
   },
   // For the Settings popup only; main ignores these from anywhere else.
   // State is { sections, values, labels, sitePermissions, quickSearchSites,
-  // profileId, profiles, profileColors, error? } (see settingsState in main),
+  // profileId, profiles, profileColors, defaultBrowser, error? } (see settingsState in main),
   // for the window's profile, with the `section` to show as it opens, if any.
   settings: {
     get: () => ipcRenderer.invoke('settings-get'),
@@ -105,6 +105,8 @@ contextBridge.exposeInMainWorld('lit', {
     // Asks first.
     deleteProfile: (id) => ipcRenderer.invoke('profiles-delete', id),
     openProfile: (id) => ipcRenderer.send('profiles-open', id),
+    // Asks macOS to make Lit the default browser; answers with the state.
+    makeDefaultBrowser: () => ipcRenderer.invoke('default-browser-make'),
     close: () => ipcRenderer.send('settings-close'),
     // While on, key presses come back through onShortcutPressed as
     // { accelerator } ('' clears) or { cancel: true }, not to the menu.

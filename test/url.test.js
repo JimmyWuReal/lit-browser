@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { toUrl, searchUrl } = require('../src/url')
+const { toUrl, webAddress, searchUrl } = require('../src/url')
 
 test('keeps full URLs', () => {
   assert.equal(toUrl(' https://example.com/a '), 'https://example.com/a')
@@ -41,4 +41,10 @@ test('toUrl never gives an address that opens another app', () => {
   for (const input of ['mailto:a@b.com', 'zoommtg://zoom.us/join', 'slack://open', 'tel:123', 'javascript:alert(1)', 'x:a.com', 'itms-apps://apps.apple.com/app']) {
     assert.equal(opensApp(toUrl(input)), false, input)
   }
+})
+
+test('only web addresses are taken from other apps', () => {
+  assert.equal(webAddress('https://example.com/a?b=c#d'), 'https://example.com/a?b=c#d')
+  assert.equal(webAddress('HTTP://example.com'), 'HTTP://example.com')
+  for (const url of ['javascript:alert(1)', 'file:///etc/hosts', 'chrome://gpu', 'example.com', 'http://', '']) assert.equal(webAddress(url), null, url)
 })
