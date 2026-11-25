@@ -50,7 +50,9 @@ function start({ ipcRenderer }) {
   // save it once the sign-in seems to have worked: another page comes, or, in
   // a page that stays, its password field goes away for good.
   let watch = null
-  function submitted(fields) {
+  // With `later`, only if the password is still one a moment after: a button
+  // that shows it has made it text by then.
+  function submitted(fields, later = false) {
     const password = passwordOf(passwords(fields))
     if (!password) {
       // The first step of two, whose name the second may not repeat.
@@ -60,7 +62,12 @@ function start({ ipcRenderer }) {
       return
     }
     const name = nameOf(fields, password, visible)
-    ipcRenderer.send('login-submitted', { username: (name?.value || '').trim(), password: password.value, changing: isChange(passwords(fields)) })
+    const login = { username: (name?.value || '').trim(), password: password.value, changing: isChange(passwords(fields)) }
+    if (later) setTimeout(() => { if (password.type === 'password') begin(password, login) }, 50)
+    else begin(password, login)
+  }
+  function begin(password, login) {
+    ipcRenderer.send('login-submitted', login)
     clearInterval(watch)
     let gone = 0
     let left = 60
@@ -84,17 +91,22 @@ function start({ ipcRenderer }) {
   addEventListener('submit', (event) => {
     if (event.isTrusted && event.target instanceof HTMLFormElement) submitted([...event.target.elements].filter((each) => each instanceof HTMLInputElement))
   }, true)
-  // Pages without a form, or with a button that isn't a submit one.
+  // Pages without a form, or that sign in without submitting theirs. A form
+  // Chromium refuses to submit (a field left empty) signs no one in.
+  const allowed = ({ form }) => !form || form.noValidate || form.matches(':valid')
   addEventListener('keydown', (event) => {
     const field = event.composedPath()[0]
-    if (event.isTrusted && event.key === 'Enter' && !event.isComposing && isField(field) && ['password', 'email', 'text'].includes(field.type)) submitted(fieldsWith(field))
+    if (event.isTrusted && event.key === 'Enter' && !event.isComposing && isField(field) && ['password', 'email', 'text'].includes(field.type) && allowed(field)) submitted(fieldsWith(field))
   }, true)
   addEventListener('click', (event) => {
     if (!event.isTrusted) return
     if (event.composedPath().some((each) => each instanceof Element && each.matches('a[href]'))) return abandon()
     const button = event.composedPath().find((each) => each instanceof Element && each.matches('button, input[type=submit], input[type=button], [role=button]'))
-    // Other buttons in a form (showing the password, say) don't sign in.
-    if (button && (button.type === 'submit' || !button.closest('form'))) submitted(fieldsWith(button))
+    if (!button || button.type === 'reset') return
+    const form = button.closest('form')
+    if (button.type === 'submit') {
+      if (allowed(button)) submitted(fieldsWith(button))
+    } else submitted(form ? [...form.elements].filter((each) => each instanceof HTMLInputElement) : fieldsWith(button), true)
   }, true)
 
   // A field saved logins go in, when there is one for `target`:

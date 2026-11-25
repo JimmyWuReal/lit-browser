@@ -1177,7 +1177,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       if (!isSameDocument) tab.startedByFrame = Boolean(initiator?.parent)
       tab.startedByPage = Boolean(initiator)
       // The address bar, Back or a reload is not the sign-in going on.
-      if (!isSameDocument && !initiator) tab.submitted = null
+      if (!isSameDocument && !initiator) tab.submitted = tab.loginName = null
     })
     // Asked about in onAppRedirect, not here; a frame's is refused.
     page.on('will-redirect', (event) => { if (permissions.opensApp(event.url)) event.preventDefault() })
@@ -1670,6 +1670,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function loginSubmitted(tab, site, { username, password, changing }) {
     const { loginName } = tab
     const known = loginName?.site === site && Date.now() - loginName.at < LOGIN_TIME * 5 ? loginName.username : ''
+    tab.loginName = null
     tab.submitted = profile.settings.savePasswords && !isPrivate ? { site, username: username || known, password, changing, at: Date.now(), moved: false } : null
   }
   // A new page came, or an error page, after which nothing is saved.
@@ -2392,7 +2393,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       if (!tab) return
       // Kept for the second step of a sign-in (loginSubmitted).
       if (message === 'name') tab.loginName = isPrivate ? null : { site, username: value.username, at: Date.now() }
-      else if (message === 'abandoned') tab.submitted = null
+      else if (message === 'abandoned') tab.submitted = tab.loginName = null
       else if (message === 'submitted') loginSubmitted(tab, site, value)
       else if (message === 'done') { if (tab.submitted?.site === site && !tab.submitted.moved) offerLogin(tab) }
       else if (message === 'field') showLogins(tab, frame, site, value)
