@@ -58,6 +58,7 @@ let nextTabId = 1
 let nextPromptId = 1
 // Names each page a tab loads, so the sharing picker can tell one from the next.
 let nextPageId = 1
+let nextShareId = 1
 // Names a window for Reopen Closed Tab; a reopened window keeps its key,
 // so tabs closed from it earlier still find their way back to it.
 let nextWindowKey = 1
@@ -344,11 +345,12 @@ const ownFrames = (contents) => contents.mainFrame.framesInSubtree.filter((frame
 // only if the choice was taken; else it is killed, having run nothing since and
 // so having seen nothing. Site isolation keeps a process to one site, so at
 // most that same site's other tabs go with it.
+// A page that can't be held is refused.
 let granting = null
-function grantShare(contents, callback, streams) {
-  const processes = [...new Set(ownFrames(contents).map((frame) => frame.osProcessId))]
-  const signal = (name) => {
-    for (const pid of processes) {
+function grantShare(contents, site, callback, streams) {
+  const held = []
+  const release = (name) => {
+    for (const pid of held) {
       try {
         process.kill(pid, name)
       } catch {
@@ -356,23 +358,34 @@ function grantShare(contents, callback, streams) {
       }
     }
   }
+  try {
+    for (const pid of new Set(ownFrames(contents).map((frame) => frame.osProcessId))) {
+      process.kill(pid, 'SIGSTOP')
+      held.push(pid)
+    }
+  } catch {
+    release('SIGCONT')
+    return callback(false)
+  }
   let taken = false
-  granting = streams
-  signal('SIGSTOP')
+  granting = { contents, site, streams, take: () => { taken = true } }
   try {
     callback(true)
-    taken = !granting
   } finally {
     granting = null
-    signal(taken ? 'SIGCONT' : 'SIGKILL')
+    release(taken ? 'SIGCONT' : 'SIGKILL')
   }
 }
 
-// Captures only what grantShare grants.
-function onDisplayMedia(_request, callback) {
-  const streams = granting
+// Captures only what grantShare is granting, to the page and site it is for.
+// A request from anywhere else leaves the grant alone, and is refused.
+function onDisplayMedia({ frame, securityOrigin }, callback) {
+  const grant = granting
+  const top = grant && !grant.contents.isDestroyed() ? grant.contents.mainFrame : null
+  if (!frame || !top || frame.top?.frameTreeNodeId !== top.frameTreeNodeId || permissions.originOf(securityOrigin) !== grant.site) return callback(null)
   granting = null
-  callback(streams)
+  grant.take()
+  callback(grant.streams)
 }
 
 // Whether macOS lets Lit see windows and screens. Tabs need no permission.
@@ -1578,7 +1591,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // Screen sharing. The tab's request waiting in the picker (src/share.html):
-  // { tab, site, audio, callback, frames, sources, shown }, `audio` being
+  // { id, tab, site, audio, callback, frames, sources, shown }, `audio` being
   // whether it wants sound too, `frames` the frames that may have asked (none
   // if the page did itself), `shown`
   // the tabs last sent to the picker, as text, and `sources` the windows and screens, null until listed. One
@@ -1593,6 +1606,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       return true
     }
     const asked = share = {
+      id: nextShareId++,
       tab, site, callback,
       audio: mediaTypes.includes('audio'),
       frames: isMainFrame ? [] : ownFrames(contents).filter((frame) => frame.url === requestingUrl).map((frame) => frame.frameToken),
@@ -1630,6 +1644,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     popups.share?.webContents.send('share-changed', shareState())
   }
   const shareState = () => share && {
+    id: share.id,
     site: permissions.label(share.site),
     audio: share.audio,
     allowed: share.allowed,
@@ -1643,7 +1658,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // of it is its address, so any with that one that has gone refuses it.
   function chooseShare(kind, id, audio, page) {
     if (!share) return
-    const { tab, callback, sources, audio: wantsAudio, frames } = share
+    const { tab, site, callback, sources, audio: wantsAudio, frames } = share
     const now = new Set(ownFrames(tab.page).map((frame) => frame.frameToken))
     if (!frames.every((token) => now.has(token))) return closePopup()
     let streams = null
@@ -1659,7 +1674,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (!streams) return closePopup()
     share = null
     closePopup()
-    grantShare(tab.page, callback, streams)
+    grantShare(tab.page, site, callback, streams)
   }
 
   function navigate(input) {
@@ -2211,6 +2226,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     shareState,
     shareTabsChanged,
     chooseShare,
+    isSharing: (id) => Boolean(share) && share.id === id,
     shareableTabs: () => tabs.filter((tab) => tab.started && !tab.error && tab.url && !tab.page.isDestroyed()),
     hasTab: (contents) => tabs.some((tab) => tab.page === contents),
     // Whether a frame started the page's current navigation.
@@ -2692,9 +2708,11 @@ ipcMain.on('downloads-clear', fromDownloads((c) => {
 ipcMain.on('downloads-close', fromDownloads((c) => c.closePopup()))
 
 ipcMain.handle('share-get', fromPopup('share', (c) => c.shareState()))
-ipcMain.on('share-choose', fromPopup('share', (c, kind, id, audio, page) => c.chooseShare(kind, id, audio, page)))
-ipcMain.on('share-allow', fromPopup('share', openScreenPermission))
-ipcMain.on('share-close', fromPopup('share', (c) => c.closePopup()))
+// What the picker does counts only for the request it was shown for.
+const fromShare = (handler) => fromPopup('share', (c, shareId, ...args) => { if (c.isSharing(shareId)) handler(c, ...args) })
+ipcMain.on('share-choose', fromShare((c, kind, id, audio, page) => c.chooseShare(kind, id, audio, page)))
+ipcMain.on('share-allow', fromShare(openScreenPermission))
+ipcMain.on('share-close', fromShare((c) => c.closePopup()))
 
 app.whenReady().then(async () => {
   const root = app.getPath('userData')

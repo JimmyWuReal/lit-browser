@@ -238,7 +238,7 @@
       if (kind !== 'tabs' && !state.allowed) {
         const button = el('button', 'outline-button', 'Open System Settings')
         button.type = 'button'
-        button.addEventListener('click', () => share.allow())
+        button.addEventListener('click', () => share.allow(state.id))
         content = empty('Lit can’t see your screen yet', 'Turn on Lit under Screen & System Audio Recording in System Settings, then reopen Lit. Tabs can be shared without it.', button)
       } else if (!rows) content = empty('Looking for what you can share…')
       else if (!rows.length) content = kind === 'tabs' ? empty('No other tabs', 'Open the page you want to share in another tab.') : empty(kind === 'windows' ? 'No windows found' : 'No screens found')
@@ -281,15 +281,15 @@
     }
 
     function submit() {
-      if (chosen !== null) share.choose(kind, chosen.id, !$('audio-row').hidden && $('audio').checked, chosen.page)
+      if (chosen !== null) share.choose(state.id, kind, chosen.id, !$('audio-row').hidden && $('audio').checked, chosen.page)
     }
 
     for (const input of kinds) input.addEventListener('change', () => show(input.value))
     $('panel').addEventListener('submit', (event) => { event.preventDefault(); submit() })
-    $('cancel').addEventListener('click', () => share.close())
-    $('backdrop').addEventListener('mousedown', (event) => { if (event.target === $('backdrop')) share.close() })
+    $('cancel').addEventListener('click', () => share.close(state?.id))
+    $('backdrop').addEventListener('mousedown', (event) => { if (event.target === $('backdrop')) share.close(state?.id) })
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') { event.preventDefault(); share.close() }
+      if (event.key === 'Escape') { event.preventDefault(); share.close(state?.id) }
     })
 
     share.onOpen(open)
