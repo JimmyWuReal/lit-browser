@@ -18,7 +18,7 @@ const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const fs = require('node:fs')
 const { quiet } = require('./quiet')
-const { toUrl, webAddress, searchUrl, engineOf } = require('./url')
+const { toUrl, webAddress, searchUrl, engineOf, addressParts } = require('./url')
 const quickSearch = require('./quicksearch')
 const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
@@ -1126,6 +1126,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
         canGoBack: !page.isDestroyed() && page.navigationHistory.canGoBack(),
         canGoForward: !page.isDestroyed() && page.navigationHistory.canGoForward(),
         audio: profile.settings.tabAudio ? audioOf({ page, audible }) : null,
+        address: addressParts(signInPage({ signIns })?.url ?? url, profile.settings.fullAddress),
         // The address asking to sign in, not the page it would replace, so
         // another site's name is never over its prompt.
         ...(signInPage({ signIns }) && { title: '', url: signInPage({ signIns }).url, favicon: null }),
@@ -2483,13 +2484,15 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // losing focus to the click), so the list is kept until it is hidden.
   let suggestionsView = null
   let suggestions = []
+  // What was typed for them, which the list marks in each.
+  let suggestionsText = ''
   let suggestionsOpen = false
   let suggestionsHide = null
   // Counts each list shown; a click names the list it was on, so a click
   // on a list that has since changed opens nothing.
   let suggestionsGeneration = 0
 
-  function showSuggestions(items, { x, y, width }) {
+  function showSuggestions(items, text, { x, y, width }) {
     if (!suggestionsView) {
       suggestionsView = new WebContentsView({ webPreferences: { preload: PRELOAD, session: ses } })
       suggestionsView.setBackgroundColor('#00000000')
@@ -2497,12 +2500,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       windowsByPopup.set(suggestionsView.webContents, { controls, name: 'suggestions' })
       // The first list is sent before the page can hear it; send it again.
       suggestionsView.webContents.on('did-finish-load', () => {
-        if (suggestionsOpen) suggestionsView.webContents.send('suggestions-show', { items: suggestions, generation: suggestionsGeneration })
+        if (suggestionsOpen) suggestionsView.webContents.send('suggestions-show', { items: suggestions, text: suggestionsText, generation: suggestionsGeneration })
       })
       suggestionsView.webContents.loadFile(path.join(__dirname, 'suggestions.html'))
     }
     clearTimeout(suggestionsHide)
     suggestions = items
+    suggestionsText = text
     const { width: windowWidth, height: windowHeight } = win.getContentBounds()
     const left = Math.max(0, Math.min(Math.round(x), windowWidth - 1))
     const top = Math.max(0, Math.round(y))
@@ -2517,7 +2521,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     suggestionsView.setVisible(true)
     suggestionsOpen = true
     suggestionsGeneration++
-    suggestionsView.webContents.send('suggestions-show', { items, generation: suggestionsGeneration })
+    suggestionsView.webContents.send('suggestions-show', { items, text, generation: suggestionsGeneration })
   }
 
   // `blur` is the toolbar closing the list as the address field loses
@@ -2554,7 +2558,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       ? quickSearch.complete(text, profile.settings.quickSearchPrefix).map((site) => ({ kind: 'site', ...site, shortcut: profile.settings.quickSearchPrefix + site.alias }))
       : []
     const items = sites.length ? sites : ok && profile.settings.addressSuggestions ? historyStore.suggestWithBookmarks(bookmarkStore.pages(profile.bookmarks), isPrivate ? [] : profile.visited, text) : []
-    if (items.length) showSuggestions(items, rect)
+    if (items.length) showSuggestions(items, text, rect)
     else hideSuggestions()
     return items
   }

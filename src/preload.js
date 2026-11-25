@@ -17,9 +17,10 @@ contextBridge.exposeInMainWorld('lit', {
   nudgeTab: (id, direction) => ipcRenderer.send('nudge-tab', id, direction),
   // Focus to the active tab's page, or what stands in for it.
   focusActive: () => ipcRenderer.send('focus-active'),
-  // { activeId, navigationButtons, tabs: [{ id, title, url, favicon, loading,
+  // { activeId, navigationButtons, tabs: [{ id, title, url, address, favicon, loading,
   // started, canGoBack, canGoForward, audio, find, zoom, signIn, prompt, error }] },
-  // `zoom` being '125%', or '' at the default zoom, `signIn` what asks for a
+  // `address` being the url's parts to draw (addressParts in src/url.js),
+  // `zoom` '125%', or '' at the default zoom, `signIn` what asks for a
   // username and password, { id, name, asks, note, main }, `main` when it is
   // the page itself, and `prompt` the tab's permission request or offer to save
   // a password, { id, site, kinds, says, allow, block }: what to say after the
@@ -162,7 +163,7 @@ contextBridge.exposeInMainWorld('lit', {
     onChanged: (callback) => on('history-changed', callback),
   },
   // For the address bar's suggestions list only: it shows the items
-  // (onShow, { items, generation }, as `suggest` answers them), highlights the one
+  // (onShow, { items, text, generation }, as `suggest` answers them for `text`), highlights the one
   // the toolbar selects, and says which one was clicked, on which list.
   suggestions: {
     pick: (index, generation) => ipcRenderer.send('suggestions-pick', index, generation),

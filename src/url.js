@@ -33,4 +33,23 @@ function searchUrl(text, engine = 'google') {
 // not a web address: nothing else (javascript:, chrome:) is let in from outside.
 const webAddress = (url) => (/^https?:/i.test(url) && URL.canParse(url) ? url : null)
 
-module.exports = { toUrl, webAddress, searchUrl, engineOf, SEARCH_ENGINES }
+// How the address bar draws a page's address while it isn't being edited:
+// { before, host, after }, the host standing out. Without `full`, https:// and
+// a lone slash, which say little, are left out; http:// stays, since it says
+// the page isn't encrypted. Null for an address shown as it is: not a web one,
+// or one with a user name, which could pass for the host.
+function addressParts(url, full = false) {
+  if (!URL.canParse(url)) return null
+  const { href, protocol, username, password, host } = new URL(url)
+  if (!/^https?:$/.test(protocol) || username || password) return null
+  const scheme = `${protocol}//`
+  // Cut from the address itself: a URL's own parts lose a bare ? or #.
+  const after = href.slice(href.indexOf('/', scheme.length))
+  return {
+    before: full || protocol === 'http:' ? scheme : '',
+    host,
+    after: !full && after === '/' ? '' : after,
+  }
+}
+
+module.exports = { toUrl, webAddress, searchUrl, engineOf, addressParts, SEARCH_ENGINES }

@@ -80,6 +80,13 @@ const SECTIONS = [
         type: 'toggle',
         default: true,
       },
+      {
+        key: 'fullAddress',
+        label: 'Show full addresses',
+        description: 'Otherwise https:// only shows while you edit the address.',
+        type: 'toggle',
+        default: false,
+      },
     ],
   },
   {

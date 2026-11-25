@@ -17,7 +17,8 @@
       --line-live: rgba(255, 255, 255, .72);
       --settle: cubic-bezier(.22, 1, .36, 1);
     }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .36) transparent; }
+    ::selection { color: #fff; background: rgba(255, 255, 255, .24); }
     /* The page is a transparent layer over the browser window; only the
        backdrop and the panel draw anything. */
     html, body { height: 100%; margin: 0; background: transparent; overflow: hidden; color: #ededed; }
@@ -38,8 +39,8 @@
     .is-open .backdrop { opacity: 1; animation: popup-fade 160ms ease-out; }
     .panel {
       position: relative;
-      width: min(720px, 100%);
-      height: min(540px, 100%);
+      width: min(780px, 100%);
+      height: min(600px, 100%);
       display: grid;
       grid-template-columns: 188px minmax(0, 1fr);
       border-radius: 16px;
@@ -152,9 +153,22 @@
     .search-field.has-value .search-clear { opacity: 1; visibility: visible; transform: none; transition-delay: 0s; }
     .search-clear:hover { color: #fff; background: rgba(255, 255, 255, .14); }
 
-    .content { min-height: 0; overflow: auto; padding: 20px 24px 28px; }
-    .content h2 { margin: 0 0 22px; font-size: 15px; font-weight: 500; letter-spacing: -.015em; }
-    .rows { display: flex; flex-direction: column; gap: 22px; animation: panel-enter 260ms var(--settle); }
+    /* The section's title stays put, beside the close button, and the rows
+       scroll under it, fading at both ends. */
+    .content { min-height: 0; display: flex; flex-direction: column; }
+    .content h2 { margin: 0; padding: 20px 60px 10px 24px; font-size: 15px; font-weight: 500; letter-spacing: -.015em; }
+    .rows {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      padding: 12px 24px 28px;
+      mask-image: linear-gradient(transparent, #000 12px calc(100% - 20px), transparent);
+      animation: panel-enter 260ms var(--settle);
+    }
+    .rows > * { flex: none; }
     @keyframes panel-enter { from { opacity: 0; transform: translateY(4px); } }
     .shortcuts .rows { gap: 10px; }
     .rows h3 { margin: 14px 0 2px; font-size: 12px; font-weight: 500; letter-spacing: -.01em; color: var(--sub); }
@@ -162,7 +176,12 @@
     /* Search results: the matching settings under their section's title,
        which opens the section. They change as you type, so don't animate in. */
     .results .rows { animation: none; }
-    .result + .result { margin-top: 32px; }
+    /* Each title stays put while its results scroll under it, inside the
+       panel's outline. */
+    .content.results { display: block; overflow: auto; margin: 1px 1px 1px 0; border-radius: 0 15px 15px 0; }
+    .results .result { padding-bottom: 4px; }
+    .results h2 { position: sticky; top: 0; z-index: 1; background: #1c1c1c; }
+    .results .rows { overflow: visible; padding-bottom: 12px; mask-image: none; }
     .results h2 button {
       padding: 0;
       border: 0;
@@ -448,7 +467,8 @@
       .nav { flex-direction: row; align-items: center; overflow: auto hidden; scrollbar-width: none; }
       .nav-group { max-width: 120px; padding: 0 6px; }
       .swatches { padding-left: 34px; }
-      .content { padding: 12px 16px 24px; }
+      .content h2 { padding: 12px 16px 8px; }
+      .rows { padding: 12px 16px 24px; }
       .text input { width: 100%; }
       .control-row .text { flex: 1 1 100%; }
     }
