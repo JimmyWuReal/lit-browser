@@ -33,7 +33,8 @@
       padding: 0 10px 0 80px;
       -webkit-app-region: drag;
     }
-    /* Tabs shrink to their icons, then scroll sideways (without a bar). */
+    /* Tabs shrink to their icons, then scroll sideways (without a bar),
+       fading at an end with more past it (see fadeTabs). */
     .tabs {
       position: relative;
       display: flex;
@@ -42,6 +43,8 @@
       flex: 0 1 auto;
       overflow: auto hidden;
       scrollbar-width: none;
+      scroll-padding-inline: 28px;
+      mask-image: linear-gradient(to right, transparent, #000 var(--fade-left, 0px), #000 calc(100% - var(--fade-right, 0px)), transparent);
     }
 
     /* One thumb slides to the active tab instead of each tab fading its own fill. */
@@ -69,6 +72,7 @@
       min-width: 40px;
       height: 28px;
       container-type: inline-size;
+      transition: opacity 160ms ease-out;
       -webkit-app-region: no-drag;
     }
     .tab-select {
@@ -90,6 +94,24 @@
     }
     .tab:not(.is-active):hover .tab-select { color: #e6e6e6; }
     .tab.is-active .tab-select { color: #ededed; }
+    /* A tab being dragged, and the edge of the one it would land at. */
+    .tab.is-dragged { opacity: .4; }
+    .tab::before, .tab::after {
+      content: '';
+      position: absolute;
+      z-index: 2;
+      top: 4px;
+      bottom: 4px;
+      width: 2px;
+      border-radius: 1px;
+      background: #fff;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease-out;
+    }
+    .tab::before { left: 0; }
+    .tab::after { right: 0; }
+    .tab.drop-before::before, .tab.drop-after::after { opacity: 1; }
     .tab-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
     .tab-icon { width: 14px; height: 14px; flex: 0 0 auto; display: grid; place-items: center; }
@@ -588,7 +610,7 @@
   </style>
 </head>
 <body class="home">
-  <div class="strip">
+  <div class="strip" id="strip">
     <div class="tabs" id="tabs" role="tablist" aria-label="Tabs">
       <span class="tab-thumb" id="thumb" aria-hidden="true"></span>
     </div>
@@ -778,6 +800,15 @@
       // Main shows the tab's menu; preventing the default keeps the
       // toolbar's own text menu from showing too.
       root.addEventListener('contextmenu', (event) => { event.preventDefault(); window.lit.showTabMenu(id) })
+      root.draggable = true
+      root.addEventListener('dragstart', (event) => {
+        draggedTab = id
+        event.dataTransfer.effectAllowed = 'move'
+        // A type of Lit's own, so a page or a field it is dropped on gets nothing.
+        event.dataTransfer.setData('application/x-lit-tab', String(id))
+        root.classList.add('is-dragged')
+      })
+      root.addEventListener('dragend', endTabDrag)
       labelShortcut(close)
       const elements = { root, select, close, icon: root.querySelector('.tab-icon'), title: root.querySelector('.tab-title'), iconKey: null }
       tabElements.set(id, elements)
@@ -805,11 +836,19 @@
 
     function render(next) {
       const switched = next.activeId !== state.activeId
+      const ids = new Set(next.tabs.map((tab) => tab.id))
+      // The same tabs in another order, so one was moved.
+      const reordered = next.tabs.length === state.tabs.length && state.tabs.every(({ id }) => ids.has(id)) &&
+        state.tabs.some(({ id }, index) => id !== next.tabs[index].id)
+      const lefts = reordered && new Map([...tabElements].map(([id, { root }]) => [id, root.offsetLeft]))
+      const focused = tabList.contains(document.activeElement) ? document.activeElement : null
       state = next
 
-      const ids = new Set(state.tabs.map((tab) => tab.id))
       for (const [id, elements] of tabElements) {
-        if (!ids.has(id)) { elements.root.remove(); tabElements.delete(id) }
+        if (ids.has(id)) continue
+        elements.root.remove()
+        tabElements.delete(id)
+        if (id === draggedTab) endTabDrag()
       }
       state.tabs.forEach((tab, index) => {
         const elements = tabElements.get(tab.id) || createTab(tab.id)
@@ -828,8 +867,13 @@
         drawIcon(elements, tab)
       })
       placeThumb()
+      if (reordered) {
+        glideTabs(lefts)
+        // A tab put elsewhere in the page loses focus.
+        if (focused && document.activeElement !== focused) focused.focus()
+      }
       if (refocusTabs) { refocusTabs = false; tabElements.get(state.activeId)?.select.focus() }
-      if (switched) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      if (switched || reordered) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 
       const tab = activeTab()
       document.body.classList.toggle('home', !tab?.started)
@@ -1143,8 +1187,67 @@
     }
     window.addEventListener('resize', () => placeThumb({ animate: false }))
 
-    // Arrow keys move between tabs like other tab lists; Delete closes one.
-    // Both start from the focused tab, not the last state from the main
+    // Fades the ends of the strip that have more tabs past them.
+    function fadeTabs() {
+      const past = tabList.scrollWidth - tabList.clientWidth - tabList.scrollLeft
+      tabList.style.setProperty('--fade-left', `${Math.min(28, Math.max(0, tabList.scrollLeft))}px`)
+      tabList.style.setProperty('--fade-right', `${Math.min(28, Math.max(0, past))}px`)
+    }
+    tabList.addEventListener('scroll', fadeTabs)
+    new ResizeObserver(fadeTabs).observe(tabList)
+
+    // Tabs glide from where they were (`lefts`, by id), along with the thumb.
+    function glideTabs(lefts) {
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      for (const [id, { root }] of tabElements) {
+        const from = lefts.get(id) - root.offsetLeft
+        if (from) root.animate([{ transform: `translateX(${from}px)` }, { transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.22, 1, .36, 1)' })
+      }
+    }
+
+    // Dragging a tab along the strip moves it there.
+    const strip = document.getElementById('strip')
+    let draggedTab = null
+    // The tab it would land before, null for last, or undefined if it
+    // would stay where it is.
+    let dropBefore
+    function setTabDrop(before) {
+      dropBefore = before
+      const last = state.tabs.at(-1)?.id
+      for (const [id, { root }] of tabElements) {
+        root.classList.toggle('drop-before', id === before)
+        root.classList.toggle('drop-after', before === null && id === last)
+      }
+    }
+    function endTabDrag() {
+      tabElements.get(draggedTab)?.root.classList.remove('is-dragged')
+      draggedTab = null
+      setTabDrop(undefined)
+    }
+    strip.addEventListener('dragover', (event) => {
+      if (draggedTab === null) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      const ids = state.tabs.map((tab) => tab.id)
+      const at = ids.findIndex((id) => {
+        const box = tabElements.get(id).root.getBoundingClientRect()
+        return event.clientX < box.left + box.width / 2
+      })
+      const to = at === -1 ? ids.length : at
+      const from = ids.indexOf(draggedTab)
+      setTabDrop(to === from || to === from + 1 ? undefined : ids[to] ?? null)
+    })
+    strip.addEventListener('dragleave', (event) => { if (!strip.contains(event.relatedTarget)) setTabDrop(undefined) })
+    strip.addEventListener('drop', (event) => {
+      if (draggedTab === null) return
+      event.preventDefault()
+      if (dropBefore !== undefined) window.lit.moveTab(draggedTab, dropBefore)
+      endTabDrag()
+    })
+
+    // Arrow keys move between tabs like other tab lists, and with ⇧ move the
+    // tab itself; Delete closes one.
+    // All start from the focused tab, not the last state from the main
     // process, so held or quick keys never act on a stale tab.
     let refocusTabs = false
     const focusedTabId = () => {
@@ -1161,6 +1264,11 @@
         // Focus moves to whichever tab takes its place once the list updates.
         refocusTabs = true
         window.lit.closeTab(focusedId, false)
+      } else if (event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        event.preventDefault()
+        if (event.key === 'ArrowLeft' ? index > 0 : index < ids.length - 1) {
+          window.lit.moveTab(focusedId, event.key === 'ArrowLeft' ? ids[index - 1] : ids[index + 2] ?? null)
+        }
       } else if (target !== undefined) {
         event.preventDefault()
         const id = ids[(target + ids.length) % ids.length]

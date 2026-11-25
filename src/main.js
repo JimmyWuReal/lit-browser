@@ -16,7 +16,7 @@ const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl, searchUrl, engineOf } = require('./url')
 const quickSearch = require('./quicksearch')
-const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
+const { afterClose, step, byNumber, moved, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const bookmarkStore = require('./bookmarks')
@@ -1385,6 +1385,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     else tab.page.close({ waitForBeforeUnload: true })
   }
 
+  // Before another tab, or last (null).
+  function moveTab(id, beforeId) {
+    const order = moved(ids(), id, beforeId)
+    tabs.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))
+    sync()
+  }
+
   function removeTab(tab) {
     if (!find(tab.id)) return
     dropPrompts(tab)
@@ -2007,6 +2014,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     pages,
     newTab,
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
+    moveTab,
     reopenTab(history, index) {
       closePopup()
       addTab({ history, index: reopenIndex(index, tabs.length) })
@@ -2396,6 +2404,7 @@ const fromToolbar = (handler) => (event, ...args) => {
 ipcMain.on('navigate', fromToolbar((c, input) => typeof input === 'string' && c.navigate(input)))
 ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
 ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
+ipcMain.on('move-tab', fromToolbar((c, id, beforeId) => c.moveTab(id, beforeId)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
 // Find messages name the tab the toolbar showed, so a tab switch the
 // toolbar has not drawn yet never sends them to another tab.

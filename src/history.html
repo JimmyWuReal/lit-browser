@@ -146,9 +146,21 @@
 
     /* Pages, grouped by day. A row opens its page; its remove button shows
        on hover or keyboard focus, and always on touch. */
-    .list { flex: 1; min-height: 0; overflow: auto; padding: 8px 24px 24px; }
-    .day { margin: 18px 0 6px; font-size: 12px; font-weight: 500; color: var(--sub); letter-spacing: -.01em; }
-    .day:first-child { margin-top: 8px; }
+    .list { flex: 1; min-height: 0; overflow: auto; padding: 8px 24px 24px; scroll-padding-top: 36px; }
+    /* The day stays at the top while its pages scroll under it. */
+    .day {
+      position: sticky;
+      top: -8px;
+      z-index: 1;
+      margin: 6px 0 0;
+      padding: 12px 0 6px;
+      background: #1c1c1c;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--sub);
+      letter-spacing: -.01em;
+    }
+    .day:first-child { margin-top: -4px; }
     .rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
     .row { display: flex; align-items: center; gap: 8px; }
     .page {
@@ -178,8 +190,9 @@
       transition: color 200ms ease;
     }
     .page small {
-      flex: 1 1 0;
-      min-width: 0;
+      /* A long title leaves the site enough room to be read. */
+      flex: 1 0 auto;
+      max-width: 40%;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;

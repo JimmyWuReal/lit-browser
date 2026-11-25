@@ -108,6 +108,8 @@
     .rows { display: flex; flex-direction: column; gap: 22px; animation: panel-enter 260ms var(--settle); }
     @keyframes panel-enter { from { opacity: 0; transform: translateY(4px); } }
     .shortcuts .rows { gap: 10px; }
+    .rows h3 { margin: 14px 0 2px; font-size: 12px; font-weight: 500; letter-spacing: -.01em; color: var(--sub); }
+    .rows h3:first-child { margin-top: 0; }
     /* A new section's controls mount at rest, not easing into their values. */
     .is-mounting * { transition: none !important; }
 
@@ -874,7 +876,7 @@
       text.append(error)
       const control = controls[setting.type](setting)
       element.append(text, control.element)
-      return { key: setting.key, error, draw: control.draw, stop: control.stop, element }
+      return { key: setting.key, group: setting.group, error, draw: control.draw, stop: control.stop, element }
     }
 
     // A new panel each time, so it plays the kit's panel keyframe.
@@ -895,7 +897,10 @@
       rows = section.settings.map(row)
       if (section.list) rows.push(lists[section.list]())
       const list = el('div', 'rows')
-      list.append(...rows.map((item) => item.element))
+      rows.forEach((item, i) => {
+        if (item.group && item.group !== rows[i - 1]?.group) list.append(el('h3', '', item.group))
+        list.append(item.element)
+      })
       content.className = `content ${id} is-mounting`
       content.replaceChildren(el('h2', '', section.title), list)
       redraw()

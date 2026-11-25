@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('../src/tabs')
+const { afterClose, step, byNumber, moved, remember, keepNewest, reopenIndex, onScreen } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -25,6 +25,19 @@ test('numbers pick tabs and 9 picks the last', () => {
   assert.equal(byNumber([1, 2, 3], 2), 2)
   assert.equal(byNumber([1, 2, 3], 5), null)
   assert.equal(byNumber([1, 2, 3], 9), 3)
+})
+
+test('a tab moves before another, or last', () => {
+  assert.deepEqual(moved([1, 2, 3], 3, 1), [3, 1, 2])
+  assert.deepEqual(moved([1, 2, 3], 1, 3), [2, 1, 3])
+  assert.deepEqual(moved([1, 2, 3], 1, null), [2, 3, 1])
+})
+
+test('a move that goes nowhere, or of a tab that is gone, changes nothing', () => {
+  assert.deepEqual(moved([1, 2, 3], 2, 2), [1, 2, 3])
+  assert.deepEqual(moved([1, 2, 3], 2, 3), [1, 2, 3])
+  assert.deepEqual(moved([1, 2, 3], 9, 1), [1, 2, 3])
+  assert.deepEqual(moved([1, 2, 3], 1, 9), [1, 2, 3])
 })
 
 test('remember keeps the newest closed entries last, up to the limit', () => {
