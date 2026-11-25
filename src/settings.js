@@ -9,8 +9,13 @@ const zoom = require('./zoom')
 const shortcuts = require('./shortcuts')
 const quickSearch = require('./quicksearch')
 
+// A section is either for one profile (`scope: 'profile'`: each profile has
+// its own values, and the popup says whose) or shared by every profile. The
+// section a setting is in therefore decides which it is; what belongs to a
+// person or their accounts goes in a profile's, how Lit itself works (tabs,
+// shortcuts) in a shared one. The profile ones come first.
 // A section can also name a `list` the popup draws after its settings, from
-// state main sends with them (sitePermissions and quickSearchSites).
+// state main sends with them (sitePermissions, quickSearchSites, profiles).
 // Each setting: { key, label, description?, type, default, ...type fields }.
 // Types the popup can draw:
 //   choice    `options` is [{ value, label }]; a segmented control.
@@ -24,6 +29,7 @@ const SECTIONS = [
   {
     id: 'general',
     title: 'General',
+    scope: 'profile',
     settings: [
       {
         key: 'searchEngine',
@@ -32,6 +38,14 @@ const SECTIONS = [
         type: 'choice',
         options: Object.entries(SEARCH_ENGINES).map(([value, { name }]) => ({ value, label: name })),
         default: 'google',
+      },
+      {
+        key: 'newTabPage',
+        label: 'New tabs open',
+        description: 'An address or search. Leave empty for the search box.',
+        type: 'text',
+        placeholder: 'Search box',
+        default: '',
       },
       {
         key: 'defaultZoom',
@@ -54,6 +68,51 @@ const SECTIONS = [
         description: 'A row of your bookmarks below the address bar.',
         type: 'toggle',
         default: true,
+      },
+    ],
+  },
+  {
+    id: 'downloads',
+    title: 'Downloads',
+    scope: 'profile',
+    settings: [
+      {
+        key: 'downloadLocation',
+        label: 'Save downloads',
+        type: 'choice',
+        options: [{ value: 'ask', label: 'Ask each time' }, { value: 'downloads', label: 'To Downloads' }],
+        default: 'ask',
+      },
+    ],
+  },
+  {
+    id: 'privacy',
+    title: 'Privacy',
+    scope: 'profile',
+    // Also lists the sites given or refused a permission (see
+    // src/permissions.js), after the settings.
+    list: 'sitePermissions',
+    settings: [
+      {
+        key: 'saveHistory',
+        label: 'Save history',
+        description: 'Pages you visit, and closed tabs to reopen. When off, neither is kept, and reopened windows keep only each tab’s page, not its back and forward history or what was typed into it.',
+        type: 'toggle',
+        default: true,
+      },
+      {
+        key: 'blockAds',
+        label: 'Block ads and trackers',
+        description: 'Stops requests to ad and tracking servers and hides the space ads leave, using Ghostery’s lists, which download the first time and refresh weekly. Reload open pages to show or hide their ads.',
+        type: 'toggle',
+        default: true,
+      },
+      {
+        key: 'doNotTrack',
+        label: 'Ask sites not to track me',
+        description: 'Sends Do Not Track and Global Privacy Control with every request.',
+        type: 'toggle',
+        default: false,
       },
     ],
   },
@@ -84,14 +143,6 @@ const SECTIONS = [
     id: 'tabs',
     title: 'Tabs',
     settings: [
-      {
-        key: 'newTabPage',
-        label: 'New tabs open',
-        description: 'An address or search. Leave empty for the search box.',
-        type: 'text',
-        placeholder: 'Search box',
-        default: '',
-      },
       {
         key: 'newTabPosition',
         label: 'New tab position',
@@ -131,47 +182,11 @@ const SECTIONS = [
     ],
   },
   {
-    id: 'downloads',
-    title: 'Downloads',
-    settings: [
-      {
-        key: 'downloadLocation',
-        label: 'Save downloads',
-        type: 'choice',
-        options: [{ value: 'ask', label: 'Ask each time' }, { value: 'downloads', label: 'To Downloads' }],
-        default: 'ask',
-      },
-    ],
-  },
-  {
-    id: 'privacy',
-    title: 'Privacy',
-    // Also lists the sites given or refused a permission (see
-    // src/permissions.js), after the settings.
-    list: 'sitePermissions',
-    settings: [
-      {
-        key: 'saveHistory',
-        label: 'Save history',
-        description: 'Pages you visit, and closed tabs to reopen. When off, neither is kept, and reopened windows keep only each tab’s page, not its back and forward history or what was typed into it.',
-        type: 'toggle',
-        default: true,
-      },
-      {
-        key: 'blockAds',
-        label: 'Block ads and trackers',
-        description: 'Stops requests to ad and tracking servers and hides the space ads leave, using Ghostery’s lists, which download the first time and refresh weekly. Reload open pages to show or hide their ads.',
-        type: 'toggle',
-        default: true,
-      },
-      {
-        key: 'doNotTrack',
-        label: 'Ask sites not to track me',
-        description: 'Sends Do Not Track and Global Privacy Control with every request.',
-        type: 'toggle',
-        default: false,
-      },
-    ],
+    id: 'profiles',
+    title: 'Profiles',
+    // Only the profiles themselves (src/profiles.js), to manage.
+    list: 'profiles',
+    settings: [],
   },
   {
     id: 'shortcuts',
@@ -204,12 +219,23 @@ const SECTIONS = [
       shortcut('nextTab', 'Show Next Tab', 'Ctrl+Tab'),
       shortcut('previousTab', 'Show Previous Tab', 'Ctrl+Shift+Tab'),
       shortcut('devTools', 'Developer Tools', 'Alt+CmdOrCtrl+I'),
+      shortcut('newProfile', 'New Profile', ''),
+      shortcut('profiles', 'Manage Profiles', 'Shift+CmdOrCtrl+M'),
       shortcut('settings', 'Settings', 'CmdOrCtrl+,'),
     ],
   },
 ]
 
 const SETTINGS = SECTIONS.flatMap((section) => section.settings)
+const PROFILE_KEYS = new Set(SECTIONS.filter((section) => section.scope === 'profile').flatMap((section) => section.settings.map((setting) => setting.key)))
+// Whether each profile has its own value for a setting.
+const isProfile = (key) => PROFILE_KEYS.has(key)
+
+// A profile's settings: its own values, and `shared`'s for the rest.
+const combine = (own, shared) => Object.fromEntries(SETTINGS.map(({ key }) => [key, (isProfile(key) ? own : shared)[key]]))
+// Only the values a profile has for itself, which its file holds. (The
+// default profile's file holds every setting, so also the shared ones.)
+const ownOf = (values) => Object.fromEntries(Object.entries(values).filter(([key]) => isProfile(key)))
 
 // Why `value` cannot be saved for `setting`, or null if it can.
 // `values` lets a shortcut check it is not taken by another command.
@@ -284,4 +310,4 @@ function save(file, values) {
   fs.renameSync(temporary, file)
 }
 
-module.exports = { SECTIONS, SETTINGS, clean, load, update, save }
+module.exports = { SECTIONS, SETTINGS, isProfile, combine, ownOf, clean, load, update, save }

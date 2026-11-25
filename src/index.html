@@ -142,8 +142,27 @@
     .tab-close:focus-visible { opacity: 1; }
     .new-tab,
     .open-downloads,
+    .open-profile,
     .open-settings { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; }
     .open-downloads { margin-left: auto; }
+
+    /* The window's profile, shown once there is more than one. */
+    .open-profile[hidden] { display: none; }
+    .open-profile { animation: profile-in 200ms var(--settle); }
+    @keyframes profile-in { from { opacity: 0; transform: scale(.8); } }
+    .profile-mark {
+      display: grid;
+      place-items: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--profile, #b4b4b4);
+      color: #0a0a0a;
+      font-size: 10px;
+      font-weight: 500;
+      line-height: 1;
+      transition: background-color 200ms ease;
+    }
 
     /* Downloads: shown once this session has any. While some are on their
        way, a ring around the arrow fills with their progress, or spins
@@ -553,6 +572,9 @@
       </svg>
       <svg class="downloads-arrow" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
+    </button>
+    <button class="icon-button open-profile" id="open-profile" type="button" aria-haspopup="menu" hidden>
+      <span class="profile-mark" id="profile-mark" aria-hidden="true"></span>
     </button>
     <button class="icon-button open-settings" id="open-settings" type="button" aria-label="Settings" title="Settings" data-shortcut="shortcuts.settings">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1067,6 +1089,20 @@
     document.getElementById('new-tab').addEventListener('click', () => window.lit.newTab())
     document.getElementById('open-settings').addEventListener('click', () => window.lit.openSettings())
     downloadsButton.addEventListener('click', () => window.lit.openDownloads())
+
+    // Its menu hangs from the button.
+    const profileButton = document.getElementById('open-profile')
+    profileButton.addEventListener('click', () => {
+      const { left, bottom } = profileButton.getBoundingClientRect()
+      window.lit.openProfileMenu({ x: left, y: bottom + 4 })
+    })
+    window.lit.onProfile(({ name, color, shown }) => {
+      profileButton.hidden = !shown
+      profileButton.title = `Profile: ${name}`
+      profileButton.setAttribute('aria-label', `Profile: ${name}`)
+      profileButton.style.setProperty('--profile', color)
+      document.getElementById('profile-mark').textContent = [...name][0].toUpperCase()
+    })
 
     // The downloads indicator ({ count, active, progress } from main).
     // The ring keeps its last fill while it fades out, and a new batch of

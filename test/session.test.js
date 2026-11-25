@@ -17,6 +17,7 @@ test('a saved session loads back as it was', () => {
       bounds: { x: 10, y: 20, width: 800, height: 600 },
       maximized: false,
       fullScreen: true,
+      profile: 'default',
     },
   ]
   save(file, windows)

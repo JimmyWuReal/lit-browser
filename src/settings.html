@@ -89,6 +89,19 @@
     }
     .nav button:not(.is-active):hover { color: #e6e6e6; }
     .nav button.is-active { color: #ededed; }
+    /* Whose settings the sections after it are: this profile's, or every
+       profile's. Only there while there is more than one. */
+    .nav-group {
+      overflow: hidden;
+      flex: none;
+      padding: 10px 10px 4px;
+      font-size: 11.5px;
+      color: var(--dim);
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .nav-group:first-of-type { padding-top: 0; }
+    .nav-group[hidden] { display: none; }
 
     .content { min-height: 0; overflow: auto; padding: 20px 24px 28px; }
     .content h2 { margin: 0 0 22px; font-size: 15px; font-weight: 500; letter-spacing: -.015em; }
@@ -257,6 +270,63 @@
     }
     .site-kind { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 14px; }
     .site-kind > span { flex: 1; min-width: 0; font-size: 12.5px; color: var(--sub); }
+
+    /* Profiles: one box each, its name and, below it, its color. */
+    .profiles-list { display: flex; flex-direction: column; gap: 14px; }
+    .profiles-list .control-text { flex: none; }
+    .profiles-list > .outline-button { align-self: flex-start; }
+    .profile { display: flex; flex-direction: column; gap: 12px; padding: 12px; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line); }
+    .profile-line { display: flex; align-items: center; gap: 8px; }
+    .profile-mark {
+      display: grid;
+      place-items: center;
+      flex: none;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      color: #0a0a0a;
+      font-size: 12.5px;
+      font-weight: 500;
+      transition: background-color 200ms ease;
+    }
+    .profile-line .text { flex: 1; min-width: 0; }
+    .profile-line .text input { width: 100%; height: 32px; }
+    .profile-here { padding: 0 4px; font-size: 11.5px; color: var(--sub); white-space: nowrap; }
+    .swatches { display: flex; gap: 10px; padding-left: 38px; }
+    .swatch {
+      position: relative;
+      width: 16px;
+      height: 16px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: transform 180ms var(--settle), box-shadow 180ms ease-out;
+    }
+    /* A bigger target than the dot. */
+    .swatch::before { content: ''; position: absolute; inset: -5px; }
+    .swatch:hover { transform: scale(1.1); }
+    .swatch.is-active { box-shadow: 0 0 0 2px #1c1c1c, 0 0 0 3.5px #fff; }
+
+    /* The kit's outline button, small. */
+    .outline-button {
+      height: 32px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 10px;
+      color: #fff;
+      background: transparent;
+      box-shadow: inset 0 0 0 1px var(--line);
+      cursor: pointer;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      white-space: nowrap;
+      transition: box-shadow 200ms ease, transform 140ms var(--settle);
+    }
+    .outline-button:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .outline-button:active { transform: scale(.97); transition-duration: 55ms; }
+
     /* Quick search: every site with its shortcuts, for reference. */
     .quick-sites { display: flex; flex-direction: column; gap: 14px; transition: opacity 200ms ease; }
     .quick-sites.is-off .quick-list { opacity: .45; }
@@ -287,7 +357,9 @@
     @media (max-width: 600px) {
       .panel { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
       .sidebar { padding: 18px 12px 4px; gap: 10px; }
-      .nav { flex-direction: row; overflow: auto hidden; scrollbar-width: none; }
+      .nav { flex-direction: row; align-items: center; overflow: auto hidden; scrollbar-width: none; }
+      .nav-group { max-width: 120px; padding: 0 6px; }
+      .swatches { padding-left: 34px; }
       .content { padding: 12px 16px 24px; }
       .text input { width: 100%; }
       .control-row .text { flex: 1 1 100%; }
@@ -390,10 +462,22 @@
       })
     }
 
+    // The same for the profiles, by what main is asked to do: `ask` answers
+    // with the new state.
+    function saveProfiles(ask) {
+      const id = ++saves
+      return ask.then((next) => {
+        if (id !== saves || !next) return
+        state = next
+        redraw({ profiles: next.error || '' })
+      })
+    }
+
     // Shows the current values; `errors` is { key: message } for rows whose
     // last change was refused.
     const clearErrors = () => rows.forEach((row) => { row.error.textContent = '' })
     function redraw(errors = {}) {
+      drawGroups()
       for (const row of rows) {
         row.draw()
         if (row.key in errors) row.error.textContent = errors[row.key]
@@ -654,6 +738,118 @@
       }
     }
 
+    // Every profile, to rename, recolor, open or delete, and adding one. Rebuilt
+    // only when profiles come or go, so a name being typed stays.
+    lists.profiles = () => {
+      const element = el('div', 'profiles-list')
+      const text = el('div', 'control-text')
+      text.append(el('span', '', 'Each profile has its own sign-ins, history, bookmarks, site permissions and settings for General, Downloads and Privacy. Everything else is shared.'))
+      const error = el('span', 'error')
+      error.setAttribute('role', 'alert')
+      text.append(error)
+      const body = el('div', 'sites')
+      const add = el('button', 'outline-button', 'New profile')
+      add.type = 'button'
+      add.addEventListener('click', () => saveProfiles(settings.addProfile()).then(() => {
+        if (error.textContent) return
+        const input = body.lastElementChild.querySelector('input')
+        input.focus()
+        input.select()
+      }))
+      element.append(text, body, add)
+      let shownIds = null
+      let items = []
+
+      function profileBox(id) {
+        const current = () => state.profiles.find((profile) => profile.id === id)
+        const box = el('div', 'profile')
+        const line = el('div', 'profile-line')
+        const mark = el('span', 'profile-mark')
+        mark.setAttribute('aria-hidden', 'true')
+        const wrap = el('label', 'text')
+        const input = el('input')
+        input.type = 'text'
+        input.spellcheck = false
+        input.maxLength = 40
+        input.setAttribute('aria-label', 'Profile name')
+        input.addEventListener('change', () => saveProfiles(settings.updateProfile(id, { name: input.value })))
+        // Enter saves; a name refused goes back to the one saved.
+        input.addEventListener('keydown', (event) => { if (event.key === 'Enter') input.blur() })
+        wrap.append(input)
+        line.append(mark, wrap)
+        let open = null
+        let remove = null
+        if (id === state.profileId) line.append(el('span', 'profile-here', 'This window'))
+        else {
+          open = el('button', 'outline-button', 'Open')
+          open.type = 'button'
+          open.addEventListener('click', () => settings.openProfile(id))
+          line.append(open)
+        }
+        if (id !== 'default') {
+          remove = el('button', 'icon-button')
+          remove.type = 'button'
+          remove.title = 'Delete'
+          remove.append(document.getElementById('remove-icon').content.cloneNode(true))
+          remove.addEventListener('click', () => saveProfiles(settings.deleteProfile(id)))
+          line.append(remove)
+        }
+        const swatches = el('div', 'swatches')
+        swatches.setAttribute('role', 'radiogroup')
+        const choose = (i) => saveProfiles(settings.updateProfile(id, { color: state.profileColors[i].id }))
+        const buttons = state.profileColors.map(({ label, value }, i) => {
+          const button = el('button', 'swatch')
+          button.type = 'button'
+          button.title = label
+          button.style.background = value
+          button.setAttribute('role', 'radio')
+          button.setAttribute('aria-label', label)
+          button.addEventListener('click', () => choose(i))
+          return button
+        })
+        const index = () => state.profileColors.findIndex((color) => color.id === current().color)
+        arrowKeys(swatches, buttons, index, choose)
+        swatches.append(...buttons)
+        box.append(line, swatches)
+        return {
+          element: box,
+          draw() {
+            const { name } = current()
+            mark.textContent = [...name][0].toUpperCase()
+            mark.style.background = state.profileColors[index()].value
+            if (document.activeElement !== input) input.value = name
+            open?.setAttribute('aria-label', `Open ${name}`)
+            remove?.setAttribute('aria-label', `Delete ${name}`)
+            swatches.setAttribute('aria-label', `Color of ${name}`)
+            buttons.forEach((button, i) => {
+              const on = i === index()
+              button.classList.toggle('is-active', on)
+              button.setAttribute('aria-checked', String(on))
+              button.tabIndex = on ? 0 : -1
+            })
+          },
+        }
+      }
+
+      return {
+        key: 'profiles',
+        error,
+        element,
+        draw() {
+          const ids = state.profiles.map((profile) => profile.id).join()
+          if (ids !== shownIds) {
+            const hadFocus = body.contains(document.activeElement)
+            shownIds = ids
+            items = state.profiles.map((profile) => profileBox(profile.id))
+            body.replaceChildren(...items.map((item) => item.element))
+            // A removed row took focus with it; the panel keeps it instead.
+            if (hadFocus) document.getElementById('panel').focus()
+          }
+          for (const item of items) item.draw()
+        },
+      }
+    }
+
     // The shortcut control waiting for keys, if any.
     let recorder = null
     // The keyboard layout, so main can name keys that ⌥ or ⇧ change.
@@ -693,6 +889,8 @@
         button.tabIndex = on ? 0 : -1
       }
       placeThumb(nav, navThumb, navButtons.get(id), true)
+      // In a narrow window the sections scroll sideways.
+      navButtons.get(id).scrollIntoView({ block: 'nearest', inline: 'nearest' })
       for (const item of rows) item.stop?.()
       rows = section.settings.map(row)
       if (section.list) rows.push(lists[section.list]())
@@ -706,19 +904,30 @@
       content.classList.remove('is-mounting')
     }
 
-    function build() {
+    // The labels over the profile's sections and the shared ones.
+    const groups = { profile: el('span', 'nav-group'), shared: el('span', 'nav-group', 'All profiles') }
+    function drawGroups() {
+      const several = state.profiles.length > 1
+      groups.profile.textContent = state.profiles.find((profile) => profile.id === state.profileId)?.name ?? ''
+      for (const label of Object.values(groups)) label.hidden = !several
+      if (navButtons.size) placeThumb(nav, navThumb, navButtons.get(sectionId), true)
+    }
+
+    function build(id) {
       const ids = state.sections.map((section) => section.id)
       const buttons = state.sections.map((section) => {
         const button = el('button', '', section.title)
         button.type = 'button'
         button.addEventListener('click', () => showSection(section.id))
         navButtons.set(section.id, button)
+        const group = groups[section.scope || 'shared']
+        if (!group.isConnected) nav.append(group)
         nav.append(button)
         return button
       })
       arrowKeys(nav, buttons, () => ids.indexOf(sectionId), (next) => showSection(ids[next]))
       new ResizeObserver(() => placeThumb(nav, navThumb, navButtons.get(sectionId), true)).observe(nav)
-      showSection(ids[0])
+      showSection(id || ids[0])
     }
 
     // Each open replays the popup's keyframes and shows the latest values.
@@ -727,7 +936,8 @@
       readLayout()
       clearErrors()
       state = next
-      if (!sectionId) build()
+      if (!sectionId) build(next.section)
+      else if (next.section && next.section !== sectionId) showSection(next.section)
       else redraw()
       document.body.classList.remove('is-open')
       document.body.getBoundingClientRect()
@@ -743,7 +953,7 @@
     document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !recorder) close() })
 
     settings.onOpen(open)
-    // Another window changed a setting.
+    // Another window changed a setting or a profile.
     settings.onChanged((next) => { state = next; clearErrors(); redraw() })
     settings.get().then(open)
   </script>
