@@ -916,12 +916,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     else tab.page.reload()
   }
 
-  // Loads a failed page again. Chromium reloads nothing when that would
+  // Loads the failed address again. Chromium reloads nothing when that would
   // send a form again, so its address is opened without the form instead.
   function retry(tab) {
-    const url = tab.page.getURL()
-    if (url) tab.page.reload()
-    if (!tab.page.isLoading()) tab.page.loadURL(url || tab.pendingUrl || tab.url).catch(() => {})
+    const url = tab.url || tab.page.getURL() || tab.pendingUrl
+    if (tab.page.getURL() === url) tab.page.reload()
+    if (!tab.page.isLoading()) tab.page.loadURL(url).catch(() => {})
   }
 
   function activate(id, focus = true) {
@@ -1010,6 +1010,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tab.response = null
       fail(tab, { kind: 'load', name })
     })
+    // Within a page that failed (#section), it is still the failed one. Back
+    // from a page that couldn't load or crashed is never one of these, even
+    // to the same page: Chromium loads that again.
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => {
       if (!isMainFrame) return
       committed(tab, url, true)
@@ -1244,8 +1247,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   // A site can answer with an HTTP error and an empty page, which would show
   // as a blank one. The page is asked once it has loaded; only exactly what
-  // Chromium makes of an empty response counts, so anything from the site is
-  // left alone. Answers whether the tab now shows an error, or another page.
+  // Chromium makes of an empty response counts (the same for HTML, plain text,
+  // JSON, CSS, scripts and no type; other types get its viewers, which show
+  // something), so anything visible from the site is left alone. Answers whether the tab now shows an error, or another page.
   async function emptyError(tab) {
     const { response } = tab
     if (!(response?.status >= 400) || response.checked || tab.error || tab.page.isDestroyed()) return false
