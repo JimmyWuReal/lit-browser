@@ -3,8 +3,8 @@
 // Only the active tab's view is visible. The Settings, History and
 // Downloads popups are each one more view, transparent and over
 // everything, shown only while open. Find in page lives in the toolbar; each tab keeps its own
-// search (src/find.js). A site asking for the camera, location and the like
-// gets a prompt in the toolbar, below the address row (src/permissions.js).
+// search (src/find.js). A site asking for the camera, location and the like,
+// or to open another app, gets a prompt in the toolbar, below the address row (src/permissions.js).
 // A private window (⇧⌘N) browses in an in-memory session of its own and
 // keeps nothing once it closes (see privateSession), except the bookmarks
 // someone adds in it. Every window belongs to one profile (see openProfile).
@@ -284,11 +284,16 @@ function siteFor(contents, asking, embedding) {
 // if the frame has gone. Anything not from a tab (Lit's own pages, a
 // service worker) is refused too. `store` is the session's choices.
 function onPermissionRequest(store, contents, permission, callback, details) {
-  const kinds = permissions.kindsOf(permission, details.mediaTypes)
+  const kinds = permissions.kindsOf(permission, details.mediaTypes, details.externalURL)
   if (!kinds) return callback(true)
   const site = siteFor(contents, details.securityOrigin ?? details.requestingUrl)
-  if (!site || !kinds.length) return callback(false)
   if (!details.isMainFrame && !details.securityOrigin) return callback(false)
+  answerRequest(store, contents, site, kinds, callback)
+}
+
+// Answers `site`'s request for `kinds` from its choices, or asks on the tab.
+function answerRequest(store, contents, site, kinds, callback) {
+  if (!site || !kinds.length) return callback(false)
   const answer = permissions.status(store.sites, site, kinds)
   if (answer !== 'ask') return callback(answer === 'allow')
   for (const controls of openWindows) {
@@ -919,7 +924,24 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     page.on('did-start-navigation', ({ url, isMainFrame, initiator }) => {
       if (!isMainFrame) return
       tab.pendingUrl = url
+      tab.hop = url
       tab.startedByPage = Boolean(initiator)
+    })
+    // A redirect to another app. Electron would ask for the page the link was
+    // on, however many sites the redirects went through, so a site allowed
+    // to open an app would vouch for every address it links to or frames.
+    // Lit asks itself, for the site that redirected (tab.hop: the last
+    // address of the navigation); a frame's redirect is refused, as its
+    // other requests are.
+    page.on('did-redirect-navigation', ({ url, isMainFrame }) => { if (isMainFrame) tab.hop = url })
+    page.on('will-redirect', (event) => {
+      const { url, isMainFrame } = event
+      if (!permissions.opensApp(url)) return
+      event.preventDefault()
+      if (!isMainFrame) return
+      answerRequest(permissionStore, page, permissions.originOf(tab.hop), permissions.kindsOf('openExternal', [], url), (allowed) => {
+        if (allowed) shell.openExternal(url).catch(() => {})
+      })
     })
     // A click, key press, touch or scroll on the page since its last page
     // committed, for `committed`: a page moving on with none is redirecting.
@@ -1014,14 +1036,21 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // everything else comes to the front.
     // The new tab outlives its opener, so closing the page a link came from
     // keeps the link's tab.
-    page.setWindowOpenHandler(({ disposition }) => ({
+    // A link to another app loads nothing in its tab, and its prompt is on
+    // this one, so that tab stays behind and closes once the app was asked for.
+    page.setWindowOpenHandler(({ url, disposition }) => ({
       action: 'allow',
       outlivesOpener: true,
-      createWindow: (options) => addTab({
-        webContents: options.webContents,
-        background: disposition === 'background-tab' && !profile.settings.switchToNewTabs,
-        index: tabs.indexOf(tab) + 1,
-      }).page,
+      createWindow: (options) => {
+        const toApp = permissions.opensApp(url)
+        const opened = addTab({
+          webContents: options.webContents,
+          background: toApp || (disposition === 'background-tab' && !profile.settings.switchToNewTabs),
+          index: tabs.indexOf(tab) + 1,
+        }).page
+        if (toApp) opened.once('did-stop-loading', () => { if (!opened.getURL()) opened.close() })
+        return opened
+      },
     }))
 
     page.on('context-menu', (_event, params) => showPageMenu(page, params))
@@ -1221,10 +1250,19 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // time; the same request asked again joins the one waiting. Each prompt
   // is { id, site, kinds, callbacks }: `kinds` is the whole request, which
   // settles it, while the prompt asks only about the undecided ones.
+  // A page can ask to open apps as often as it likes, each scheme a kind of
+  // its own, so a tab asks about one at a time and refuses others meanwhile.
+  // The same one asked again takes its place: Allow opens the last link, once.
   function askPermission(contents, site, kinds, callback) {
     const tab = tabs.find((each) => each.page === contents)
     if (!tab) return false
     const same = tab.prompts.find((prompt) => prompt.site === site && prompt.kinds.join() === kinds.join())
+    const toApp = permissions.isApp(kinds[0])
+    if (toApp && !same && tab.prompts.some((prompt) => permissions.isApp(prompt.kinds[0]))) {
+      callback(false)
+      return true
+    }
+    if (toApp && same) for (const replaced of same.callbacks.splice(0)) replaced(false)
     if (same) same.callbacks.push(callback)
     else tab.prompts.push({ id: nextPromptId++, site, kinds, callbacks: [callback] })
     sync()
@@ -2209,7 +2247,7 @@ ipcMain.on('profiles-open', fromSettings((c, id) => {
 }))
 // Changes or forgets (null) one site's choice for one kind.
 ipcMain.handle('permissions-set', fromSettings((c, site, kind, choice) => {
-  const saved = typeof site === 'string' && Object.hasOwn(permissions.KINDS, kind) && c.profile.sitePermissions.get(site)?.[kind]
+  const saved = typeof site === 'string' && permissions.isKind(kind) && c.profile.sitePermissions.get(site)?.[kind]
   if (saved && (choice === null || permissions.CHOICES.includes(choice)) && !choosePermission(c.profile, site, [kind], choice)) {
     return settingsState(c.profile, 'Couldn’t save site permissions, so this change lasts only until Lit quits.')
   }
