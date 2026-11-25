@@ -326,6 +326,7 @@
       white-space: nowrap;
       transition: box-shadow 200ms ease, transform 140ms var(--settle);
     }
+    .outline-button[hidden] { display: none; }
     .outline-button:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
     .outline-button:active { transform: scale(.97); transition-duration: 55ms; }
 
@@ -848,6 +849,45 @@
             if (hadFocus) document.getElementById('panel').focus()
           }
           for (const item of items) item.draw()
+        },
+      }
+    }
+
+    // Whether Lit is the default browser, and the button that asks macOS to
+    // make it so; main sends the state again once that changes.
+    lists.defaultBrowser = () => {
+      const element = el('div', 'control-row')
+      const text = el('div', 'control-text')
+      const note = el('span')
+      const error = el('span', 'error')
+      error.setAttribute('role', 'alert')
+      text.append(el('strong', '', 'Default browser'), note, error)
+      const button = el('button', 'outline-button', 'Make default')
+      button.type = 'button'
+      button.setAttribute('aria-label', 'Make Lit the default browser')
+      button.addEventListener('click', () => {
+        const id = ++saves
+        settings.makeDefaultBrowser().then((next) => {
+          if (id !== saves || !next) return
+          state = next
+          redraw({ defaultBrowser: next.error || '' })
+        })
+      })
+      element.append(text, button)
+      return {
+        key: 'defaultBrowser',
+        error,
+        element,
+        draw() {
+          note.textContent = {
+            yes: 'Lit is your default browser.',
+            no: 'Open links from other apps in Lit. macOS asks you to confirm.',
+            unavailable: 'Only the installed Lit app can be the default browser.',
+          }[state.defaultBrowser]
+          const hadFocus = document.activeElement === button
+          button.hidden = state.defaultBrowser !== 'no'
+          // Hidden, it loses focus; the panel keeps it instead.
+          if (hadFocus && button.hidden) document.getElementById('panel').focus()
         },
       }
     }

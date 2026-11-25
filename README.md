@@ -34,6 +34,8 @@ Zoom is per site, as in Chrome: zooming a page zooms every tab on that site, and
 
 When a page goes full screen, as a video does, it fills the whole screen and the toolbar hides until it is done. Switching tabs, ⌘L, ⌘F, a site asking for permission, or taking the window out of full screen ends it. A window that was already full screen stays so; a page's full screen is not brought back when its window reopens.
 
+A tab playing sound shows a speaker. Click it to mute the tab, and again to unmute it; so do Mute Tab in the tab's right-click menu and Mute or Unmute Tab in the File menu. A muted tab shows a crossed-out speaker, even while nothing plays, and stays muted as it moves to other pages, until it closes: a reopened, restored or duplicated tab is not muted. When tabs are too narrow for both, the speaker takes the place of the tab's icon, and only the active tab's can be clicked.
+
 Drag a tab to move it along the strip. Middle-click closes a tab. In the tab strip, arrow keys move between tabs, ⇧← and ⇧→ move the tab itself, and Delete closes one.
 
 ⇧⌘T brings back the last tab you closed (⌘W, its close button, middle-click) as it was then, with its back/forward history, in its old place. A closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers up to 50 closed tabs by default (see Settings), counting each tab of a closed window. They are kept in memory only, so Lit forgets them when it quits; a page closing itself (such as a sign-in popup) is not remembered.
@@ -129,13 +131,17 @@ A page that can't load, or crashes, shows what went wrong in its place, with the
 
 That covers an address that can't be found or reached, being offline, a site that redirects forever or sends nothing, a certificate Lit doesn't trust (there is no way past that one), a missing file, and a site answering with an HTTP error and an empty page. A page that breaks off halfway keeps what it has shown, and a site's own error page shows as it is. Text that only looks like an address, such as `example.com:99999`, is searched instead.
 
+## Default browser
+
+Settings › Default Browser makes Lit the Mac's default browser (macOS asks you to confirm), so links clicked in other apps open in Lit. HTML files keep the app they open with; Lit is in Finder’s Open With for them. It needs the installed app (`npm run app`); run from source, it is unavailable. Web links and HTML files from other apps open in a new tab of the window used last, or in a new window, as Settings says; in the profile used last, and never in a private window.
+
 ## Right-click menus
 
 Right-clicking a page shows what fits the spot: a link can be opened in a new tab, saved or copied; an image, video or audio can be saved or have its address copied, and opened in a new tab when it has a web address (an image can also be copied); selected text can be copied or searched with your search engine; a text field gets spelling suggestions and Undo, Cut, Copy, Paste and Select All. Anywhere else the menu has Back, Forward, Reload and Print. Every page menu ends with Inspect Element, except in a private window.
 
 New tabs from the menu follow the Tabs settings like ⌘-clicked links: they open next to their page, in the background unless Lit is set to switch to them. Save follows the Downloads setting. Only web (http and https) links can be opened or saved from the menu.
 
-Right-clicking a tab offers Reload, Duplicate (which keeps the tab's back and forward history), Close Tab, Close Other Tabs and Close Tabs to the Right. Duplicate Tab, Close Other Tabs and Close Tabs to the Right are also in the File menu. The address bar, the text fields in Settings and the History search get the editing items.
+Right-clicking a tab offers Reload, Duplicate (which keeps the tab's back and forward history), Mute Tab or Unmute Tab, Close Tab, Close Other Tabs and Close Tabs to the Right. Duplicate Tab, Mute or Unmute Tab, Close Other Tabs and Close Tabs to the Right are also in the File menu. The address bar, the text fields in Settings and the History search get the editing items.
 
 ## Settings
 
@@ -146,10 +152,11 @@ General, Downloads and Privacy are the profile's own; the rest are shared by eve
 - **General:** search engine (Google, DuckDuckGo or Bing), what new tabs open (the search box, or an address or search), the page zoom for sites you have not zoomed, whether the address bar suggests bookmarks and pages from history, and whether the bookmark bar shows.
 - **Downloads:** ask where to save, or save straight to Downloads.
 - **Privacy:** save history (pages visited and closed tabs; when off, nothing new is saved, closed tabs are forgotten, Reopen Closed Tab does nothing, and windows reopened at launch keep only each tab's page, not its back and forward history or what was typed into it), block ads and trackers (on by default, with Ghostery's prebuilt lists, downloaded the first time it is on, saved to `adblock.bin` in the app's data folder and refreshed when a week old; a saved copy is blocking before any tab loads, and a change shows or hides ads on open pages once they are reloaded), send Do Not Track and Global Privacy Control, and the site permissions you have given: switch each between Allow and Block, or remove it so the site is asked again.
+- **Default Browser:** whether links from other apps open in a new tab or a new window, and a button to make Lit the default browser.
 - **Quick Search:** turn quick search shortcuts on or off, and the character that starts them (`!`, `@`, `#`, `:` or `/`). Also lists every site and its shortcuts.
-- **Tabs:** where new tabs go, whether ⌘-clicked links come to the front, whether closing the last tab closes the window, whether Lit reopens the windows and tabs from last time, and how many closed tabs Reopen Closed Tab remembers (10, 25, 50 or 100; a closed window counts each of its tabs, and one bigger than the limit keeps the tabs around its active one).
+- **Tabs:** where new tabs go, whether ⌘-clicked links come to the front, whether tabs show a speaker while they play sound or are muted, whether closing the last tab closes the window, whether Lit reopens the windows and tabs from last time, and how many closed tabs Reopen Closed Tab remembers (10, 25, 50 or 100; a closed window counts each of its tabs, and one bigger than the limit keeps the tabs around its active one).
 - **Profiles:** add, rename, recolor, open and delete profiles.
-- **Keyboard Shortcuts:** every shortcut in the table above except ⌘1–9 and the ⇧⌘[ / ⇧⌘] and ⌘+ alternates, plus Duplicate Tab, Close Tabs to the Right and New Profile, which have none until you set one. Click a shortcut and press the new keys; Escape cancels and Delete removes it. Lit refuses a shortcut another command already uses.
+- **Keyboard Shortcuts:** every shortcut in the table above except ⌘1–9 and the ⇧⌘[ / ⇧⌘] and ⌘+ alternates, plus Duplicate Tab, Mute or Unmute Tab, Close Tabs to the Right and New Profile, which have none until you set one. Click a shortcut and press the new keys; Escape cancels and Delete removes it. Lit refuses a shortcut another command already uses.
 
 ## Run
 

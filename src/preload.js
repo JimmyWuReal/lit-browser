@@ -17,9 +17,10 @@ contextBridge.exposeInMainWorld('lit', {
   nudgeTab: (id, direction) => ipcRenderer.send('nudge-tab', id, direction),
   // Focus to the active tab's page, or what stands in for it.
   focusActive: () => ipcRenderer.send('focus-active'),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started, find, zoom, prompt, error }] },
+  // { activeId, tabs: [{ id, title, url, favicon, loading, started, audio, find, zoom, prompt, error }] },
   // `zoom` being '125%', or '' at the default zoom, and `prompt` the tab's
-  // permission request, { id, site, kinds, does }, or undefined. `error` is
+  // permission request, { id, site, kinds, does }, or undefined. `audio` is
+  // 'playing', 'muted' or null. `error` is
   // what to show instead of a page that failed, { title, detail, code,
   // action, canGoBack }, or null.
   onTabs: (callback) => on('tabs', callback),
@@ -66,6 +67,8 @@ contextBridge.exposeInMainWorld('lit', {
   // suggestions, { id, alias }, to show as the field's chip.
   onQuickSearch: (callback) => on('quick-search', callback),
   onQuickSearchPick: (callback) => on('quick-search-pick', callback),
+  // Mutes or unmutes a tab.
+  toggleMute: (id) => ipcRenderer.send('mute-tab', id),
   // The right-click menu for a tab.
   showTabMenu: (id) => ipcRenderer.send('tab-menu', id),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
@@ -97,7 +100,7 @@ contextBridge.exposeInMainWorld('lit', {
   },
   // For the Settings popup only; main ignores these from anywhere else.
   // State is { sections, values, labels, sitePermissions, quickSearchSites,
-  // profileId, profiles, profileColors, error? } (see settingsState in main),
+  // profileId, profiles, profileColors, defaultBrowser, error? } (see settingsState in main),
   // for the window's profile, with the `section` to show as it opens, if any.
   settings: {
     get: () => ipcRenderer.invoke('settings-get'),
@@ -111,6 +114,8 @@ contextBridge.exposeInMainWorld('lit', {
     // Asks first.
     deleteProfile: (id) => ipcRenderer.invoke('profiles-delete', id),
     openProfile: (id) => ipcRenderer.send('profiles-open', id),
+    // Asks macOS to make Lit the default browser; answers with the state.
+    makeDefaultBrowser: () => ipcRenderer.invoke('default-browser-make'),
     close: () => ipcRenderer.send('settings-close'),
     // While on, key presses come back through onShortcutPressed as
     // { accelerator } ('' clears) or { cancel: true }, not to the menu.

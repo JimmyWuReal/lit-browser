@@ -13,8 +13,9 @@
 // someone adds in it. Every window belongs to one profile (see openProfile).
 const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, screen, session, shell } = require('electron')
 const path = require('node:path')
+const { pathToFileURL } = require('node:url')
 const fs = require('node:fs')
-const { toUrl, searchUrl, engineOf } = require('./url')
+const { toUrl, webAddress, searchUrl, engineOf } = require('./url')
 const quickSearch = require('./quicksearch')
 const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
@@ -461,6 +462,8 @@ function takeBack(profile, visit) {
 // How soon after loading a page that loads another by itself, untouched,
 // counts as redirecting rather than as a page someone read.
 const REDIRECT_AFTER = 5000
+// How long (ms) a tab must be silent to stop showing as playing audio.
+const SILENCE_AFTER = 1500
 // Run on a page to end its full screen. A page can have one element full
 // screen over another, so it leaves each (up to a point, as a page can break
 // exitFullscreen). One told it may enter has not done so yet, and can't leave
@@ -689,7 +692,59 @@ function settingsState(profile, error) {
   for (const setting of settingsStore.SETTINGS) {
     if (setting.type === 'shortcut') labels[setting.key] = settings[setting.key] ? shortcuts.label(settings[setting.key]) : ''
   }
-  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, ...(error && { error }) }
+  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, defaultBrowser: defaultBrowser(), ...(error && { error }) }
+}
+
+// Whether Lit is the Mac's default browser: 'yes', 'no', or 'unavailable' when
+// run from source, where macOS would take Electron for the browser.
+function defaultBrowser() {
+  if (!app.isPackaged || process.platform !== 'darwin') return 'unavailable'
+  return ['http', 'https'].every((scheme) => app.isDefaultProtocolClient(scheme)) ? 'yes' : 'no'
+}
+
+// The answer changes outside Lit, in macOS's question or System Settings, so
+// it is read again when Lit comes to the front, and every second for a minute
+// after asking.
+let lastDefaultBrowser
+let defaultBrowserTimer = null
+function checkDefaultBrowser() {
+  const now = defaultBrowser()
+  if (now === lastDefaultBrowser) return
+  lastDefaultBrowser = now
+  for (const controls of openWindows) controls.settingsChanged()
+}
+
+// Asks macOS, which asks the person, for http and, once Lit has that, https:
+// asked together, someone who says no would be asked twice. Returns why it
+// couldn't, if so.
+function makeDefaultBrowser() {
+  if (defaultBrowser() !== 'no') return
+  clearInterval(defaultBrowserTimer)
+  const ask = (scheme) => app.setAsDefaultProtocolClient(scheme)
+  let askedHttps = app.isDefaultProtocolClient('http')
+  if (!ask(askedHttps ? 'https' : 'http')) return 'Couldn’t ask macOS. Choose Lit in System Settings › Desktop & Dock instead.'
+  let left = 60
+  defaultBrowserTimer = setInterval(() => {
+    if (!askedHttps && app.isDefaultProtocolClient('http')) {
+      askedHttps = true
+      if (!app.isDefaultProtocolClient('https')) ask('https')
+    }
+    checkDefaultBrowser()
+    if (!--left || lastDefaultBrowser === 'yes') clearInterval(defaultBrowserTimer)
+  }, 1000)
+}
+
+// Links and files other apps open in Lit. Those that arrive before Lit is
+// ready, as when one launches it, wait in `waitingLinks`; null once ready.
+let waitingLinks = []
+function openExternalLink(url) {
+  if (waitingLinks) return waitingLinks.push(url)
+  // In the profile used last, and never in a private window.
+  const controls = windowsOf(currentProfile).filter((each) => !each.isPrivate).at(-1)
+  if (!controls || shared().externalLinks === 'window') return createWindow({ url })
+  if (controls.win.isMinimized()) controls.win.restore()
+  controls.win.focus()
+  controls.openLink(url)
 }
 
 // Where typed text goes: a quick search shortcut's site (`!yt lofi`), else
@@ -881,8 +936,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     win.setTitle(isPrivate ? `${named} (Private)` : named)
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts, error }) => ({
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts, error, audible }) => ({
         id, title, url, favicon, loading, started,
+        audio: profile.settings.tabAudio ? audioOf({ page, audible }) : null,
         // The tab's oldest unanswered permission request; the rest wait.
         prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
@@ -1031,7 +1087,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], fullScreen: null, error: null }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], fullScreen: null, error: null, audible: false }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -1115,6 +1171,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tab.favicon = favicons[0] || null
       if (!isPrivate) addIcon(profile, tab.url, tab.favicon, ses)
       sync()
+    })
+    // A short silence (between songs) doesn't count as stopping, so the
+    // tab's speaker doesn't come and go.
+    page.on('audio-state-changed', ({ audible }) => {
+      clearTimeout(tab.silence)
+      if (audible) { tab.audible = true; sync() }
+      else tab.silence = setTimeout(() => { tab.audible = false; sync() }, SILENCE_AFTER)
     })
     page.on('did-stop-loading', () => { if (tab.fullScreen === 'leaving') leaveFullScreen(tab) })
     // The page asked to be full screen (a video's button), or stopped;
@@ -1238,10 +1301,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // A new tab from ⌘T or the + button, placed and filled as Settings says.
-  function newTab() {
+  function newTab(url = profile.settings.newTabPage ? toUrl(profile.settings.newTabPage, profile.settings.searchEngine) : undefined) {
     const current = active()
     addTab({
-      url: profile.settings.newTabPage ? toUrl(profile.settings.newTabPage, profile.settings.searchEngine) : undefined,
+      url,
       index: profile.settings.newTabPosition === 'next' && current ? tabs.indexOf(current) + 1 : tabs.length,
     })
   }
@@ -1633,6 +1696,18 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     })
   }
 
+  // What a tab's speaker shows: 'muted' (even while nothing plays),
+  // 'playing', or null.
+  const audioOf = ({ page, audible }) => (!page.isDestroyed() && page.isAudioMuted() ? 'muted' : audible ? 'playing' : null)
+
+  // Muting belongs to the tab: it lasts across pages, until it closes.
+  function toggleMute(id) {
+    const tab = find(id)
+    if (!tab || tab.page.isDestroyed()) return
+    tab.page.setAudioMuted(!tab.page.isAudioMuted())
+    sync()
+  }
+
   // A copy of the tab right after it, with its back/forward history. A
   // tab whose first page has not committed yet has no history, so its copy
   // loads the address being opened, as does a copy whose history fails to
@@ -1670,13 +1745,14 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function showTabMenu(id) {
     const tab = find(id)
     if (!tab) return
-    const keys = Object.fromEntries(['reload', 'duplicateTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
+    const keys = Object.fromEntries(['reload', 'duplicateTab', 'muteTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
       .map((command) => [command, profile.settings[`shortcuts.${command}`]]))
-    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, keys }), (command) => {
+    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, muted: audioOf(tab) === 'muted', keys }), (command) => {
       if (!find(id)) return
       switch (command) {
         case 'reload': return reload(tab)
         case 'duplicate': return duplicateTab(id)
+        case 'mute': return toggleMute(id)
         case 'close': return closeTab(id)
         case 'closeOthers': return closeOtherTabs(id)
         case 'closeToRight': return closeTabsToRight(id)
@@ -2011,7 +2087,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     isPrivate,
     session: ses,
     pages,
-    newTab,
+    newTab: () => newTab(),
+    // A link from another app, in a new tab over any popup.
+    openLink(url) {
+      closePopup()
+      newTab(url)
+    },
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
     // Before another tab, or last (null).
     moveTab: (id, beforeId) => arrange(moved(ids(), id, beforeId)),
@@ -2093,6 +2174,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       else popups.bookmarks.webContents.send('bookmarks-changed', state)
     },
     duplicateTab: () => duplicateTab(activeId),
+    toggleMute: (id = activeId) => toggleMute(id),
     closeOtherTabs: () => closeOtherTabs(activeId),
     closeTabsToRight: () => closeTabsToRight(activeId),
     setRecording: (on, keys) => {
@@ -2101,6 +2183,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     },
     settingsChanged() {
       sendShortcuts()
+      sync()
       sendQuickSearch()
       sendBookmarks()
       popups.settings?.webContents.send('settings-changed', settingsState(profile))
@@ -2301,6 +2384,7 @@ function buildMenu() {
         { label: 'New Private Window', accelerator: key('newPrivateWindow'), click: (_item, win) => createWindow({ profile: controlsOf(win)?.profile, isPrivate: true }) },
         { type: 'separator' },
         { label: 'Duplicate Tab', accelerator: key('duplicateTab'), click: inFocused((c) => { c.closePopup(); c.duplicateTab() }) },
+        { label: 'Mute or Unmute Tab', accelerator: key('muteTab'), click: inFocused((c) => c.toggleMute()) },
         { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closePopup(); c.focusAddress() }) },
         { type: 'separator' },
         // With a popup open, Close Tab closes the popup instead.
@@ -2417,6 +2501,7 @@ ipcMain.on('find-again', fromToolbar((c, tabId, forward) => c.isActive(tabId) &&
 ipcMain.on('close-find', fromToolbar((c, tabId) => c.isActive(tabId) && c.closeFind()))
 ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 ipcMain.on('open-downloads', fromToolbar((c) => c.openPopup('downloads')))
+ipcMain.on('mute-tab', fromToolbar((c, id) => Number.isInteger(id) && c.toggleMute(id)))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
 ipcMain.on('profile-menu', fromToolbar((c, at) => isPoint(at) && c.showProfileMenu(at)))
 // Bookmarks, from the bar or the popup's lists, which share these.
@@ -2482,6 +2567,7 @@ ipcMain.handle('permissions-set', fromSettings((c, site, kind, choice) => {
   }
   return settingsState(c.profile)
 }))
+ipcMain.handle('default-browser-make', fromSettings((c) => settingsState(c.profile, makeDefaultBrowser())))
 ipcMain.on('settings-record', fromSettings((c, on, keys) => c.setRecording(on === true, keys)))
 ipcMain.on('settings-close', fromSettings((c) => c.closePopup()))
 
@@ -2527,6 +2613,17 @@ ipcMain.on('downloads-clear', fromDownloads((c) => {
 }))
 ipcMain.on('downloads-close', fromDownloads((c) => c.closePopup()))
 
+// Other apps opening links and HTML files. Registered before Lit is ready,
+// as macOS sends the link that launched it early.
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  if (webAddress(url)) openExternalLink(url)
+})
+app.on('open-file', (event, file) => {
+  event.preventDefault()
+  openExternalLink(pathToFileURL(file).href)
+})
+
 app.whenReady().then(async () => {
   const root = app.getPath('userData')
   profilesFile = path.join(root, 'profiles.json')
@@ -2550,7 +2647,13 @@ app.whenReady().then(async () => {
     .map((saved) => ({ ...saved, profile: profiles.find(({ id }) => id === (saved.profile ?? profileStore.DEFAULT)) }))
     .filter(({ profile }) => profile)
   if (restored.length) for (const saved of restored) createWindow(saved)
-  else createWindow()
+  // A link that launched Lit opens in a window of its own, if none reopened.
+  else if (!waitingLinks.length) createWindow()
+  const links = waitingLinks
+  waitingLinks = null
+  links.forEach(openExternalLink)
+  lastDefaultBrowser = defaultBrowser()
+  app.on('did-become-active', checkDefaultBrowser)
   // Like other Mac browsers, Lit keeps running with no windows open;
   // clicking the Dock icon opens a fresh one. Registered after the first
   // window so a launch-time activate cannot open a second.
