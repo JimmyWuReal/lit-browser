@@ -1043,7 +1043,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       // When neither commits, the next page is a visit again.
       const restored = () => { tab.restoring = false }
       page.navigationHistory.restore(history).catch(() => {
-        if (retry && !page.isDestroyed()) page.loadURL(retry).catch(restored)
+        // Not once it is stopped (navigatePage), which fails it too.
+        if (retry && tab.restoring && !page.isDestroyed()) page.loadURL(retry).catch(restored)
         else restored()
       })
     } else if (url) page.loadURL(url, referrer ? { httpReferrer: referrer } : {}).catch(() => {})
@@ -1816,6 +1817,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
         case 'forward': tab.page.navigationHistory.goForward(); break
         case 'reload': tab.page.reload(); break
         case 'stop':
+          tab.restoring = false
           tab.page.stop()
           // Its first page never came, so there is nothing to show or reload:
           // back to the search box. Except a tab a page opened, which its
@@ -1824,7 +1826,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
             tab.started = false
             tab.loading = false
             delete tab.pendingUrl
-            show(tab, focus)
+            show(tab)
             return sync()
           }
       }
