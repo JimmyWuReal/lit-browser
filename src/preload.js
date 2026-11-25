@@ -11,9 +11,11 @@ contextBridge.exposeInMainWorld('lit', {
   // `focus: false` keeps keyboard focus in the toolbar.
   closeTab: (id, focus = true) => ipcRenderer.send('close-tab', id, focus),
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started, audio, find, zoom, prompt, error }] },
-  // `zoom` being '125%', or '' at the default zoom, and `prompt` the tab's
-  // permission request, { id, site, kinds, does }, or undefined. `audio` is
+  // { activeId, tabs: [{ id, title, url, favicon, loading, started, audio, find, zoom, signIn, prompt, error }] },
+  // `zoom` being '125%', or '' at the default zoom, `signIn` what asks for a
+  // username and password, { id, name, asks, note, main }, `main` when it is
+  // the page itself, and `prompt` the tab's permission request, { id, site,
+  // kinds, does }; both can be undefined. `audio` is
   // 'playing', 'muted' or null. `error` is
   // what to show instead of a page that failed, { title, detail, code,
   // action, canGoBack }, or null.
@@ -38,6 +40,10 @@ contextBridge.exposeInMainWorld('lit', {
   // Answers a permission prompt: 'allow', 'block', or null to dismiss it.
   // `kinds` is what the prompt showed, so a stale answer is ignored.
   answerPermission: (tabId, promptId, kinds, choice) => ipcRenderer.send('answer-permission', tabId, promptId, kinds, choice),
+  // Answers a sign-in prompt: { username, password }, or null to cancel.
+  // Main gives the prompt with that id the focus, maybe before it is drawn.
+  answerSignIn: (tabId, promptId, credentials) => ipcRenderer.send('answer-sign-in', tabId, promptId, credentials),
+  onFocusSignIn: (callback) => on('focus-sign-in', callback),
   // Puts the active page back at the default zoom.
   resetZoom: () => ipcRenderer.send('reset-zoom'),
   // Find in page, on the tab the toolbar shows (main ignores a tab that is
