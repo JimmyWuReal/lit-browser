@@ -433,12 +433,19 @@ function takeBack(profile, visit) {
 // How soon after loading a page that loads another by itself, untouched,
 // counts as redirecting rather than as a page someone read.
 const REDIRECT_AFTER = 5000
-// Run on a page to end its full screen. A page told it may enter has not
-// done so yet, and can't leave before it has; waiting for that ends soon,
-// so as not to undo a later one.
-const EXIT_FULL_SCREEN = `document.fullscreenElement
-  ? document.exitFullscreen()
-  : document.addEventListener('fullscreenchange', () => document.exitFullscreen(), { once: true, signal: AbortSignal.timeout(1000) })`
+// Run on a page to end its full screen. A page can have one element full
+// screen over another, so it leaves each (up to a point, as a page can break
+// exitFullscreen). One told it may enter has not done so yet, and can't leave
+// before it has; waiting for that ends soon, so as not to undo a later one.
+const EXIT_FULL_SCREEN = `{
+  const exit = async () => {
+    try {
+      for (let tries = 20; document.fullscreenElement && tries; tries--) await document.exitFullscreen()
+    } catch {}
+  }
+  if (document.fullscreenElement) exit()
+  else document.addEventListener('fullscreenchange', exit, { once: true, signal: AbortSignal.timeout(1000) })
+}`
 
 // Chromium's code for a load that was stopped, not one that failed.
 const ERR_ABORTED = -3
@@ -838,7 +845,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function sync() {
     if (win.isDestroyed()) return
     const current = active()
-    const top = current?.fullScreen ? 0 : BAR_HEIGHT + (profile.settings.bookmarkBar ? BOOKMARKS_HEIGHT : 0) + (current?.prompts.length ? PROMPT_HEIGHT : 0)
+    const top = current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (profile.settings.bookmarkBar ? BOOKMARKS_HEIGHT : 0) + (current?.prompts.length ? PROMPT_HEIGHT : 0)
     if (top !== pageTop) { pageTop = top; layout() }
     const title = current?.title || (current?.started ? current.url : '') || 'New Tab'
     const named = profiles.length > 1 ? `${title} — ${profile.name}` : title
@@ -888,13 +895,15 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // Takes a full screen page out of it, bringing the toolbar back right
   // away, as the page may be slow to answer. Electron then restores the
   // window if the page had changed it; it needs the page to leave first.
+  // Until the page has left, asking again tries again.
   function leaveFullScreen(tab) {
     if (!tab?.fullScreen) return
-    tab.fullScreen = false
+    tab.fullScreen = 'leaving'
     sync()
     if (tab.page.isDestroyed()) return
     // In a world of Lit's own, as a page can replace the method in its own.
-    // That would wait for a page still loading, whose own world doesn't.
+    // That would wait for a page still loading, so its own world is tried
+    // meanwhile, and did-stop-loading asks again if that didn't do.
     const left = tab.page.isLoadingMainFrame()
       ? tab.page.mainFrame.executeJavaScript(EXIT_FULL_SCREEN)
       : tab.page.executeJavaScriptInIsolatedWorld(CHECK_WORLD, [{ code: EXIT_FULL_SCREEN }])
@@ -983,7 +992,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], fullScreen: false, error: null }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], fullScreen: null, error: null }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -1061,18 +1070,20 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       if (!isPrivate) addIcon(profile, tab.url, tab.favicon, ses)
       sync()
     })
-    // The page asked to be full screen (a video's button), or stopped.
+    page.on('did-stop-loading', () => { if (tab.fullScreen === 'leaving') leaveFullScreen(tab) })
+    // The page asked to be full screen (a video's button), or stopped;
+    // tab.fullScreen is 'on', 'leaving' (asked to stop), or null.
     // Electron makes the window full screen with it; the toolbar hides.
     // One granted it only after its tab was left gives it back, as does one
     // with a question in the toolbar.
     page.on('enter-html-full-screen', () => {
-      tab.fullScreen = true
+      tab.fullScreen = 'on'
       if (!windowFullScreen) fullScreenFor = tab
       sync()
       if (tab.id !== activeId || tab.prompts.length) leaveFullScreen(tab)
     })
     page.on('leave-html-full-screen', () => {
-      tab.fullScreen = false
+      tab.fullScreen = null
       if (fullScreenFor === tab) fullScreenFor = null
       sync()
     })
