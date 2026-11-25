@@ -214,8 +214,12 @@
         if (row.thumbnail) picture.append(image(row.thumbnail))
         body.append(picture)
       }
-      if (row.icon) body.append(image(row.icon, 'icon'))
-      else if (kind === 'tabs') body.append($('globe').content.cloneNode(true))
+      if (row.icon) {
+        const icon = image(row.icon, 'icon')
+        // A favicon that fails to load falls back to the globe.
+        if (kind === 'tabs') icon.addEventListener('error', () => icon.replaceWith($('globe').content.cloneNode(true)))
+        body.append(icon)
+      } else if (kind === 'tabs') body.append($('globe').content.cloneNode(true))
       const name = el('span', 'name', row.name)
       name.title = row.name
       body.append(name)
