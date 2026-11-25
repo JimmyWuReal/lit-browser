@@ -5,7 +5,8 @@
 // everything, shown only while open. Find in page lives in the toolbar; each tab keeps its own
 // search (src/find.js). A site asking for the camera, location and the like,
 // or to open another app, gets a prompt in the toolbar, below the address
-// row (src/permissions.js).
+// row (src/permissions.js). A server or proxy asking for a username and
+// password gets one there too (src/signin.js).
 // The toolbar also draws the page shown in place of one that failed to load
 // or crashed (src/errors.js), while that tab's view is hidden.
 // A private window (⇧⌘N) browses in an in-memory session of its own and
@@ -13,8 +14,9 @@
 // someone adds in it. Every window belongs to one profile (see openProfile).
 const { app, BrowserWindow, Menu, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, screen, session, shell, systemPreferences } = require('electron')
 const path = require('node:path')
+const { pathToFileURL } = require('node:url')
 const fs = require('node:fs')
-const { toUrl, searchUrl, engineOf } = require('./url')
+const { toUrl, webAddress, searchUrl, engineOf } = require('./url')
 const quickSearch = require('./quicksearch')
 const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
@@ -26,6 +28,7 @@ const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
 const permissions = require('./permissions')
 const shareStore = require('./share')
+const signIn = require('./signin')
 const errors = require('./errors')
 const profileStore = require('./profiles')
 const findState = require('./find')
@@ -38,6 +41,10 @@ const BAR_HEIGHT = STRIP_HEIGHT + 44
 // The permission prompt's row under the address row; keep in sync with
 // .prompt in index.html. Pages move down by this while their tab asks.
 const PROMPT_HEIGHT = 44
+// The sign-in prompt's row, shown in its place; keep in sync with .sign-in in
+// index.html. A note under what it asks makes it taller.
+const SIGN_IN_HEIGHT = 88
+const SIGN_IN_NOTE = 18
 // The bookmark bar's row, above the prompt; keep in sync with .bookmarks in
 // index.html.
 const BOOKMARKS_HEIGHT = 34
@@ -425,6 +432,18 @@ function onPermissionCheck(store, contents, permission, requestingOrigin, detail
   return Boolean(site) && kinds.length > 0 && permissions.status(store.sites, site, kinds) === 'allow'
 }
 
+// A server or proxy wants a username and password, for a tab. Anything else
+// (a service worker, a download, Lit's own pages and requests) is refused, as
+// Electron does by default. The session that asked keeps the answer, in
+// memory; Lit itself keeps none.
+app.on('login', (event, contents, details, authInfo, callback) => {
+  const controls = contents && [...openWindows].find((each) => each.hasTab(contents))
+  const request = controls && signIn.describe(details, authInfo, contents.getURL())
+  if (!request) return
+  event.preventDefault()
+  controls.askSignIn(contents, request, callback)
+})
+
 // What every session browsing pages needs: Lit's permission prompts, Do
 // Not Track, and downloads followed into the Downloads list.
 function setUpSession(ses, profile, store) {
@@ -547,6 +566,8 @@ function takeBack(profile, visit) {
 // How soon after loading a page that loads another by itself, untouched,
 // counts as redirecting rather than as a page someone read.
 const REDIRECT_AFTER = 5000
+// How long (ms) a tab must be silent to stop showing as playing audio.
+const SILENCE_AFTER = 1500
 // Run on a page to end its full screen. A page can have one element full
 // screen over another, so it leaves each (up to a point, as a page can break
 // exitFullscreen). One told it may enter has not done so yet, and can't leave
@@ -776,7 +797,59 @@ function settingsState(profile, error) {
   for (const setting of settingsStore.SETTINGS) {
     if (setting.type === 'shortcut') labels[setting.key] = settings[setting.key] ? shortcuts.label(settings[setting.key]) : ''
   }
-  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, ...(error && { error }) }
+  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, defaultBrowser: defaultBrowser(), ...(error && { error }) }
+}
+
+// Whether Lit is the Mac's default browser: 'yes', 'no', or 'unavailable' when
+// run from source, where macOS would take Electron for the browser.
+function defaultBrowser() {
+  if (!app.isPackaged || process.platform !== 'darwin') return 'unavailable'
+  return ['http', 'https'].every((scheme) => app.isDefaultProtocolClient(scheme)) ? 'yes' : 'no'
+}
+
+// The answer changes outside Lit, in macOS's question or System Settings, so
+// it is read again when Lit comes to the front, and every second for a minute
+// after asking.
+let lastDefaultBrowser
+let defaultBrowserTimer = null
+function checkDefaultBrowser() {
+  const now = defaultBrowser()
+  if (now === lastDefaultBrowser) return
+  lastDefaultBrowser = now
+  for (const controls of openWindows) controls.settingsChanged()
+}
+
+// Asks macOS, which asks the person, for http and, once Lit has that, https:
+// asked together, someone who says no would be asked twice. Returns why it
+// couldn't, if so.
+function makeDefaultBrowser() {
+  if (defaultBrowser() !== 'no') return
+  clearInterval(defaultBrowserTimer)
+  const ask = (scheme) => app.setAsDefaultProtocolClient(scheme)
+  let askedHttps = app.isDefaultProtocolClient('http')
+  if (!ask(askedHttps ? 'https' : 'http')) return 'Couldn’t ask macOS. Choose Lit in System Settings › Desktop & Dock instead.'
+  let left = 60
+  defaultBrowserTimer = setInterval(() => {
+    if (!askedHttps && app.isDefaultProtocolClient('http')) {
+      askedHttps = true
+      if (!app.isDefaultProtocolClient('https')) ask('https')
+    }
+    checkDefaultBrowser()
+    if (!--left || lastDefaultBrowser === 'yes') clearInterval(defaultBrowserTimer)
+  }, 1000)
+}
+
+// Links and files other apps open in Lit. Those that arrive before Lit is
+// ready, as when one launches it, wait in `waitingLinks`; null once ready.
+let waitingLinks = []
+function openExternalLink(url) {
+  if (waitingLinks) return waitingLinks.push(url)
+  // In the profile used last, and never in a private window.
+  const controls = windowsOf(currentProfile).filter((each) => !each.isPrivate).at(-1)
+  if (!controls || shared().externalLinks === 'window') return createWindow({ url })
+  if (controls.win.isMinimized()) controls.win.restore()
+  controls.win.focus()
+  controls.openLink(url)
 }
 
 // Where typed text goes: a quick search shortcut's site (`!yt lofi`), else
@@ -957,28 +1030,44 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // and has left, or is gone) or null.
   let windowFullScreen = null
 
+  // The sign-in prompt on show, which goes before a permission prompt, and
+  // the one for the tab's page itself, which is hidden meanwhile.
+  const signInOf = (tab) => tab?.signIns[0]
+  const signInPage = (tab) => tab?.signIns.find((prompt) => prompt.main)
+  const promptHeight = (tab) => {
+    const asked = signInOf(tab)
+    if (asked) return SIGN_IN_HEIGHT + (asked.note ? SIGN_IN_NOTE : 0)
+    return tab?.prompts.length ? PROMPT_HEIGHT : 0
+  }
+
   // Everything the toolbar draws. Sent whenever any of it changes.
   function sync() {
     if (win.isDestroyed()) return
     const current = active()
-    const top = current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (profile.settings.bookmarkBar ? BOOKMARKS_HEIGHT : 0) + (current?.prompts.length ? PROMPT_HEIGHT : 0)
+    const top = current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (profile.settings.bookmarkBar ? BOOKMARKS_HEIGHT : 0) + promptHeight(current)
     if (top !== pageTop) { pageTop = top; layout() }
-    const title = current?.title || (current?.started ? current.url : '') || 'New Tab'
+    const title = signInPage(current)?.url || current?.title || (current?.started ? current.url : '') || 'New Tab'
     const named = profiles.length > 1 ? `${title} — ${profile.name}` : title
     win.setTitle(isPrivate ? `${named} (Private)` : named)
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts, error }) => ({
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts, signIns, error, audible }) => ({
         id, title, url, favicon, loading, started,
+        audio: profile.settings.tabAudio ? audioOf({ page, audible }) : null,
+        // The address asking to sign in, not the page it would replace, so
+        // another site's name is never over its prompt.
+        ...(signInPage({ signIns }) && { title: '', url: signInPage({ signIns }).url, favicon: null }),
+        // The tab's oldest unanswered sign-in; the rest wait.
+        signIn: signIns[0] && { id: signIns[0].id, name: signIns[0].name, asks: signIn.asks(signIns[0]), note: signIns[0].note, main: signIns[0].main },
         // The tab's oldest unanswered permission request; the rest wait.
-        prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
+        prompt: prompts[0] && !signIns[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
         // default or the site has its own (which can match a later default).
-        zoom: started && !error && (!zoom.same(factor, profile.settings.defaultZoom) || ownZoom(page.isDestroyed() ? '' : page.getURL()))
+        zoom: started && !error && !signInPage({ signIns }) && (!zoom.same(factor, profile.settings.defaultZoom) || ownZoom(page.isDestroyed() ? '' : page.getURL()))
           ? zoom.percent(factor)
           : '',
         find: find && { text: find.text, active: find.active, matches: find.matches },
-        error: error && {
+        error: error && !signInPage({ signIns }) && {
           ...errors.describe(error, url),
           action: error.kind === 'crash' ? 'Reload' : 'Try again',
           canGoBack: !page.isDestroyed() && page.navigationHistory.canGoBack(),
@@ -1048,9 +1137,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // `focus` is false when the toolbar keeps focus, as when arrow keys
   // move along the tabs.
   function show(tab, focus = true) {
-    for (const other of tabs) other.view.setVisible(other === tab && tab.started && !tab.error)
+    for (const other of tabs) other.view.setVisible(other === tab && tab.started && !tab.error && !signInPage(tab))
     if (!focus || popupOpen) return
-    if (tab.error) {
+    if (signInPage(tab)) {
+      win.webContents.focus()
+      win.webContents.send('focus-sign-in', signInPage(tab).id)
+    } else if (tab.error) {
       win.webContents.focus()
       win.webContents.send('focus-error')
     } else if (tab.started) tab.page.focus()
@@ -1071,6 +1163,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     tab.restoring = false
     tab.startedByPage = false
     dropPrompts(tab)
+    dropSignIns(tab)
     if (tab.id === activeId) show(tab, win.isFocused() && !win.webContents.isFocused())
     sync()
   }
@@ -1121,7 +1214,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], fullScreen: null, error: null }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], signIns: [], fullScreen: null, error: null, audible: false }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -1130,7 +1223,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     layout()
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
-    page.on('did-stop-loading', () => { tab.loading = false; settle(tab); sync(); checkResponse(tab) })
+    page.on('did-stop-loading', () => { tab.loading = false; tab.leaving = false; settle(tab); dropSignIns(tab, true); sync(); checkResponse(tab) })
     // The address being opened, before it commits: a tab duplicated or
     // closed before its first page commits gets it.
     // Whether the page started it (a link, a script) or Lit did (the
@@ -1138,6 +1231,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     page.on('did-start-navigation', ({ url, isMainFrame, isSameDocument, initiator }) => {
       if (!isMainFrame) return
       tab.pendingUrl = url
+      // Leaving the page, or a load that asks, drops their sign-ins, and the
+      // page left asks no more (askSignIn); a load only stopped drops its own
+      // (did-stop-loading).
+      if (!isSameDocument) { tab.leaving = true; dropSignIns(tab) }
       // For onAppRedirect. Read now: a frame can be gone by the time its
       // navigation redirects. A new page cancels the one still on its way, so
       // this is the latest's; a move within the page (#section) leaves it
@@ -1162,6 +1259,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tab.find = findState.reset(tab.find)
       // A new page has not asked for anything yet; the old page's requests go.
       dropPrompts(tab)
+      dropSignIns(tab)
+      tab.leaving = false
       setZoom(tab, zoomOf(url))
       // For checkResponse; a new object for each page.
       tab.response = { status }
@@ -1207,6 +1306,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       if (!isPrivate) addIcon(profile, tab.url, tab.favicon, ses)
       sync()
     })
+    // A short silence (between songs) doesn't count as stopping, so the
+    // tab's speaker doesn't come and go.
+    page.on('audio-state-changed', ({ audible }) => {
+      clearTimeout(tab.silence)
+      if (audible) { tab.audible = true; sync() }
+      else tab.silence = setTimeout(() => { tab.audible = false; sync() }, SILENCE_AFTER)
+    })
     page.on('did-stop-loading', () => { if (tab.fullScreen === 'leaving') leaveFullScreen(tab) })
     // The page asked to be full screen (a video's button), or stopped;
     // tab.fullScreen is 'on', 'leaving' (asked to stop), or null.
@@ -1217,7 +1323,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tab.fullScreen = 'on'
       if (windowFullScreen !== 'own') fullScreenFor = tab
       sync()
-      if (tab.id !== activeId || tab.prompts.length) leaveFullScreen(tab)
+      if (tab.id !== activeId || tab.prompts.length || tab.signIns.length) leaveFullScreen(tab)
     })
     page.on('leave-html-full-screen', () => {
       tab.fullScreen = null
@@ -1329,10 +1435,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // A new tab from ⌘T or the + button, placed and filled as Settings says.
-  function newTab() {
+  function newTab(url = profile.settings.newTabPage ? toUrl(profile.settings.newTabPage, profile.settings.searchEngine) : undefined) {
     const current = active()
     addTab({
-      url: profile.settings.newTabPage ? toUrl(profile.settings.newTabPage, profile.settings.searchEngine) : undefined,
+      url,
       index: profile.settings.newTabPosition === 'next' && current ? tabs.indexOf(current) + 1 : tabs.length,
     })
   }
@@ -1458,7 +1564,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   // A tab's first load turns it from the search box into its page.
   function refresh(tab) {
-    if (tab.id === activeId && !tab.error && !tab.view.getVisible()) show(tab)
+    if (tab.id === activeId && !tab.error && !signInPage(tab) && !tab.view.getVisible()) show(tab)
     sync()
   }
 
@@ -1479,6 +1585,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function removeTab(tab) {
     if (!find(tab.id)) return
     dropPrompts(tab)
+    dropSignIns(tab)
     const nextId = afterClose(ids(), activeId, tab.id)
     const focus = tab.closeFocus ?? true
     const index = tabs.indexOf(tab)
@@ -1677,6 +1784,52 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     grantShare(tab.page, site, callback, streams)
   }
 
+  // Sign-in prompts. A tab's wait in order, one at a time, each { id,
+  // callbacks } and what signIn.describe says; a request the same answer fits
+  // joins the one waiting. Electron's callbacks are each called exactly once:
+  // with the username and password, or with none, which refuses it and leaves
+  // the server's own response.
+  // A page that asks is on its way to replace the one there, whose requests
+  // are refused as soon as it starts to load, so its prompt is the tab's only one. It gets the keyboard,
+  // but not from someone typing in the toolbar, nor in a window behind.
+  function askSignIn(contents, request, callback) {
+    const tab = tabs.find((each) => each.page === contents)
+    if (!request.main && tab.leaving) return callback()
+    const same = tab.signIns.find((prompt) => prompt.key === request.key)
+    if (same) {
+      same.callbacks.push(callback)
+      same.retry ||= request.retry
+    } else tab.signIns.push({ id: nextPromptId++, ...request, callbacks: [callback] })
+    // The question is in the toolbar.
+    leaveFullScreen(tab)
+    if (request.main && tab.id === activeId) show(tab, win.isFocused() && !win.webContents.isFocused())
+    sync()
+  }
+
+  // Refuses the tab's waiting sign-ins, or (`mainOnly`) only its page's. The
+  // page there is shown again; the toolbar hands back the focus.
+  function dropSignIns(tab, mainOnly = false) {
+    const dropped = tab.signIns.filter((prompt) => prompt.main || !mainOnly)
+    if (dropped.length) endSignIns(tab, dropped)
+  }
+
+  function endSignIns(tab, ended, ...credentials) {
+    tab.signIns = tab.signIns.filter((prompt) => !ended.includes(prompt))
+    for (const prompt of ended) for (const callback of prompt.callbacks) callback(...credentials)
+    if (tab.id === activeId && !tab.page.isDestroyed()) show(tab, false)
+    sync()
+  }
+
+  // Signs in, or (`credentials` null) cancels. Only the prompt on show: the
+  // active tab's first.
+  function answerSignIn(tabId, promptId, credentials) {
+    const tab = find(tabId)
+    const prompt = tabId === activeId ? signInOf(tab) : null
+    if (prompt?.id !== promptId) return
+    if (credentials) endSignIns(tab, [prompt], credentials.username, credentials.password)
+    else endSignIns(tab, [prompt])
+  }
+
   function navigate(input) {
     const tab = active()
     if (!tab || !input.trim()) return
@@ -1806,6 +1959,18 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     })
   }
 
+  // What a tab's speaker shows: 'muted' (even while nothing plays),
+  // 'playing', or null.
+  const audioOf = ({ page, audible }) => (!page.isDestroyed() && page.isAudioMuted() ? 'muted' : audible ? 'playing' : null)
+
+  // Muting belongs to the tab: it lasts across pages, until it closes.
+  function toggleMute(id) {
+    const tab = find(id)
+    if (!tab || tab.page.isDestroyed()) return
+    tab.page.setAudioMuted(!tab.page.isAudioMuted())
+    sync()
+  }
+
   // A copy of the tab right after it, with its back/forward history. A
   // tab whose first page has not committed yet has no history, so its copy
   // loads the address being opened, as does a copy whose history fails to
@@ -1843,13 +2008,14 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function showTabMenu(id) {
     const tab = find(id)
     if (!tab) return
-    const keys = Object.fromEntries(['reload', 'duplicateTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
+    const keys = Object.fromEntries(['reload', 'duplicateTab', 'muteTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
       .map((command) => [command, profile.settings[`shortcuts.${command}`]]))
-    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, keys }), (command) => {
+    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, muted: audioOf(tab) === 'muted', keys }), (command) => {
       if (!find(id)) return
       switch (command) {
         case 'reload': return reload(tab)
         case 'duplicate': return duplicateTab(id)
+        case 'mute': return toggleMute(id)
         case 'close': return closeTab(id)
         case 'closeOthers': return closeOtherTabs(id)
         case 'closeToRight': return closeTabsToRight(id)
@@ -2066,7 +2232,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // change its name or folder; a page already bookmarked just opens that.
   function bookmarkPage() {
     const tab = active()
-    const url = tab?.started ? bookmarkStore.address(tab.url) : null
+    const url = tab?.started && !signInPage(tab) ? bookmarkStore.address(tab.url) : null
     if (!url) return
     const existing = bookmarkStore.pages(profile.bookmarks).find((item) => item.url === url)
     if (existing) return editBookmark(existing.id)
@@ -2190,7 +2356,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     isPrivate,
     session: ses,
     pages,
-    newTab,
+    newTab: () => newTab(),
+    // A link from another app, in a new tab over any popup.
+    openLink(url) {
+      closePopup()
+      newTab(url)
+    },
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
     reopenTab(history, index) {
       closePopup()
@@ -2206,8 +2377,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // Whether it failed, so there is nothing of it to print.
     failed: () => Boolean(active()?.error),
     reload: () => reload(active()),
-    // The page came back while its error page had focus.
-    focusPage: () => { const tab = active(); if (tab?.started && !tab.error && !popupOpen && !tab.page.isDestroyed()) tab.page.focus() },
+    // The page came back while its error page or sign-in prompt had focus,
+    // or asks to sign in again already.
+    focusPage: () => { const tab = active(); if (tab?.started && !tab.error && !popupOpen && !tab.page.isDestroyed()) show(tab) },
     // Zoom acts on the active tab's page, once it has an address.
     // No zoom while an error shows in its place.
     zoomBy: (direction) => { const tab = active(); if (tab?.started && !tab.error) zoomBy(tab, direction) },
@@ -2228,6 +2400,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     chooseShare,
     isSharing: (id) => Boolean(share) && share.id === id,
     shareableTabs: () => tabs.filter((tab) => tab.started && !tab.error && tab.url && !tab.page.isDestroyed()),
+    askSignIn,
+    answerSignIn,
     hasTab: (contents) => tabs.some((tab) => tab.page === contents),
     // Whether a frame started the page's current navigation.
     startedByFrame: (contents) => Boolean(tabs.find((tab) => tab.page === contents)?.startedByFrame),
@@ -2273,6 +2447,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       else popups.bookmarks.webContents.send('bookmarks-changed', state)
     },
     duplicateTab: () => duplicateTab(activeId),
+    toggleMute: (id = activeId) => toggleMute(id),
     closeOtherTabs: () => closeOtherTabs(activeId),
     closeTabsToRight: () => closeTabsToRight(activeId),
     setRecording: (on, keys) => {
@@ -2281,6 +2456,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     },
     settingsChanged() {
       sendShortcuts()
+      sync()
       sendQuickSearch()
       sendBookmarks()
       // Sharing turned off refuses what is being asked.
@@ -2373,6 +2549,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const open = pages()
     for (const tab of tabs.splice(0)) {
       for (const prompt of tab.prompts) for (const callback of prompt.callbacks) callback(false)
+      for (const prompt of tab.signIns.splice(0)) for (const callback of prompt.callbacks) callback()
       settle(tab)
       if (!tab.page.isDestroyed()) tab.page.close()
     }
@@ -2484,6 +2661,7 @@ function buildMenu() {
         { label: 'New Private Window', accelerator: key('newPrivateWindow'), click: (_item, win) => createWindow({ profile: controlsOf(win)?.profile, isPrivate: true }) },
         { type: 'separator' },
         { label: 'Duplicate Tab', accelerator: key('duplicateTab'), click: inFocused((c) => { c.closePopup(); c.duplicateTab() }) },
+        { label: 'Mute or Unmute Tab', accelerator: key('muteTab'), click: inFocused((c) => c.toggleMute()) },
         { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closePopup(); c.focusAddress() }) },
         { type: 'separator' },
         // With a popup open, Close Tab closes the popup instead.
@@ -2598,6 +2776,7 @@ ipcMain.on('find-again', fromToolbar((c, tabId, forward) => c.isActive(tabId) &&
 ipcMain.on('close-find', fromToolbar((c, tabId) => c.isActive(tabId) && c.closeFind()))
 ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 ipcMain.on('open-downloads', fromToolbar((c) => c.openPopup('downloads')))
+ipcMain.on('mute-tab', fromToolbar((c, id) => Number.isInteger(id) && c.toggleMute(id)))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
 ipcMain.on('profile-menu', fromToolbar((c, at) => isPoint(at) && c.showProfileMenu(at)))
 // Bookmarks, from the bar or the popup's lists, which share these.
@@ -2624,6 +2803,10 @@ ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
 // kinds the row showed.
 ipcMain.on('answer-permission', fromToolbar((c, tabId, promptId, kinds, choice) => {
   if (choice === null || permissions.CHOICES.includes(choice)) c.answerPrompt(tabId, promptId, kinds, choice)
+}))
+// A sign-in prompt's answer: { username, password }, or null to cancel it.
+ipcMain.on('answer-sign-in', fromToolbar((c, tabId, promptId, credentials) => {
+  if (credentials === null || (typeof credentials?.username === 'string' && typeof credentials.password === 'string')) c.answerSignIn(tabId, promptId, credentials)
 }))
 ipcMain.handle('suggest', (event, text, rect) => windowsByToolbar.get(event.sender)?.suggest(text, rect) ?? [])
 ipcMain.on('suggestions-select', fromToolbar((c, index) => Number.isInteger(index) && c.selectSuggestion(index)))
@@ -2662,6 +2845,7 @@ ipcMain.handle('permissions-set', fromSettings((c, site, kind, choice) => {
   }
   return settingsState(c.profile)
 }))
+ipcMain.handle('default-browser-make', fromSettings((c) => settingsState(c.profile, makeDefaultBrowser())))
 ipcMain.on('settings-record', fromSettings((c, on, keys) => c.setRecording(on === true, keys)))
 ipcMain.on('settings-close', fromSettings((c) => c.closePopup()))
 
@@ -2714,6 +2898,17 @@ ipcMain.on('share-choose', fromShare((c, kind, id, audio, page) => c.chooseShare
 ipcMain.on('share-allow', fromShare(openScreenPermission))
 ipcMain.on('share-close', fromShare((c) => c.closePopup()))
 
+// Other apps opening links and HTML files. Registered before Lit is ready,
+// as macOS sends the link that launched it early.
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  if (webAddress(url)) openExternalLink(url)
+})
+app.on('open-file', (event, file) => {
+  event.preventDefault()
+  openExternalLink(pathToFileURL(file).href)
+})
+
 app.whenReady().then(async () => {
   const root = app.getPath('userData')
   profilesFile = path.join(root, 'profiles.json')
@@ -2737,7 +2932,13 @@ app.whenReady().then(async () => {
     .map((saved) => ({ ...saved, profile: profiles.find(({ id }) => id === (saved.profile ?? profileStore.DEFAULT)) }))
     .filter(({ profile }) => profile)
   if (restored.length) for (const saved of restored) createWindow(saved)
-  else createWindow()
+  // A link that launched Lit opens in a window of its own, if none reopened.
+  else if (!waitingLinks.length) createWindow()
+  const links = waitingLinks
+  waitingLinks = null
+  links.forEach(openExternalLink)
+  lastDefaultBrowser = defaultBrowser()
+  app.on('did-become-active', checkDefaultBrowser)
   // Like other Mac browsers, Lit keeps running with no windows open;
   // clicking the Dock icon opens a fresh one. Registered after the first
   // window so a launch-time activate cannot open a second.

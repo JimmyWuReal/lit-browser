@@ -41,6 +41,7 @@ const LOAD = [
 ]
 
 const HTTP = {
+  401: ['You need to sign in', (site) => `${site} didn’t show this page without a username and password.`],
   403: ['You can’t open this page', (site) => `${site} refused to show it.`],
   404: ['This page can’t be found', (site) => `${site} has nothing at this address.`],
   429: ['Too many requests', (site) => `${site} asked you to wait before trying again.`],
