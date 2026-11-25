@@ -17,7 +17,8 @@
       --line-live: rgba(255, 255, 255, .72);
       --settle: cubic-bezier(.22, 1, .36, 1);
     }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .18) transparent; }
+    ::selection { color: #fff; background: rgba(255, 255, 255, .24); }
     /* The page is a transparent layer over the browser window; only the
        backdrop and the panel draw anything. */
     html, body { height: 100%; margin: 0; background: transparent; overflow: hidden; color: #ededed; }
@@ -38,8 +39,8 @@
     .is-open .backdrop { opacity: 1; animation: popup-fade 160ms ease-out; }
     .panel {
       position: relative;
-      width: min(720px, 100%);
-      height: min(540px, 100%);
+      width: min(780px, 100%);
+      height: min(600px, 100%);
       display: grid;
       grid-template-columns: 188px minmax(0, 1fr);
       border-radius: 16px;
@@ -103,9 +104,22 @@
     .nav-group:first-of-type { padding-top: 0; }
     .nav-group[hidden] { display: none; }
 
-    .content { min-height: 0; overflow: auto; padding: 20px 24px 28px; }
-    .content h2 { margin: 0 0 22px; font-size: 15px; font-weight: 500; letter-spacing: -.015em; }
-    .rows { display: flex; flex-direction: column; gap: 22px; animation: panel-enter 260ms var(--settle); }
+    /* The section's title stays put, beside the close button, and the rows
+       scroll under it, fading at both ends. */
+    .content { min-height: 0; display: flex; flex-direction: column; }
+    .content h2 { margin: 0; padding: 20px 60px 10px 24px; font-size: 15px; font-weight: 500; letter-spacing: -.015em; }
+    .rows {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      padding: 12px 24px 28px;
+      mask-image: linear-gradient(transparent, #000 12px calc(100% - 20px), transparent);
+      animation: panel-enter 260ms var(--settle);
+    }
+    .rows > * { flex: none; }
     @keyframes panel-enter { from { opacity: 0; transform: translateY(4px); } }
     .shortcuts .rows { gap: 10px; }
     /* A new section's controls mount at rest, not easing into their values. */
@@ -360,7 +374,8 @@
       .nav { flex-direction: row; align-items: center; overflow: auto hidden; scrollbar-width: none; }
       .nav-group { max-width: 120px; padding: 0 6px; }
       .swatches { padding-left: 34px; }
-      .content { padding: 12px 16px 24px; }
+      .content h2 { padding: 12px 16px 8px; }
+      .rows { padding: 12px 16px 24px; }
       .text input { width: 100%; }
       .control-row .text { flex: 1 1 100%; }
     }
@@ -899,7 +914,6 @@
       content.className = `content ${id} is-mounting`
       content.replaceChildren(el('h2', '', section.title), list)
       redraw()
-      content.scrollTop = 0
       content.getBoundingClientRect()
       content.classList.remove('is-mounting')
     }

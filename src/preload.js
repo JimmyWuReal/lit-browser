@@ -11,11 +11,17 @@ contextBridge.exposeInMainWorld('lit', {
   // `focus: false` keeps keyboard focus in the toolbar.
   closeTab: (id, focus = true) => ipcRenderer.send('close-tab', id, focus),
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started, find, zoom, prompt }] },
-  // `zoom` being '125%', or '' at the default zoom, and `prompt` the tab's
-  // permission request, { id, site, kinds, does }, or undefined.
+  // { activeId, navigationButtons, tabs: [{ id, title, url, address, canGoBack,
+  // canGoForward, favicon, loading, started, find, zoom, prompt }] },
+  // `navigationButtons` being whether they show, `address` the url's parts to
+  // draw (addressParts in src/url.js), `zoom` '125%', or '' at the default
+  // zoom, and `prompt` the tab's permission request, { id, site, kinds, does },
+  // or undefined.
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
+  // 'back', 'forward', 'reload' or 'stop', on the tab the toolbar shows.
+  // `focus: false` keeps keyboard focus in the toolbar.
+  navigatePage: (tabId, action, focus = true) => ipcRenderer.send('navigate-page', tabId, action, focus),
   openSettings: () => ipcRenderer.send('open-settings'),
   // The profile button: { name, color, shown }, not shown while there is only
   // one profile. Its menu opens at { x, y }, in the window.
@@ -119,7 +125,7 @@ contextBridge.exposeInMainWorld('lit', {
     onChanged: (callback) => on('history-changed', callback),
   },
   // For the address bar's suggestions list only: it shows the items
-  // (onShow, { items, generation }, as `suggest` answers them), highlights the one
+  // (onShow, { items, text, generation }, as `suggest` answers them for `text`), highlights the one
   // the toolbar selects, and says which one was clicked, on which list.
   suggestions: {
     pick: (index, generation) => ipcRenderer.send('suggestions-pick', index, generation),

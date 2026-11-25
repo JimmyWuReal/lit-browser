@@ -17,7 +17,8 @@
       --line-live: rgba(255, 255, 255, .72);
       --settle: cubic-bezier(.22, 1, .36, 1);
     }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .18) transparent; }
+    ::selection { color: #fff; background: rgba(255, 255, 255, .24); }
     /* The page is a transparent layer over the browser window; only the
        backdrop and the panel draw anything. */
     html, body { height: 100%; margin: 0; background: transparent; overflow: hidden; color: #ededed; }
@@ -38,8 +39,8 @@
     .is-open .backdrop { opacity: 1; animation: popup-fade 160ms ease-out; }
     .panel {
       position: relative;
-      width: min(720px, 100%);
-      height: min(540px, 100%);
+      width: min(780px, 100%);
+      height: min(600px, 100%);
       display: flex;
       flex-direction: column;
       border-radius: 16px;

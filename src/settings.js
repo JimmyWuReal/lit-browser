@@ -69,6 +69,20 @@ const SECTIONS = [
         type: 'toggle',
         default: true,
       },
+      {
+        key: 'navigationButtons',
+        label: 'Show navigation buttons',
+        description: 'Back, Forward and Reload, beside the address bar.',
+        type: 'toggle',
+        default: true,
+      },
+      {
+        key: 'fullAddress',
+        label: 'Show full addresses',
+        description: 'Otherwise https:// and www. only show while you edit the address.',
+        type: 'toggle',
+        default: false,
+      },
     ],
   },
   {

@@ -11,7 +11,7 @@
 const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, screen, session, shell } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
-const { toUrl, searchUrl, engineOf } = require('./url')
+const { toUrl, searchUrl, engineOf, addressParts } = require('./url')
 const quickSearch = require('./quicksearch')
 const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
@@ -824,8 +824,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     win.setTitle(isPrivate ? `${named} (Private)` : named)
     win.webContents.send('tabs', {
       activeId,
+      navigationButtons: profile.settings.navigationButtons,
       tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts }) => ({
         id, title, url, favicon, loading, started,
+        address: addressParts(url, profile.settings.fullAddress),
+        canGoBack: !page.isDestroyed() && page.navigationHistory.canGoBack(),
+        canGoForward: !page.isDestroyed() && page.navigationHistory.canGoForward(),
         // The tab's oldest unanswered permission request; the rest wait.
         prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
@@ -940,8 +944,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       sync()
     })
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => {
-      if (!isMainFrame) return
-      committed(tab, url, true)
+      // A frame's move is no visit, but adds to the back/forward list.
+      if (isMainFrame) committed(tab, url, true)
       sync()
     })
     // A title goes to the tab's visit once it is recorded; until then the
@@ -1534,13 +1538,15 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // losing focus to the click), so the list is kept until it is hidden.
   let suggestionsView = null
   let suggestions = []
+  // What was typed for them, which the list marks in each.
+  let suggestionsText = ''
   let suggestionsOpen = false
   let suggestionsHide = null
   // Counts each list shown; a click names the list it was on, so a click
   // on a list that has since changed opens nothing.
   let suggestionsGeneration = 0
 
-  function showSuggestions(items, { x, y, width }) {
+  function showSuggestions(items, text, { x, y, width }) {
     if (!suggestionsView) {
       suggestionsView = new WebContentsView({ webPreferences: { preload: PRELOAD, session: ses } })
       suggestionsView.setBackgroundColor('#00000000')
@@ -1548,12 +1554,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       windowsByPopup.set(suggestionsView.webContents, { controls, name: 'suggestions' })
       // The first list is sent before the page can hear it; send it again.
       suggestionsView.webContents.on('did-finish-load', () => {
-        if (suggestionsOpen) suggestionsView.webContents.send('suggestions-show', { items: suggestions, generation: suggestionsGeneration })
+        if (suggestionsOpen) suggestionsView.webContents.send('suggestions-show', { items: suggestions, text: suggestionsText, generation: suggestionsGeneration })
       })
       suggestionsView.webContents.loadFile(path.join(__dirname, 'suggestions.html'))
     }
     clearTimeout(suggestionsHide)
     suggestions = items
+    suggestionsText = text
     const { width: windowWidth, height: windowHeight } = win.getContentBounds()
     const left = Math.max(0, Math.min(Math.round(x), windowWidth - 1))
     const top = Math.max(0, Math.round(y))
@@ -1568,7 +1575,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     suggestionsView.setVisible(true)
     suggestionsOpen = true
     suggestionsGeneration++
-    suggestionsView.webContents.send('suggestions-show', { items, generation: suggestionsGeneration })
+    suggestionsView.webContents.send('suggestions-show', { items, text, generation: suggestionsGeneration })
   }
 
   // `blur` is the toolbar closing the list as the address field loses
@@ -1605,7 +1612,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       ? quickSearch.complete(text, profile.settings.quickSearchPrefix).map((site) => ({ kind: 'site', ...site, shortcut: profile.settings.quickSearchPrefix + site.alias }))
       : []
     const items = sites.length ? sites : ok && profile.settings.addressSuggestions ? historyStore.suggestWithBookmarks(bookmarkStore.pages(profile.bookmarks), isPrivate ? [] : profile.visited, text) : []
-    if (items.length) showSuggestions(items, rect)
+    if (items.length) showSuggestions(items, text, rect)
     else hideSuggestions()
     return items
   }
@@ -1798,6 +1805,20 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     byNumber: (number) => activate(byNumber(ids(), number)),
     // The active page, for reload, back, forward and its developer tools.
     page: () => (active()?.started && !active().page.isDestroyed() ? active().page : null),
+    // The toolbar's navigation buttons. A click hands focus to the page, so
+    // its keys don't press the button again; the keyboard's press (`focus`
+    // false) keeps it on the button.
+    navigatePage(action, focus) {
+      const tab = active()
+      if (!tab?.started || tab.page.isDestroyed()) return
+      switch (action) {
+        case 'back': tab.page.navigationHistory.goBack(); break
+        case 'forward': tab.page.navigationHistory.goForward(); break
+        case 'reload': tab.page.reload(); break
+        case 'stop': tab.page.stop()
+      }
+      if (focus) tab.page.focus()
+    },
     // Zoom acts on the active tab's page, once it has an address.
     zoomBy: (direction) => { const tab = active(); if (tab?.started) zoomBy(tab, direction) },
     resetZoom: () => { const tab = active(); if (tab?.started) resetZoom(tab) },
@@ -2153,6 +2174,7 @@ ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !=
 ipcMain.on('find', fromToolbar((c, tabId, text) => c.isActive(tabId) && typeof text === 'string' && text.length <= findState.MAX_TEXT && c.findText(text)))
 ipcMain.on('find-again', fromToolbar((c, tabId, forward) => c.isActive(tabId) && c.findAgain(forward !== false)))
 ipcMain.on('close-find', fromToolbar((c, tabId) => c.isActive(tabId) && c.closeFind()))
+ipcMain.on('navigate-page', fromToolbar((c, tabId, action, focus) => c.isActive(tabId) && c.navigatePage(action, focus !== false)))
 ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 ipcMain.on('open-downloads', fromToolbar((c) => c.openPopup('downloads')))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
