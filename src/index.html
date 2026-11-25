@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src https: http: data:; script-src 'self' 'unsafe-inline'">
   <title>Lit</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400&family=Inter:wght@400;500;600&display=swap">
   <style>
     :root {
       color-scheme: dark;
@@ -493,6 +493,44 @@
     .prompt-button.is-primary:hover { background: #fff; }
     .prompt .icon-button { width: 26px; height: 26px; flex: 0 0 auto; border-radius: 7px; }
 
+    /* The page shown in place of one that failed or crashed, as the kit's
+       empty state: the rest of the window, under the rows above. */
+    .error { display: none; }
+    .failed { display: flex; flex-direction: column; height: 100vh; }
+    .failed > * { flex-shrink: 0; }
+    .failed .error { flex: 1; min-height: 0; display: flex; overflow: auto; outline: 0; }
+    .error-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      max-width: 100%;
+      margin: auto;
+      padding: 32px 24px;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+    .error h1 { margin: 0; font-size: 16px; font-weight: 500; letter-spacing: -.01em; color: #fff; }
+    .error p { max-width: 44ch; margin: 0; color: #a0a0a0; font-size: 13px; line-height: 1.7; text-wrap: pretty; user-select: text; }
+    .error code { margin-top: 6px; color: var(--dim); font: 400 11px/1.5 'DM Mono', ui-monospace, monospace; user-select: text; }
+    .error-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 16px; }
+    /* The kit's outline button, small. */
+    .outline-button {
+      height: 36px;
+      padding: 0 14px;
+      border: 0;
+      border-radius: 10px;
+      color: #fff;
+      background: transparent;
+      box-shadow: inset 0 0 0 1px var(--line);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -.01em;
+      transition: box-shadow 200ms ease, transform 140ms var(--settle);
+    }
+    .outline-button:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .outline-button:active { transform: scale(.97); transition-duration: 55ms; }
+
     /* A private window (?private in its address, from main) is a shade of
        violet instead of grey, with a Private badge in the strip and a note
        under the home search box. Its background matches the window's in
@@ -644,6 +682,19 @@
       </button>
     </div>
   </div>
+
+  <!-- The active tab's error page (see errors.js). -->
+  <main class="error" id="error" tabindex="-1" aria-labelledby="error-title" aria-describedby="error-detail">
+    <div class="error-box">
+      <h1 id="error-title"></h1>
+      <p id="error-detail"></p>
+      <code id="error-code"></code>
+      <div class="error-actions">
+        <button class="outline-button" id="error-back" type="button">Go back</button>
+        <button class="outline-button" id="error-retry" type="button"></button>
+      </div>
+    </div>
+  </main>
 
   <template id="tab-template">
     <div class="tab">
@@ -800,6 +851,7 @@
       drawStar()
       drawFind(tab?.find, switched)
       drawPrompt(tab)
+      drawError(tab)
     }
 
     // The bookmark bar ({ visible, items } from main; see src/bookmarks.js).
@@ -1019,6 +1071,35 @@
     document.getElementById('prompt-allow').addEventListener('click', answerPrompt('allow'))
     document.getElementById('prompt-block').addEventListener('click', answerPrompt('block'))
     document.getElementById('prompt-dismiss').addEventListener('click', answerPrompt(null))
+
+    // The active tab's error page, in place of a page that failed. Main
+    // gives it focus before it is drawn, so that waits for it; a page that
+    // comes back takes the focus the error page had.
+    const errorPage = document.getElementById('error')
+    const errorBack = document.getElementById('error-back')
+    const errorRetry = document.getElementById('error-retry')
+    let errorTab = null
+    let focusError = false
+    function drawError(tab) {
+      const error = tab?.started ? tab.error : null
+      const cameBack = !error && tab && tab.id === errorTab && document.hasFocus() && errorPage.contains(document.activeElement)
+      errorTab = error ? tab.id : null
+      document.body.classList.toggle('failed', Boolean(error))
+      if (cameBack) window.lit.focusPage(tab.id)
+      if (!error) { focusError = false; return }
+      document.getElementById('error-title').textContent = error.title
+      document.getElementById('error-detail').textContent = error.detail
+      document.getElementById('error-code').textContent = error.code
+      errorRetry.textContent = error.action
+      errorBack.hidden = !error.canGoBack
+      if (focusError) { focusError = false; errorPage.focus() }
+    }
+    window.lit.onFocusError(() => {
+      if (errorTab === null) focusError = true
+      else errorPage.focus()
+    })
+    errorRetry.addEventListener('click', () => window.lit.reload(errorTab))
+    errorBack.addEventListener('click', () => window.lit.goBack(errorTab))
 
     // The find field shows the active tab's find. Its text comes from main
     // only on opening or switching tabs; otherwise the field is the source.
