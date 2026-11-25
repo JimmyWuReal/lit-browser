@@ -13,7 +13,7 @@
 // A private window (⇧⌘N) browses in an in-memory session of its own and
 // keeps nothing once it closes (see privateSession), except the bookmarks
 // someone adds in it. Every window belongs to one profile (see openProfile).
-const { app, BrowserWindow, Menu, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, safeStorage, screen, session, shell, systemPreferences } = require('electron')
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, safeStorage, screen, session, shell, systemPreferences, webFrameMain } = require('electron')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const fs = require('node:fs')
@@ -28,6 +28,7 @@ const shortcuts = require('./shortcuts')
 const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
 const permissions = require('./permissions')
+const { refusePasskeys } = require('./passkeys')
 const passwords = require('./passwords')
 const shareStore = require('./share')
 const signIn = require('./signin')
@@ -1350,6 +1351,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // list are now the tab's. This event is only for those: a page that
     // breaks off halfway, or a load stopped or turned into a download, keeps
     // what the tab shows.
+    // Preloads don't run in the frames inside a page (src/passkeys.js). A
+    // frame that asks while its page is still being read may get in first.
+    page.on('did-frame-navigate', (_event, _url, _code, _status, isMainFrame, processId, routingId) => {
+      if (!isMainFrame) webFrameMain.fromId(processId, routingId)?.executeJavaScript(`(${refusePasskeys})()`).catch(() => {})
+    })
     page.on('did-fail-provisional-load', (_event, code, name, url, isMainFrame) => {
       if (!isMainFrame || code === ERR_ABORTED) return
       tab.url = url
