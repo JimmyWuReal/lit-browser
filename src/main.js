@@ -960,7 +960,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     layout()
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
-    page.on('did-stop-loading', () => { tab.loading = false; settle(tab); sync(); checkResponse(tab) })
+    page.on('did-stop-loading', async () => {
+      tab.loading = false
+      sync()
+      if (!await emptyError(tab)) settle(tab)
+    })
     // The address being opened, before it commits: a tab duplicated or
     // closed before its first page commits gets it.
     // Whether the page started it (a link, a script) or Lit did (the
@@ -1235,16 +1239,22 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // A site can answer with an HTTP error and an empty page, which would show
-  // as a blank one. The page is asked once it has loaded; one with anything
-  // to show, or a script that might, is left alone.
-  const EMPTY = `Boolean(document.body) && !document.body.textContent.trim() &&
-    !document.querySelector('script, meta[http-equiv], body > :not(pre)')`
-  async function checkResponse(tab) {
+  // as a blank one. The page is asked once it has loaded; only what Chromium
+  // itself makes of an empty response counts (for plain text, a <pre> and a
+  // color scheme), so anything from the site is left alone. Answers whether
+  // it was one, or another page has come meanwhile: nothing to record.
+  const EMPTY = `Boolean(document.body) && !document.documentElement.textContent.trim() &&
+    !document.documentElement.attributes.length && !document.body.attributes.length &&
+    !document.querySelector('head > :not(meta[name="color-scheme"]), body > :not(pre), pre *')`
+  async function emptyError(tab) {
     const { response } = tab
-    if (!(response?.status >= 400) || tab.error || tab.page.isDestroyed()) return
+    if (!(response?.status >= 400) || tab.error || tab.page.isDestroyed()) return false
     const empty = await tab.page.executeJavaScriptInIsolatedWorld(CHECK_WORLD, [{ code: EMPTY }]).catch(() => false)
-    // Another page may have come meanwhile.
-    if (empty === true && tab.response === response && !tab.error) fail(tab, { kind: 'http', status: response.status })
+    if (tab.response !== response || tab.error) return true
+    if (empty !== true) return false
+    tab.toRecord = null
+    fail(tab, { kind: 'http', status: response.status })
+    return true
   }
 
   // A tab's first load turns it from the search box into its page.
