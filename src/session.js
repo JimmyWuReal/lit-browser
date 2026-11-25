@@ -5,8 +5,9 @@
 //
 // The file is { windows: [window] }, oldest-focused window first, so the
 // last one opened is the one that was in front. A window is { tabs:
-// [history | null], activeIndex, bounds, maximized, fullScreen }, the
-// same shape Reopen Closed Tab uses; a null history is a tab on the search
+// [history | null], activeIndex, bounds, maximized, fullScreen, profile },
+// `profile` being its profile's id (none in a file from before profiles),
+// otherwise the same shape Reopen Closed Tab uses; a null history is a tab on the search
 // box. A history is { entries: [{ url, title, pageState? }], index }.
 const fs = require('node:fs')
 const { save: write } = require('./settings')
@@ -53,6 +54,7 @@ function clean(saved) {
       bounds: cleanBounds(win.bounds),
       maximized: win.maximized === true,
       fullScreen: win.fullScreen === true,
+      ...(typeof win.profile === 'string' && { profile: win.profile }),
     }))
 }
 
@@ -65,7 +67,7 @@ function load(file) {
   }
 }
 
-const save = (file, windows) => write(file, { windows: windows.map(({ tabs, activeIndex, bounds, maximized, fullScreen }) => ({ tabs, activeIndex, bounds, maximized, fullScreen })) })
+const save = (file, windows) => write(file, { windows: windows.map(({ tabs, activeIndex, bounds, maximized, fullScreen, profile }) => ({ tabs, activeIndex, bounds, maximized, fullScreen, profile })) })
 
 // Restoring turned off: nothing of the last session stays on disk.
 const forget = (file) => fs.rmSync(file, { force: true })

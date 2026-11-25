@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld('lit', {
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   openSettings: () => ipcRenderer.send('open-settings'),
+  // The profile button: { name, color, shown }, not shown while there is only
+  // one profile. Its menu opens at { x, y }, in the window.
+  onProfile: (callback) => on('profile', callback),
+  openProfileMenu: (at) => ipcRenderer.send('profile-menu', at),
   openDownloads: () => ipcRenderer.send('open-downloads'),
   // The downloads indicator: { count, active, progress }, `progress` being
   // 0–1, or null while none is running or one has no known size.
@@ -77,13 +81,21 @@ contextBridge.exposeInMainWorld('lit', {
     onChanged: (callback) => on('bookmarks-changed', callback),
   },
   // For the Settings popup only; main ignores these from anywhere else.
-  // State is { sections, values, labels, sitePermissions, error? } (see
-  // settingsState in main).
+  // State is { sections, values, labels, sitePermissions, quickSearchSites,
+  // profileId, profiles, profileColors, error? } (see settingsState in main),
+  // for the window's profile, with the `section` to show as it opens, if any.
   settings: {
     get: () => ipcRenderer.invoke('settings-get'),
     set: (key, value) => ipcRenderer.invoke('settings-set', key, value),
     // A site's choice for one kind: 'allow', 'block', or null to forget it.
     setPermission: (site, kind, choice) => ipcRenderer.invoke('permissions-set', site, kind, choice),
+    // Profiles. All but openProfile answer with the new state.
+    addProfile: () => ipcRenderer.invoke('profiles-add'),
+    // { name? , color? }
+    updateProfile: (id, changes) => ipcRenderer.invoke('profiles-update', id, changes),
+    // Asks first.
+    deleteProfile: (id) => ipcRenderer.invoke('profiles-delete', id),
+    openProfile: (id) => ipcRenderer.send('profiles-open', id),
     close: () => ipcRenderer.send('settings-close'),
     // While on, key presses come back through onShortcutPressed as
     // { accelerator } ('' clears) or { cancel: true }, not to the menu.

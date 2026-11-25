@@ -7,7 +7,7 @@
 // gets a prompt in the toolbar, below the address row (src/permissions.js).
 // A private window (⇧⌘N) browses in an in-memory session of its own and
 // keeps nothing once it closes (see privateSession), except the bookmarks
-// someone adds in it.
+// someone adds in it. Every window belongs to one profile (see openProfile).
 const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, screen, session, shell } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
@@ -22,6 +22,7 @@ const shortcuts = require('./shortcuts')
 const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
 const permissions = require('./permissions')
+const profileStore = require('./profiles')
 const findState = require('./find')
 const { pageMenu, tabMenu, bookmarkMenu } = require('./menus')
 const { createAdblock } = require('./adblock')
@@ -54,7 +55,158 @@ let nextPromptId = 1
 // so tabs closed from it earlier still find their way back to it.
 let nextWindowKey = 1
 
-// Recently closed tabs and windows, newest last, for Reopen Closed Tab.
+// Every profile, the default one first, each an object openProfile makes; and
+// their saved list (src/profiles.js). `currentProfile` is the one of the
+// window focused last, where a new window opens when none is.
+let profiles = []
+let profileList
+let profilesFile
+let currentProfile
+
+// Opens a profile's session and reads its files. Everything that differs
+// between profiles is on the object:
+// - settings: its own values and the shared ones together (src/settings.js),
+//   saved on every change.
+// - siteZooms: each site's zoom, when it differs from the default (see
+//   src/zoom.js), saved whenever one changes.
+// - sitePermissions: each site's Allow or Block, per kind (see
+//   src/permissions.js), saved whenever one changes.
+// - permissionStore: where its session's permission choices live: `sites` to
+//   read them, and `choose` to change one, which returns whether it was
+//   saved. A private window has a store of its own (see createWindow).
+// - visited: pages visited (src/history.js), newest first; historySave is
+//   the timer of a save still waiting.
+// - bookmarks (src/bookmarks.js), which its private windows share.
+// - closed: recently closed tabs and windows, newest last, for Reopen Closed
+//   Tab (see rememberClosed).
+// `deleted` is set once it is deleted, when nothing of it is saved any more.
+// Its id never changes; its name and color follow the saved list.
+function openProfile({ id, name, color }) {
+  const folder = profileStore.folder(app.getPath('userData'), id)
+  const partition = profileStore.partition(id)
+  const files = Object.fromEntries(['settings', 'zoom', 'permissions', 'history', 'bookmarks'].map((file) => [file, path.join(folder, `${file}.json`)]))
+  const own = settingsStore.load(files.settings)
+  const profile = {
+    id, name, color, files,
+    session: partition ? session.fromPartition(partition) : session.defaultSession,
+    // The default profile's file holds the shared settings too.
+    settings: profiles.length ? settingsStore.combine(own, profiles[0].settings) : own,
+    siteZooms: zoom.load(files.zoom),
+    sitePermissions: permissions.load(files.permissions),
+    visited: historyStore.load(files.history),
+    historySave: null,
+    bookmarks: bookmarkStore.load(files.bookmarks),
+    closed: [],
+    deleted: false,
+  }
+  profile.permissionStore = {
+    get sites() { return profile.sitePermissions },
+    choose: (site, kinds, choice) => choosePermission(profile, site, kinds, choice),
+  }
+  setUpSession(profile.session, profile, profile.permissionStore)
+  profiles.push(profile)
+  return profile
+}
+
+const windowsOf = (profile) => [...openWindows].filter((controls) => controls.profile === profile)
+// Settings every profile shares.
+const shared = () => profiles[0].settings
+
+// Saves a changed list of profiles; returns whether it was saved. Names and
+// colors reach every window.
+function setProfileList(next) {
+  try {
+    profileStore.save(profilesFile, next)
+  } catch {
+    return false
+  }
+  profileList = next
+  for (const profile of profiles) Object.assign(profile, next.profiles.find(({ id }) => id === profile.id))
+  return true
+}
+
+function profilesChanged() {
+  Menu.setApplicationMenu(buildMenu())
+  for (const controls of openWindows) { controls.profileChanged(); controls.settingsChanged() }
+}
+
+// A window of `profile` came to the front. The menu shows what is its own;
+// the next launch starts with it, unless the window is private.
+function profileUsed(profile, isPrivate) {
+  if (quitting || profile.deleted) return
+  if (currentProfile !== profile) {
+    currentProfile = profile
+    Menu.setApplicationMenu(buildMenu())
+  }
+  // Unsaved, the next launch starts with the one before.
+  if (!isPrivate && profileList.last !== profile.id) setProfileList({ ...profileList, last: profile.id })
+}
+
+// Brings back the profile's window used last, or opens one.
+function switchProfile(profile) {
+  if (profile.deleted) return
+  const controls = windowsOf(profile).filter((each) => !each.isPrivate).at(-1)
+  if (!controls) return createWindow({ profile })
+  if (controls.win.isMinimized()) controls.win.restore()
+  controls.win.focus()
+  return controls
+}
+
+// Returns why it couldn't, if so.
+function addProfile() {
+  const { state, profile } = profileStore.add(profileList)
+  if (!setProfileList(state)) return 'Couldn’t save profiles.'
+  const opened = openProfile(profile)
+  adblock.set(opened.session, opened.settings.blockAds)
+  profilesChanged()
+}
+
+function updateProfile(id, changes) {
+  const { state, error } = profileStore.update(profileList, id, changes)
+  if (error) return error
+  if (!setProfileList(state)) return 'Couldn’t save profiles.'
+  profilesChanged()
+}
+
+// Deletes a profile and all it holds, after asking. Its windows close without
+// asking their pages, its session is cleared, and what Chromium still holds
+// on disk goes at the next launch (sweep in src/profiles.js). Being off the
+// saved list first, it never comes back half deleted.
+async function deleteProfile(win, id) {
+  const profile = profiles.find((each) => each.id === id)
+  if (!profile || id === profileStore.DEFAULT) return
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Delete', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    message: `Delete “${profile.name}”?`,
+    detail: 'Its history, bookmarks, settings, sign-ins and site data are deleted, its windows close, and downloads on their way are cancelled. This can’t be undone.',
+  })
+  if (response !== 0 || profile.deleted) return
+  if (!setProfileList(profileStore.remove(profileList, id))) return 'Couldn’t save profiles, so nothing was deleted.'
+  profile.deleted = true
+  clearTimeout(profile.historySave)
+  profile.historySave = null
+  profiles = profiles.filter((each) => each !== profile)
+  if (currentProfile === profile) currentProfile = profiles[0]
+  const windows = windowsOf(profile)
+  // Lit stays in view, in another profile.
+  if (windows.length === openWindows.size) switchProfile(profiles[0])
+  const pages = windows.flatMap((controls) => controls.pages())
+  for (const controls of windows) controls.win.destroy()
+  dropDownloads(profile.session)
+  profilesChanged()
+  saveSession()
+  try {
+    fs.rmSync(profileStore.folder(app.getPath('userData'), id), { recursive: true, force: true })
+  } catch {
+    // The next launch tries again.
+  }
+  forgetSession(profile.session, pages)
+}
+
+// Remembers a closed tab or window, for Reopen Closed Tab.
 // Only closes people make count (⌘W, the close button, closing a window),
 // not a page closing itself; a blank tab has a null history and comes
 // back blank. Nothing is kept while Save history is off.
@@ -64,64 +216,47 @@ let nextWindowKey = 1
 // A history is { entries, index } from navigationHistory, so back and
 // forward come back too. Kept in memory only, so Lit forgets them when it
 // quits; the Closed tabs to remember setting caps how many.
-const closed = []
+function rememberClosed(profile, entry) {
+  if (!profile.settings.saveHistory) return
+  remember(profile.closed, entry, profile.settings.closedTabsLimit)
+  refreshReopen()
+}
 
-// Settings are read once at launch and saved on every change.
-let settingsFile
-let settings = settingsStore.clean()
+const zoomFor = (profile, url) => profile.siteZooms.get(zoom.siteOf(url)) ?? profile.settings.defaultZoom
 
-// Each site's zoom, when it differs from the default (see src/zoom.js).
-// Read at launch and saved whenever a site's zoom changes.
-let zoomFile
-let siteZooms = new Map()
-const zoomFor = (url) => siteZooms.get(zoom.siteOf(url)) ?? settings.defaultZoom
-
-// Zooms every tab on `url`'s site, in every window, and remembers it;
+// Zooms every tab on `url`'s site, in the profile's windows, and remembers it;
 // zooming back to the default forgets the site. A step past the last zoom,
 // or a reset at the default, changes nothing.
-function zoomSite(url, factor) {
+function zoomSite(profile, url, factor) {
   const site = zoom.siteOf(url)
   if (!site) return
-  const forget = zoom.same(factor, settings.defaultZoom)
-  const saved = siteZooms.get(site)
+  const forget = zoom.same(factor, profile.settings.defaultZoom)
+  const saved = profile.siteZooms.get(site)
   if (forget ? saved === undefined : saved !== undefined && zoom.same(saved, factor)) return
-  const next = new Map(siteZooms)
+  const next = new Map(profile.siteZooms)
   if (forget) next.delete(site)
   else next.set(site, factor)
-  siteZooms = next
+  profile.siteZooms = next
   try {
-    zoom.save(zoomFile, siteZooms)
+    zoom.save(profile.files.zoom, profile.siteZooms)
   } catch {
     // Unsaved, the zoom still holds until Lit quits.
   }
-  for (const controls of openWindows) controls.applyZoom(site)
-}
-
-// Each site's Allow or Block, per kind (see src/permissions.js). Read at
-// launch and saved whenever one changes.
-let permissionsFile
-let sitePermissions = new Map()
-
-// Where a session's permission choices live: `sites` to read them, and
-// `choose` to change one, which returns whether it was saved. Normal windows
-// share this one; each private window has its own (see createWindow).
-const savedPermissions = {
-  get sites() { return sitePermissions },
-  choose: (site, kinds, choice) => choosePermission(site, kinds, choice),
+  for (const controls of windowsOf(profile)) controls.applyZoom(site)
 }
 
 // Saves `choice` ('allow', 'block', or null to forget) for the kinds, then
-// answers every prompt it settles, in every window. Unsaved, a choice still
+// answers every prompt it settles, in the profile's windows. Unsaved, a choice still
 // holds until Lit quits; returns whether it was saved.
-function choosePermission(site, kinds, choice) {
-  sitePermissions = permissions.choose(sitePermissions, site, kinds, choice)
+function choosePermission(profile, site, kinds, choice) {
+  profile.sitePermissions = permissions.choose(profile.sitePermissions, site, kinds, choice)
   let saved = true
   try {
-    permissions.save(permissionsFile, sitePermissions)
+    permissions.save(profile.files.permissions, profile.sitePermissions)
   } catch {
     saved = false
   }
-  for (const controls of openWindows) { controls.settlePrompts(); controls.settingsChanged() }
+  for (const controls of windowsOf(profile)) { controls.settlePrompts(); controls.settingsChanged() }
   return saved
 }
 
@@ -177,15 +312,15 @@ function onPermissionCheck(store, contents, permission, requestingOrigin, detail
 
 // What every session browsing pages needs: Lit's permission prompts, Do
 // Not Track, and downloads followed into the Downloads list.
-function setUpSession(ses, store) {
+function setUpSession(ses, profile, store) {
   ses.setPermissionRequestHandler((...args) => onPermissionRequest(store, ...args))
   ses.setPermissionCheckHandler((...args) => onPermissionCheck(store, ...args))
-  ses.on('will-download', (_event, item) => trackDownload(item, ses))
-  applyDoNotTrack(ses)
+  ses.on('will-download', (_event, item) => trackDownload(item, ses, profile))
+  applyDoNotTrack(ses, profile)
 }
 
-// Private windows' sessions, while their windows are open.
-const privateSessions = new Set()
+// Private windows' sessions, while their windows are open -> their profile.
+const privateSessions = new Map()
 
 // Each private window browses in a session of its own, in memory only (a
 // partition without "persist:"), so its cookies, cache and site storage
@@ -193,14 +328,15 @@ const privateSessions = new Set()
 // no HTTP cache at all, so pages it loads aren't kept even in memory.
 // Closing the window clears it (see forgetSession), as Electron keeps a
 // session object around until Lit quits.
-function privateSession(key, store) {
+function privateSession(key, profile, store) {
   const ses = session.fromPartition(`private-${key}`, { cache: false })
-  setUpSession(ses, store)
-  adblock.add(ses)
-  privateSessions.add(ses)
+  setUpSession(ses, profile, store)
+  adblock.set(ses, profile.settings.blockAds)
+  privateSessions.set(ses, profile)
   return ses
 }
 
+// Forgets a closed private window's session, or a deleted profile's.
 // Refuses everything a closing window's pages still ask for, waits until
 // they (`pages`, its WebContents) are gone, so none can write after the
 // clearing, then clears all the session holds, one step at a time. The
@@ -226,24 +362,19 @@ async function forgetSession(ses, pages) {
     try {
       await run()
     } catch {
-      console.error(`Couldn’t ${step} of a closed private window.`)
+      console.error(`Couldn’t ${step} of a closed private window or deleted profile.`)
     }
   }
 }
 
-// Pages visited (src/history.js), newest first. Loaded at launch, and saved
-// a moment after a visit, so a burst of navigations writes once; removing
-// pages saves right away, so they can't come back after a crash.
-let historyFile
-let visited = []
-let historySave = null
-
-// Whether the write worked.
-function saveVisited() {
-  clearTimeout(historySave)
-  historySave = null
+// History is saved a moment after a visit, so a burst of navigations writes
+// once; removing pages saves right away, so they can't come back after a
+// crash. Returns whether the write worked.
+function saveVisited(profile) {
+  clearTimeout(profile.historySave)
+  profile.historySave = null
   try {
-    historyStore.save(historyFile, visited)
+    historyStore.save(profile.files.history, profile.visited)
     return true
   } catch {
     return false
@@ -253,19 +384,20 @@ function saveVisited() {
 // `now` saves right away and keeps the old list if that fails, so a page
 // someone removed never comes back after a restart. Returns whether the
 // change was made.
-function setVisited(next, { now = false } = {}) {
-  if (next === visited) return true
-  const before = visited
-  visited = next
-  if (now && !saveVisited()) {
-    visited = before
+function setVisited(profile, next, { now = false } = {}) {
+  if (next === profile.visited) return true
+  if (profile.deleted) return false
+  const before = profile.visited
+  profile.visited = next
+  if (now && !saveVisited(profile)) {
+    profile.visited = before
     return false
   }
   if (!now) {
-    clearTimeout(historySave)
-    historySave = setTimeout(saveVisited, 1000)
+    clearTimeout(profile.historySave)
+    profile.historySave = setTimeout(() => saveVisited(profile), 1000)
   }
-  for (const controls of openWindows) controls.historyChanged()
+  for (const controls of windowsOf(profile)) controls.historyChanged()
   return true
 }
 
@@ -274,11 +406,11 @@ function setVisited(next, { now = false } = {}) {
 // Which navigations count as visits is up to the tab (see `committed`).
 // Each visit gets its own time, so unvisit never mistakes one for another.
 let lastVisitTime = 0
-function recordVisit(url, title) {
-  if (!settings.saveHistory || !historyStore.recordable(url)) return null
-  const previous = visited.find((entry) => entry.url === url) || null
+function recordVisit(profile, url, title) {
+  if (!profile.settings.saveHistory || !historyStore.recordable(url)) return null
+  const previous = profile.visited.find((entry) => entry.url === url) || null
   const time = lastVisitTime = Math.max(Date.now(), lastVisitTime + 1)
-  setVisited(historyStore.visit(visited, { url, title, time }))
+  setVisited(profile, historyStore.visit(profile.visited, { url, title, time }))
   return { url, time, previous }
 }
 
@@ -286,12 +418,12 @@ function recordVisit(url, title) {
 // tab), by time: one taken back later must not bring them back as its
 // `previous`, so it goes past them to theirs.
 const takenBack = new Map()
-function takeBack(visit) {
+function takeBack(profile, visit) {
   let previous = visit.previous
   while (previous && takenBack.has(previous.time)) previous = takenBack.get(previous.time).previous
-  const next = historyStore.unvisit(visited, { ...visit, previous })
-  if (next === visited) takenBack.set(visit.time, { ...visit, previous })
-  else setVisited(next)
+  const next = historyStore.unvisit(profile.visited, { ...visit, previous })
+  if (next === profile.visited) takenBack.set(visit.time, { ...visit, previous })
+  else setVisited(profile, next)
 }
 
 // How soon after loading a page that loads another by itself, untouched,
@@ -302,28 +434,24 @@ const REDIRECT_AFTER = 5000
 // from a new page.
 const withoutHash = (url) => url.split('#')[0]
 
-// Bookmarks (src/bookmarks.js), shared by every window, private ones too.
-// Read at launch and saved on every change.
-let bookmarksFile
-let bookmarks = []
-
 // Saved first, so a failed write keeps the old list. Returns whether the
 // change was made.
-function setBookmarks(next) {
-  if (next === bookmarks) return true
+function setBookmarks(profile, next) {
+  if (next === profile.bookmarks) return true
+  if (profile.deleted) return false
   try {
-    bookmarkStore.save(bookmarksFile, next)
+    bookmarkStore.save(profile.files.bookmarks, next)
   } catch {
     return false
   }
-  bookmarks = next
-  for (const controls of openWindows) controls.bookmarksChanged()
+  profile.bookmarks = next
+  for (const controls of windowsOf(profile)) controls.bookmarksChanged()
   return true
 }
 
 // The same, for changes with nowhere of their own to show a failure.
-function changeBookmarks(win, next) {
-  if (setBookmarks(next)) return true
+function changeBookmarks(profile, win, next) {
+  if (setBookmarks(profile, next)) return true
   if (!win.isDestroyed()) dialog.showMessageBox(win, { type: 'warning', message: 'Couldn’t save bookmarks', detail: 'Nothing was changed.' }).catch(() => {})
   return false
 }
@@ -357,11 +485,11 @@ async function fetchIcon(url, ses) {
 }
 
 // Gives `url`'s bookmarks without an icon theirs, from a page showing it.
-async function addIcon(url, favicon, ses) {
-  const missing = () => bookmarkStore.pages(bookmarks).filter((item) => item.url === url && !item.icon)
+async function addIcon(profile, url, favicon, ses) {
+  const missing = () => bookmarkStore.pages(profile.bookmarks).filter((item) => item.url === url && !item.icon)
   if (!favicon || !missing().length) return
   const icon = await fetchIcon(favicon, ses)
-  if (icon) setBookmarks(missing().reduce((list, item) => bookmarkStore.update(list, item.id, { icon }), bookmarks))
+  if (icon) setBookmarks(profile, missing().reduce((list, item) => bookmarkStore.update(list, item.id, { icon }), profile.bookmarks))
 }
 
 // The windows and tabs to reopen at the next launch (src/session.js),
@@ -377,7 +505,7 @@ function saveSession() {
   sessionSave = null
   if (!sessionFile) return
   try {
-    if (!settings.restoreSession) return sessionStore.forget(sessionFile)
+    if (!shared().restoreSession) return sessionStore.forget(sessionFile)
     sessionStore.save(sessionFile, [...openWindows].map((controls) => controls.snapshot()).filter(Boolean))
   } catch {
     // Unsaved, the session saved last reopens instead.
@@ -393,10 +521,10 @@ function sessionChanged() {
 // `closedTabs` counts tabs and windows Reopen Closed Tab still has, which
 // Clear History also forgets.
 // `error` says why the last removal didn't happen.
-const historyState = (error) => ({ entries: visited, enabled: settings.saveHistory, closedTabs: closed.length, ...(error && { error }) })
+const historyState = (profile, error) => ({ entries: profile.visited, enabled: profile.settings.saveHistory, closedTabs: profile.closed.length, ...(error && { error }) })
 
-function forgetClosed() {
-  closed.length = 0
+function forgetClosed(profile) {
+  profile.closed.length = 0
   refreshReopen()
 }
 
@@ -404,7 +532,7 @@ function forgetClosed() {
 // path, state, received, total, speed } (see src/downloads.js). One joins
 // the list once it has somewhere to go, so a save dialog someone cancels
 // never shows. A window shows the downloads of its browsing session: every
-// normal window the same ones, a private window only its own, which go
+// normal window of a profile the same ones, a private window only its own, which go
 // (cancelled if still on their way) when it closes.
 const downloads = []
 let nextDownloadId = 1
@@ -447,10 +575,10 @@ const downloading = new Set()
 // Every download not done yet, listed or still in its save dialog, so
 // closing a private window can cancel all of its own.
 const unfinished = new Set()
-const askWhereToSave = (ses) => settings.downloadLocation !== 'downloads' || privateSessions.has(ses)
-function trackDownload(item, ses) {
+const askWhereToSave = (ses, profile) => profile.settings.downloadLocation !== 'downloads' || privateSessions.has(ses)
+function trackDownload(item, ses, profile) {
   let file = null
-  if (!askWhereToSave(ses)) {
+  if (!askWhereToSave(ses, profile)) {
     file = downloadsStore.uniquePath(app.getPath('downloads'), item.getFilename(), (candidate) => downloading.has(candidate) || fs.existsSync(candidate))
     downloading.add(file)
     item.setSavePath(file)
@@ -476,72 +604,85 @@ function trackDownload(item, ses) {
     // Done with Electron's item; the list keeps what it last said.
     download.item = null
     // The Dock's Downloads stack is shared, so a private one doesn't bounce it.
-    if (state === 'completed' && ses === session.defaultSession) app.dock?.downloadFinished(download.path)
+    if (state === 'completed' && !privateSessions.has(ses) && !download.dropped) app.dock?.downloadFinished(download.path)
     downloadsChanged(true)
   })
   unfinished.add(download)
   if (read('progressing')) downloadsChanged(true)
 }
 
-// What a popup draws when it opens; `ses` is its window's session.
-const popupState = (name, ses) => ({ settings: settingsState, history: historyState, downloads: () => downloadsState(ses) })[name]()
+// A session going away takes its downloads with it, those on their way (or in
+// their save dialog) cancelled; files already saved stay where they were
+// saved. A dropped download never joins the list again.
+function dropDownloads(ses) {
+  for (const download of unfinished) {
+    if (download.session !== ses) continue
+    download.dropped = true
+    download.item?.cancel()
+  }
+  downloads.splice(0, downloads.length, ...downloads.filter((download) => download.session !== ses))
+  downloadsChanged(true)
+}
 
-// What the Settings popup draws: the values, plus each shortcut as ⌘ symbols.
-function settingsState(error) {
+// What a popup draws when it opens in the window `c`.
+const popupState = (name, c) => ({
+  settings: () => ({ ...settingsState(c.profile), section: c.settingsSection() }),
+  history: () => historyState(c.profile),
+  downloads: () => downloadsState(c.session),
+})[name]()
+
+// What the Settings popup draws in a window of `profile`: the values, plus
+// each shortcut as ⌘ symbols, and every profile.
+function settingsState(profile, error) {
+  const { settings, sitePermissions } = profile
   const labels = {}
   for (const setting of settingsStore.SETTINGS) {
     if (setting.type === 'shortcut') labels[setting.key] = settings[setting.key] ? shortcuts.label(settings[setting.key]) : ''
   }
-  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), quickSearchSites: quickSearch.list(), ...(error && { error }) }
+  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, ...(error && { error }) }
 }
 
 // Where typed text goes: a quick search shortcut's site (`!yt lofi`), else
 // an address or a search with the chosen engine.
-const destination = (input) =>
+const destination = (input, settings) =>
   (settings.quickSearch && quickSearch.resolve(input, settings.quickSearchPrefix)) || toUrl(input, settings.searchEngine)
 
-// Do Not Track and Global Privacy Control headers, only while turned on,
-// for `ses` or every session.
-function applyDoNotTrack(ses) {
-  if (!ses) {
-    for (const each of [session.defaultSession, ...privateSessions]) applyDoNotTrack(each)
-    return
-  }
-  ses.webRequest.onBeforeSendHeaders(settings.doNotTrack
+// Do Not Track and Global Privacy Control headers, only while turned on.
+function applyDoNotTrack(ses, profile) {
+  ses.webRequest.onBeforeSendHeaders(profile.settings.doNotTrack
     ? (details, callback) => callback({ requestHeaders: { ...details.requestHeaders, DNT: '1', 'Sec-GPC': '1' } })
     : null)
 }
 
+// A profile's session, and those of its private windows.
+const sessionsOf = (profile) => [profile.session, ...[...privateSessions].filter(([, owner]) => owner === profile).map(([ses]) => ses)]
+
 // Ad and tracker blocking, in private sessions too (src/adblock.js), made at
-// launch and switched with the Block ads and trackers setting.
+// launch and switched with each profile's Block ads and trackers setting.
 let adblock
 
-// After the closed list changes: the menu item is grayed out while there
+// After a closed list changes: the menu item is grayed out while there
 // is nothing to reopen, and an open History learns what Clear would forget.
 function refreshReopen() {
   const item = Menu.getApplicationMenu()?.getMenuItemById('reopenTab')
-  if (item) item.enabled = closed.length > 0
+  if (item) item.enabled = currentProfile.closed.length > 0
   for (const controls of openWindows) controls.historyChanged()
-}
-
-function rememberClosed(entry) {
-  if (!settings.saveHistory) return
-  remember(closed, entry, settings.closedTabsLimit)
-  refreshReopen()
 }
 
 // The last closed tab goes back where it was: its own window if still open,
 // else the focused one, else a new window. A closed window reopens whole.
 // Private windows remember nothing, and never take a tab from a normal
-// one: from a private window, the normal window in front last gets it.
+// one: from a private window, its profile's normal window in front last gets
+// it. Profiles each have their own list.
 function reopenClosed(focused) {
-  const entry = closed.pop()
+  const profile = focused?.profile ?? currentProfile
+  const entry = profile.closed.pop()
   if (!entry) return
   refreshReopen()
-  if (entry.tabs) return createWindow(entry)
-  const normal = focused?.isPrivate ? [...openWindows].reverse().find((c) => !c.isPrivate) : focused
+  if (entry.tabs) return createWindow({ ...entry, profile })
+  const normal = focused?.isPrivate ? windowsOf(profile).filter((c) => !c.isPrivate).at(-1) : focused
   const target = [...openWindows].find((c) => c.key === entry.windowKey) || normal
-  if (!target) return createWindow({ tabs: [entry.history] })
+  if (!target) return createWindow({ profile, tabs: [entry.history] })
   if (target !== focused) {
     if (target.win.isMinimized()) target.win.restore()
     target.win.focus()
@@ -552,14 +693,18 @@ function reopenClosed(focused) {
 // After a change: rebuild the menu for new shortcuts, and tell every window.
 function applySettings() {
   Menu.setApplicationMenu(buildMenu())
-  applyDoNotTrack()
-  adblock.set(settings.blockAds)
-  if (!settings.saveHistory) {
-    forgetClosed()
-    for (const controls of openWindows) controls.forgetTabHistories()
-  } else {
-    keepNewest(closed, settings.closedTabsLimit)
-    refreshReopen()
+  for (const profile of profiles) {
+    for (const ses of sessionsOf(profile)) {
+      applyDoNotTrack(ses, profile)
+      adblock.set(ses, profile.settings.blockAds)
+    }
+    if (!profile.settings.saveHistory) {
+      forgetClosed(profile)
+      for (const controls of windowsOf(profile)) controls.forgetTabHistories()
+    } else {
+      keepNewest(profile.closed, profile.settings.closedTabsLimit)
+      refreshReopen()
+    }
   }
   for (const controls of openWindows) { controls.applyZoom(); controls.settingsChanged() }
   // Turning Reopen windows off forgets the saved session now; Save history
@@ -567,25 +712,29 @@ function applySettings() {
   saveSession()
 }
 
-// Changes one setting; returns why it couldn't, if so.
-function changeSetting(key, value) {
-  const { values, error } = settingsStore.update(settings, key, value)
+// Changes one setting, for `profile` or, when it is a shared one, for all;
+// returns why it couldn't, if so.
+function changeSetting(profile, key, value) {
+  const { values, error } = settingsStore.update(profile.settings, key, value)
   if (error) return error
-  if (values === settings) return
+  if (profile.deleted) return 'This profile was deleted.'
+  const target = settingsStore.isProfile(key) ? profile : profiles[0]
+  const next = { ...target.settings, [key]: values[key] }
   // Saved first, so a failed write leaves the old settings in use.
   try {
-    settingsStore.save(settingsFile, values)
+    settingsStore.save(target.files.settings, target === profiles[0] ? next : settingsStore.ownOf(next))
   } catch {
     return 'Couldn’t save settings.'
   }
-  settings = values
+  target.settings = next
+  for (const each of profiles) each.settings = settingsStore.combine(each.settings, profiles[0].settings)
   applySettings()
 }
 
 // Applying the settings rebuilds the menu, so its checkbox follows; after
 // a failure the rebuild puts it back.
-function toggleBookmarkBar() {
-  if (!changeSetting('bookmarkBar', !settings.bookmarkBar)) return
+function toggleBookmarkBar(profile) {
+  if (!changeSetting(profile, 'bookmarkBar', !profile.settings.bookmarkBar)) return
   Menu.setApplicationMenu(buildMenu())
   dialog.showMessageBox({ type: 'warning', message: 'Couldn’t save settings' }).catch(() => {})
 }
@@ -594,34 +743,37 @@ function toggleBookmarkBar() {
 // a closed window (see `closed`). Its old position is used only while it is
 // still on a connected display; otherwise only its size.
 // `url` opens in the new window's first tab.
+// `profile` is the one it browses as, for good; everything in it, from its
+// session to its settings, is that profile's.
 // `isPrivate` opens a private window: its own in-memory session, no history,
 // nothing to reopen, and no part in the session saved for the next launch.
-// It suggests only bookmarks, nothing from history, and starts every site at the default
+// It has its profile's settings and bookmarks, but
+// suggests only bookmarks, nothing from history, and starts every site at the default
 // zoom; only the sites' saved Blocks reach it. What changes in it goes when
 // it closes.
-function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: restored = [], activeIndex = 0, bounds, maximized, fullScreen } = {}) {
+function createWindow({ key = nextWindowKey++, profile = currentProfile, isPrivate = false, url, tabs: restored = [], activeIndex = 0, bounds, maximized, fullScreen } = {}) {
   // A private window's own permission choices, kept in memory, under the
   // saved Blocks, which always win (choosePermission settles its prompts too).
   const permissionStore = isPrivate
     ? (() => {
         let own = new Map()
         return {
-          get sites() { return permissions.privateView(sitePermissions, own) },
+          get sites() { return permissions.privateView(profile.sitePermissions, own) },
           choose(site, kinds, choice) { own = permissions.choose(own, site, kinds, choice); settlePrompts(); return true },
         }
       })()
-    : savedPermissions
-  const ses = isPrivate ? privateSession(key, permissionStore) : session.defaultSession
+    : profile.permissionStore
+  const ses = isPrivate ? privateSession(key, profile, permissionStore) : profile.session
   // A private window's own site zooms, apart from the saved ones.
   const privateZooms = new Map()
-  const zoomOf = (url) => (isPrivate ? privateZooms.get(zoom.siteOf(url)) ?? settings.defaultZoom : zoomFor(url))
+  const zoomOf = (url) => (isPrivate ? privateZooms.get(zoom.siteOf(url)) ?? profile.settings.defaultZoom : zoomFor(profile, url))
   // Whether the site has a zoom of its own, which the address bar shows.
-  const ownZoom = (url) => (isPrivate ? privateZooms : siteZooms).has(zoom.siteOf(url))
+  const ownZoom = (url) => (isPrivate ? privateZooms : profile.siteZooms).has(zoom.siteOf(url))
   function changeZoom(url, factor) {
-    if (!isPrivate) return zoomSite(url, factor)
+    if (!isPrivate) return zoomSite(profile, url, factor)
     const site = zoom.siteOf(url)
     if (!site) return
-    if (zoom.same(factor, settings.defaultZoom)) privateZooms.delete(site)
+    if (zoom.same(factor, profile.settings.defaultZoom)) privateZooms.delete(site)
     else privateZooms.set(site, factor)
     controls.applyZoom(site)
   }
@@ -651,6 +803,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   const popups = {}
   let popupOpen = null
   let recording = false
+  let settingsSection
   // Whether the toolbar had focus when a popup opened, to give it back.
   let toolbarHadFocus = false
   // The keyboard layout's code -> character map, sent by the popup.
@@ -663,10 +816,11 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   function sync() {
     if (win.isDestroyed()) return
     const current = active()
-    const top = BAR_HEIGHT + (settings.bookmarkBar ? BOOKMARKS_HEIGHT : 0) + (current?.prompts.length ? PROMPT_HEIGHT : 0)
+    const top = BAR_HEIGHT + (profile.settings.bookmarkBar ? BOOKMARKS_HEIGHT : 0) + (current?.prompts.length ? PROMPT_HEIGHT : 0)
     if (top !== pageTop) { pageTop = top; layout() }
     const title = current?.title || (current?.started ? current.url : '') || 'New Tab'
-    win.setTitle(isPrivate ? `${title} (Private)` : title)
+    const named = profiles.length > 1 ? `${title} — ${profile.name}` : title
+    win.setTitle(isPrivate ? `${named} (Private)` : named)
     win.webContents.send('tabs', {
       activeId,
       tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts }) => ({
@@ -675,7 +829,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
         prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
         // default or the site has its own (which can match a later default).
-        zoom: started && (!zoom.same(factor, settings.defaultZoom) || ownZoom(page.isDestroyed() ? '' : page.getURL()))
+        zoom: started && (!zoom.same(factor, profile.settings.defaultZoom) || ownZoom(page.isDestroyed() ? '' : page.getURL()))
           ? zoom.percent(factor)
           : '',
         find: find && { text: find.text, active: find.active, matches: find.matches },
@@ -686,13 +840,15 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   }
 
   // The toolbar's tooltips show the current shortcuts.
-  const sendShortcuts = () => { if (!win.isDestroyed()) win.webContents.send('shortcuts', settingsState().labels) }
+  const sendShortcuts = () => { if (!win.isDestroyed()) win.webContents.send('shortcuts', settingsState(profile).labels) }
   // What the toolbar needs to turn a typed shortcut into a site chip, or
   // null while quick search is off.
   const sendQuickSearch = () => {
-    if (!win.isDestroyed()) win.webContents.send('quick-search', settings.quickSearch ? { prefix: settings.quickSearchPrefix, sites: quickSearch.list() } : null)
+    if (!win.isDestroyed()) win.webContents.send('quick-search', profile.settings.quickSearch ? { prefix: profile.settings.quickSearchPrefix, sites: quickSearch.list() } : null)
   }
-  const sendBookmarks = () => { if (!win.isDestroyed()) win.webContents.send('bookmarks', { visible: settings.bookmarkBar, items: bookmarks }) }
+  const sendBookmarks = () => { if (!win.isDestroyed()) win.webContents.send('bookmarks', { visible: profile.settings.bookmarkBar, items: profile.bookmarks }) }
+  // The toolbar's profile button, shown while there is more than one.
+  const sendProfile = () => { if (!win.isDestroyed()) win.webContents.send('profile', { name: profile.name, color: profileStore.colorOf(profile.color).value, shown: profiles.length > 1 }) }
   // The toolbar's downloads indicator.
   const sendDownloads = () => { if (!win.isDestroyed()) win.webContents.send('downloads', downloadsSummary(ses)) }
 
@@ -745,7 +901,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: settings.defaultZoom, prompts: [] }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [] }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -792,14 +948,14 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     page.on('page-title-updated', (_event, title) => {
       tab.title = title
       if (tab.toRecord) tab.toRecord.title = title
-      else if (tab.visit && settings.saveHistory) setVisited(historyStore.retitle(visited, tab.visit.url, title))
+      else if (tab.visit && profile.settings.saveHistory) setVisited(profile, historyStore.retitle(profile.visited, tab.visit.url, title))
       sync()
     })
     // A bookmark added by hand gets its icon the first time its page shows.
     // Not in a private window, so browsing there changes nothing saved.
     page.on('page-favicon-updated', (_event, favicons) => {
       tab.favicon = favicons[0] || null
-      if (!isPrivate) addIcon(tab.url, tab.favicon, ses)
+      if (!isPrivate) addIcon(profile, tab.url, tab.favicon, ses)
       sync()
     })
     // Escape in the page closes its find field too, as in Safari and
@@ -862,7 +1018,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
       outlivesOpener: true,
       createWindow: (options) => addTab({
         webContents: options.webContents,
-        background: disposition === 'background-tab' && !settings.switchToNewTabs,
+        background: disposition === 'background-tab' && !profile.settings.switchToNewTabs,
         index: tabs.indexOf(tab) + 1,
       }).page,
     }))
@@ -898,8 +1054,8 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   function newTab() {
     const current = active()
     addTab({
-      url: settings.newTabPage ? toUrl(settings.newTabPage, settings.searchEngine) : undefined,
-      index: settings.newTabPosition === 'next' && current ? tabs.indexOf(current) + 1 : tabs.length,
+      url: profile.settings.newTabPage ? toUrl(profile.settings.newTabPage, profile.settings.searchEngine) : undefined,
+      index: profile.settings.newTabPosition === 'next' && current ? tabs.indexOf(current) + 1 : tabs.length,
     })
   }
 
@@ -913,7 +1069,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   // loaded stands in, if any.
   function saveHistory(tab) {
     // While Save history is off, or in a private window, nothing is kept to reopen.
-    if (!settings.saveHistory || isPrivate) return (tab.history = null)
+    if (!profile.settings.saveHistory || isPrivate) return (tab.history = null)
     tab.history = liveHistory(tab) || tab.history
     return tab.history || pendingHistory(tab)
   }
@@ -934,7 +1090,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   function sessionHistory(tab) {
     if (!tab.started) return null
     const history = liveHistory(tab) || tab.history || pendingHistory(tab)
-    if (!history || settings.saveHistory) return history
+    if (!history || profile.settings.saveHistory) return history
     // Without its page state, which holds form values and scroll position.
     const current = history.entries[history.index]
     return current ? { entries: [{ url: current.url, title: current.title }], index: 0 } : null
@@ -985,7 +1141,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
       !(position.length === before.length && url === before.next)
     const redirected = (replaced || (added && !sameDocument)) && unprompted
     if (redirected && url !== left && Date.now() - (tab.visit?.time ?? 0) < REDIRECT_AFTER && tab.visit && withoutHash(tab.visit.url) === withoutHash(left)) {
-      takeBack(tab.visit)
+      takeBack(profile, tab.visit)
       tab.visit = null
     }
     // A page left while loading, other than by its own doing, still counts.
@@ -997,13 +1153,13 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   // A private window records nothing.
   function settle(tab) {
     if (!tab.toRecord) return
-    tab.visit = isPrivate ? null : recordVisit(tab.toRecord.url, tab.toRecord.title)
+    tab.visit = isPrivate ? null : recordVisit(profile, tab.toRecord.url, tab.toRecord.title)
     tab.toRecord = null
   }
 
   // What Reopen Closed Tab needs to bring this window back.
   function closedWindow(histories, activeIndex) {
-    return { key, tabs: histories, activeIndex, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen() }
+    return { key, tabs: histories, activeIndex, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen(), profile: profile.id }
   }
 
   // A tab's first load turns it from the search box into its page.
@@ -1041,8 +1197,8 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     // Closing the last tab closes the window, as in Chrome and Safari,
     // unless Settings says to keep it open with a new tab. Then the window
     // is what reopens.
-    const closesWindow = nextId === null && settings.closeWindowWithLastTab
-    if (tab.closedByUser && !isPrivate) rememberClosed(closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
+    const closesWindow = nextId === null && profile.settings.closeWindowWithLastTab
+    if (tab.closedByUser && !isPrivate) rememberClosed(profile, closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
     if (nextId === null) return closesWindow ? win.close() : newTab()
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
@@ -1058,7 +1214,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   // opener writes into, which never fires did-navigate.
   const urlOf = (tab) => (tab.page.isDestroyed() ? '' : tab.page.getURL())
   const zoomBy = (tab, direction) => { const url = urlOf(tab); if (url) changeZoom(url, zoom.step(tab.zoom, direction)) }
-  const resetZoom = (tab) => { const url = urlOf(tab); if (url) changeZoom(url, settings.defaultZoom) }
+  const resetZoom = (tab) => { const url = urlOf(tab); if (url) changeZoom(url, profile.settings.defaultZoom) }
 
   // Permission prompts. A tab's requests wait in order, one prompt at a
   // time; the same request asked again joins the one waiting. Each prompt
@@ -1128,7 +1284,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     hideSuggestions()
     tab.started = true
     show(tab)
-    tab.page.loadURL(destination(input)).catch(() => {})
+    tab.page.loadURL(destination(input, profile.settings)).catch(() => {})
   }
 
   // Starts a new search for the tab's find text; results come back through
@@ -1212,9 +1368,9 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
       isPage,
       canGoBack: contents.navigationHistory.canGoBack(),
       canGoForward: contents.navigationHistory.canGoForward(),
-      engineName: engineOf(settings.searchEngine).name,
-      askWhereToSave: askWhereToSave(ses),
-      keys: { reload: settings['shortcuts.reload'], back: settings['shortcuts.back'], forward: settings['shortcuts.forward'], print: settings['shortcuts.print'] },
+      engineName: engineOf(profile.settings.searchEngine).name,
+      askWhereToSave: askWhereToSave(ses, profile),
+      keys: { reload: profile.settings['shortcuts.reload'], back: profile.settings['shortcuts.back'], forward: profile.settings['shortcuts.forward'], print: profile.settings['shortcuts.print'] },
       inSubframe: Boolean(params.frame && params.frame !== contents.mainFrame),
       isPrivate,
     })
@@ -1230,9 +1386,9 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
           url: arg,
           referrer: { url: params.frameURL || params.pageURL, policy: params.referrerPolicy?.policy || 'default' },
           index,
-          background: !settings.switchToNewTabs,
+          background: !profile.settings.switchToNewTabs,
         })
-        case 'search': return addTab({ url: searchUrl(arg, settings.searchEngine), index })
+        case 'search': return addTab({ url: searchUrl(arg, profile.settings.searchEngine), index })
         // Through will-download, so the Downloads setting applies.
         case 'download': return contents.downloadURL(arg)
         case 'copyText': return clipboard.writeText(arg)
@@ -1288,7 +1444,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     const tab = find(id)
     if (!tab) return
     const keys = Object.fromEntries(['reload', 'duplicateTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
-      .map((command) => [command, settings[`shortcuts.${command}`]]))
+      .map((command) => [command, profile.settings[`shortcuts.${command}`]]))
     popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, keys }), (command) => {
       if (!find(id)) return
       switch (command) {
@@ -1299,6 +1455,12 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
         case 'closeToRight': return closeTabsToRight(id)
       }
     })
+  }
+
+  // The toolbar's profile button: every profile, and managing them.
+  function showProfileMenu({ x, y }) {
+    if (win.isDestroyed()) return
+    Menu.buildFromTemplate(profileItems(profile)).popup({ window: win, x: Math.round(x), y: Math.round(y) })
   }
 
   // The Settings, History, Downloads and Bookmarks popups (src/settings.html,
@@ -1332,7 +1494,8 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
 
   // Opening one popup over another swaps them; focus still goes back to
   // where it was before the first.
-  function openPopup(name) {
+  // `section` is the Settings section to show, if not the one shown last.
+  function openPopup(name, section) {
     hideSuggestions()
     const view = popupView(name)
     if (!popupOpen) toolbarHadFocus = win.webContents.isFocused()
@@ -1341,11 +1504,12 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
       recording = false
     }
     popupOpen = name
+    settingsSection = section
     win.contentView.addChildView(view)
     layout()
     view.setVisible(true)
     view.webContents.focus()
-    view.webContents.send(`${name}-open`, name === 'bookmarks' ? bookmarksState() : popupState(name, ses))
+    view.webContents.send(`${name}-open`, name === 'bookmarks' ? bookmarksState() : popupState(name, controls))
   }
 
   // Popups have no exit animation, so they just hide. Focus goes back
@@ -1436,10 +1600,10 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   function suggest(text, rect) {
     const fits = rect && ['x', 'y', 'width'].every((key) => Number.isFinite(rect[key]))
     const ok = fits && !popupOpen && typeof text === 'string' && text.length <= 2048
-    const sites = ok && settings.quickSearch
-      ? quickSearch.complete(text, settings.quickSearchPrefix).map((site) => ({ kind: 'site', ...site, shortcut: settings.quickSearchPrefix + site.alias }))
+    const sites = ok && profile.settings.quickSearch
+      ? quickSearch.complete(text, profile.settings.quickSearchPrefix).map((site) => ({ kind: 'site', ...site, shortcut: profile.settings.quickSearchPrefix + site.alias }))
       : []
-    const items = sites.length ? sites : ok && settings.addressSuggestions ? historyStore.suggestWithBookmarks(bookmarkStore.pages(bookmarks), isPrivate ? [] : visited, text) : []
+    const items = sites.length ? sites : ok && profile.settings.addressSuggestions ? historyStore.suggestWithBookmarks(bookmarkStore.pages(profile.bookmarks), isPrivate ? [] : profile.visited, text) : []
     if (items.length) showSuggestions(items, rect)
     else hideSuggestions()
     return items
@@ -1466,12 +1630,12 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     const view = bookmarksView
     if (!view) return null
     if (view.kind === 'list') {
-      const folder = view.folderId && bookmarkStore.get(bookmarks, view.folderId)
-      const items = folder ? folder.items : bookmarks.filter((item) => view.ids?.includes(item.id))
+      const folder = view.folderId && bookmarkStore.get(profile.bookmarks, view.folderId)
+      const items = folder ? folder.items : profile.bookmarks.filter((item) => view.ids?.includes(item.id))
       return { kind: 'list', at: view.at, folderId: folder ? folder.id : null, title: folder ? folder.title : 'More bookmarks', items }
     }
     const { kind, at, id, folder, heading, values } = view
-    return { kind, at, id, folder, heading, values, folders: bookmarkStore.folders(bookmarks).map(({ id, title }) => ({ id, title })) }
+    return { kind, at, id, folder, heading, values, folders: bookmarkStore.folders(profile.bookmarks).map(({ id, title }) => ({ id, title })) }
   }
 
   function openBookmarks(view) {
@@ -1483,12 +1647,12 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   const underStar = () => ({ x: win.getContentBounds().width, y: BAR_HEIGHT })
 
   function editBookmark(id, at = underStar(), heading) {
-    const item = bookmarkStore.get(bookmarks, id)
+    const item = bookmarkStore.get(profile.bookmarks, id)
     if (!item) return
     const folder = bookmarkStore.isFolder(item)
     openBookmarks({
       kind: 'form', at, id, folder, heading: heading || (folder ? 'Rename folder' : 'Edit bookmark'),
-      values: { title: item.title, url: item.url, folderId: bookmarkStore.folderOf(bookmarks, id) },
+      values: { title: item.title, url: item.url, folderId: bookmarkStore.folderOf(profile.bookmarks, id) },
     })
   }
 
@@ -1498,11 +1662,11 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     const tab = active()
     const url = tab?.started ? bookmarkStore.address(tab.url) : null
     if (!url) return
-    const existing = bookmarkStore.pages(bookmarks).find((item) => item.url === url)
+    const existing = bookmarkStore.pages(profile.bookmarks).find((item) => item.url === url)
     if (existing) return editBookmark(existing.id)
     const item = bookmarkStore.page({ title: tab.title || url, url })
-    if (!changeBookmarks(win, bookmarkStore.add(bookmarks, item))) return
-    addIcon(url, tab.favicon, ses)
+    if (!changeBookmarks(profile, win, bookmarkStore.add(profile.bookmarks, item))) return
+    addIcon(profile, url, tab.favicon, ses)
     editBookmark(item.id, undefined, 'Bookmark added')
   }
 
@@ -1524,31 +1688,31 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     let next
     let url
     // Removed in another window while it was edited here.
-    if (view.id && !bookmarkStore.get(bookmarks, view.id)) return { error: `This ${view.folder ? 'folder' : 'bookmark'} was removed.` }
+    if (view.id && !bookmarkStore.get(profile.bookmarks, view.id)) return { error: `This ${view.folder ? 'folder' : 'bookmark'} was removed.` }
     if (view.folder) {
       if (!title) return { error: 'Give the folder a name.' }
-      next = view.id ? bookmarkStore.update(bookmarks, view.id, { title }) : bookmarkStore.add(bookmarks, bookmarkStore.folder(title))
+      next = view.id ? bookmarkStore.update(profile.bookmarks, view.id, { title }) : bookmarkStore.add(profile.bookmarks, bookmarkStore.folder(title))
     } else {
       url = bookmarkStore.address(values?.url)
       if (!url) return { error: 'Enter a web address.' }
-      const old = view.id && bookmarkStore.get(bookmarks, view.id)
-      const target = bookmarkStore.folders(bookmarks).some((each) => each.id === folderId) ? folderId : null
-      if (!old) next = bookmarkStore.add(bookmarks, bookmarkStore.page({ title, url }), target)
+      const old = view.id && bookmarkStore.get(profile.bookmarks, view.id)
+      const target = bookmarkStore.folders(profile.bookmarks).some((each) => each.id === folderId) ? folderId : null
+      if (!old) next = bookmarkStore.add(profile.bookmarks, bookmarkStore.page({ title, url }), target)
       else {
         // Another address is another site's icon.
-        next = bookmarkStore.update(bookmarks, old.id, { title, url, icon: url === old.url ? old.icon : '' })
-        if (target !== bookmarkStore.folderOf(bookmarks, old.id)) next = bookmarkStore.move(next, old.id, target)
+        next = bookmarkStore.update(profile.bookmarks, old.id, { title, url, icon: url === old.url ? old.icon : '' })
+        if (target !== bookmarkStore.folderOf(profile.bookmarks, old.id)) next = bookmarkStore.move(next, old.id, target)
       }
     }
-    if (!setBookmarks(next)) return { error: 'Couldn’t save bookmarks.' }
-    if (url) for (const tab of tabs) if (tab.url === url) addIcon(url, tab.favicon, ses)
+    if (!setBookmarks(profile, next)) return { error: 'Couldn’t save bookmarks.' }
+    if (url) for (const tab of tabs) if (tab.url === url) addIcon(profile, url, tab.favicon, ses)
     closePopup()
     return {}
   }
 
   // A folder with pages in it asks first, as it takes them with it.
   function deleteBookmark(id) {
-    const item = bookmarkStore.get(bookmarks, id)
+    const item = bookmarkStore.get(profile.bookmarks, id)
     if (!item) return
     if (bookmarkStore.isFolder(item) && item.items.length) {
       const count = item.items.length
@@ -1562,11 +1726,11 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
       })
       if (choice !== 0) return
     }
-    changeBookmarks(win, bookmarkStore.remove(bookmarks, id))
+    changeBookmarks(profile, win, bookmarkStore.remove(profile.bookmarks, id))
   }
 
   function openBookmark(id, newTab) {
-    const item = bookmarkStore.get(bookmarks, id)
+    const item = bookmarkStore.get(profile.bookmarks, id)
     if (!item || bookmarkStore.isFolder(item)) return
     closePopup()
     if (newTab) openInTabs([item.url])
@@ -1576,25 +1740,25 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   // New tabs next to the current one, in order, like ⌘-clicked links.
   function openInTabs(urls) {
     const index = active() ? tabs.indexOf(active()) + 1 : tabs.length
-    urls.forEach((url, i) => addTab({ url, index: index + i, background: i > 0 || !settings.switchToNewTabs }))
+    urls.forEach((url, i) => addTab({ url, index: index + i, background: i > 0 || !profile.settings.switchToNewTabs }))
   }
 
   function showBookmarkMenu(id, at) {
-    const item = id === null ? null : bookmarkStore.get(bookmarks, id)
+    const item = id === null ? null : bookmarkStore.get(profile.bookmarks, id)
     if (id !== null && !item) return
     const folder = Boolean(item && bookmarkStore.isFolder(item))
-    popup(bookmarkMenu({ kind: item && (folder ? 'folder' : 'page'), count: folder ? item.items.length : 0, key: settings['shortcuts.bookmarkBar'] }), (command) => {
+    popup(bookmarkMenu({ kind: item && (folder ? 'folder' : 'page'), count: folder ? item.items.length : 0, key: profile.settings['shortcuts.bookmarkBar'] }), (command) => {
       switch (command) {
         case 'openInNewTab': return openBookmark(id, true)
-        case 'openInNewWindow': return createWindow({ url: item.url })
-        case 'openInPrivateWindow': return createWindow({ url: item.url, isPrivate: true })
+        case 'openInNewWindow': return createWindow({ profile, url: item.url })
+        case 'openInPrivateWindow': return createWindow({ profile, url: item.url, isPrivate: true })
         case 'openAll': closePopup(); return openInTabs(item.items.map((each) => each.url))
         case 'copyAddress': return clipboard.writeText(item.url)
         case 'edit': return editBookmark(id, at)
         case 'delete': return deleteBookmark(id)
         case 'addPage': return newBookmark(false, at)
         case 'addFolder': return newBookmark(true, at)
-        case 'hideBar': closePopup(); return toggleBookmarkBar()
+        case 'hideBar': closePopup(); return toggleBookmarkBar(profile)
       }
     })
   }
@@ -1610,11 +1774,16 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     navigate(url)
   }
 
+  // Every page the window has besides its toolbar, to wait for as they close.
+  const pages = () => [...tabs.map((tab) => tab.page), ...Object.values(popups).map((view) => view.webContents), suggestionsView?.webContents]
+
   const controls = {
     win,
     key,
+    profile,
     isPrivate,
     session: ses,
+    pages,
     newTab,
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
     reopenTab(history, index) {
@@ -1650,6 +1819,9 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     openPopup,
     closePopup,
     popupOpen: () => popupOpen,
+    settingsSection: () => settingsSection,
+    profileChanged() { sendProfile(); sync() },
+    showProfileMenu,
     openFromHistory,
     suggest,
     selectSuggestion: (index) => { if (suggestionsOpen) suggestionsView.webContents.send('suggestions-select', index) },
@@ -1662,7 +1834,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     saveBookmark,
     bookmarksState,
     listBookmarks: (view) => openBookmarks({ kind: 'list', ...view }),
-    moveBookmark: (id, folderId, beforeId) => changeBookmarks(win, bookmarkStore.move(bookmarks, id, folderId, beforeId)),
+    moveBookmark: (id, folderId, beforeId) => changeBookmarks(profile, win, bookmarkStore.move(profile.bookmarks, id, folderId, beforeId)),
     // The form's Delete.
     removeBookmark() {
       const id = bookmarksView?.id
@@ -1674,7 +1846,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     bookmarksChanged() {
       sendBookmarks()
       if (popupOpen !== 'bookmarks' || bookmarksView.kind !== 'list') return
-      const gone = bookmarksView.folderId && !bookmarkStore.get(bookmarks, bookmarksView.folderId)
+      const gone = bookmarksView.folderId && !bookmarkStore.get(profile.bookmarks, bookmarksView.folderId)
       const state = bookmarksState()
       if (gone || (!bookmarksView.folderId && !state.items.length)) closePopup()
       else popups.bookmarks.webContents.send('bookmarks-changed', state)
@@ -1690,7 +1862,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
       sendShortcuts()
       sendQuickSearch()
       sendBookmarks()
-      popups.settings?.webContents.send('settings-changed', settingsState())
+      popups.settings?.webContents.send('settings-changed', settingsState(profile))
       controls.historyChanged()
     },
     // History removed `url` (or everything, without one): tabs drop their
@@ -1715,7 +1887,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     // What reopening this window at the next launch needs (see src/session.js).
     snapshot: () => (tabs.length && !isPrivate ? closedWindow(tabs.map(sessionHistory), Math.max(tabs.indexOf(active()), 0)) : null),
     historyChanged() {
-      if (popupOpen === 'history') popups.history.webContents.send('history-changed', historyState())
+      if (popupOpen === 'history') popups.history.webContents.send('history-changed', historyState(profile))
     },
     downloadsChanged() {
       sendDownloads()
@@ -1733,6 +1905,7 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
   win.on('focus', () => {
     openWindows.delete(controls)
     openWindows.add(controls)
+    profileUsed(profile, isPrivate)
     changed()
   })
   win.webContents.on('context-menu', (_event, params) => showPageMenu(win.webContents, params, false))
@@ -1747,13 +1920,13 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     closingWindow = histories.length ? closedWindow(histories, Math.max(tabs.indexOf(active()), 0)) : null
   })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
-  win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendQuickSearch(); sendBookmarks(); sendDownloads() })
+  win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendQuickSearch(); sendBookmarks(); sendDownloads(); sendProfile() })
   win.on('closed', () => {
     openWindows.delete(controls)
     changed()
-    if (closingWindow) rememberClosed(closingWindow)
+    if (closingWindow) rememberClosed(profile, closingWindow)
     // Its own pages too, read before they close.
-    const pages = [...tabs.map((tab) => tab.page), ...Object.values(popups).map((view) => view.webContents), suggestionsView?.webContents]
+    const open = pages()
     for (const tab of tabs.splice(0)) {
       for (const prompt of tab.prompts) for (const callback of prompt.callbacks) callback(false)
       settle(tab)
@@ -1763,17 +1936,8 @@ function createWindow({ key = nextWindowKey++, isPrivate = false, url, tabs: res
     clearTimeout(suggestionsHide)
     suggestionsView?.webContents.close()
     if (isPrivate) {
-      // Its downloads go too, those on their way (or in their save dialog)
-      // cancelled; files already saved stay where they were saved. A
-      // dropped download never joins the list again.
-      for (const download of unfinished) {
-        if (download.session !== ses) continue
-        download.dropped = true
-        download.item?.cancel()
-      }
-      downloads.splice(0, downloads.length, ...downloads.filter((download) => download.session !== ses))
-      downloadsChanged(true)
-      forgetSession(ses, pages)
+      dropDownloads(ses)
+      forgetSession(ses, open)
     }
   })
 
@@ -1808,21 +1972,39 @@ const inFocused = (action) => (_item, win) => {
 // same command closes them again.
 const togglePopup = (name) => (_item, win) => {
   let c = controlsOf(win) || createWindow()
-  // A private window has no history: the normal window used last shows it.
-  if (name === 'history' && c.isPrivate) {
-    c = [...openWindows].filter((each) => !each.isPrivate).at(-1) || createWindow()
-    if (c.win.isMinimized()) c.win.restore()
-    c.win.focus()
-    return c.openPopup(name)
-  }
+  // A private window has no history: its profile's normal window used last
+  // shows it.
+  if (name === 'history' && c.isPrivate) return switchProfile(c.profile).openPopup(name)
   if (c.popupOpen() === name) c.closePopup()
   else c.openPopup(name)
+}
+
+// Settings at its Profiles section, in the focused window or a new one; New
+// Profile adds one there first, to name it.
+const manageProfiles = (_item, win) => (controlsOf(win) || createWindow()).openPopup('settings', 'profiles')
+function newProfile(item, win) {
+  const error = addProfile()
+  if (!error) return manageProfiles(item, win)
+  dialog.showMessageBox({ type: 'warning', message: error }).catch(() => {})
+}
+
+// The profiles menu, in the menu bar and the toolbar: each profile, to switch
+// to, `current` checked.
+function profileItems(current) {
+  const key = (command) => ({ accelerator: current.settings[`shortcuts.${command}`] || undefined })
+  return [
+    ...profiles.map((profile) => ({ label: profile.name, type: 'radio', checked: profile === current, click: () => switchProfile(profile) })),
+    { type: 'separator' },
+    { label: 'New Profile…', ...key('newProfile'), click: newProfile },
+    { label: 'Manage Profiles…', ...key('profiles'), click: manageProfiles },
+  ]
 }
 
 // The menu holds every shortcut, so they work whether the toolbar or a page
 // has focus. Most come from Settings; hidden items still answer their
 // shortcuts on macOS. Keep the fixed ones in RESERVED in src/shortcuts.js.
 function buildMenu() {
+  const { settings, closed } = currentProfile
   const key = (command) => settings[`shortcuts.${command}`] || undefined
   const hidden = (label, accelerator, click) => ({ label, accelerator, click, visible: false })
   const numbers = Array.from({ length: 9 }, (_, i) =>
@@ -1854,8 +2036,8 @@ function buildMenu() {
       label: 'File',
       submenu: [
         { label: 'New Tab', accelerator: key('newTab'), click: (_item, win) => { const c = controlsOf(win); if (c) c.newTab(); else createWindow() } },
-        { label: 'New Window', accelerator: key('newWindow'), click: () => createWindow() },
-        { label: 'New Private Window', accelerator: key('newPrivateWindow'), click: () => createWindow({ isPrivate: true }) },
+        { label: 'New Window', accelerator: key('newWindow'), click: (_item, win) => createWindow({ profile: controlsOf(win)?.profile }) },
+        { label: 'New Private Window', accelerator: key('newPrivateWindow'), click: (_item, win) => createWindow({ profile: controlsOf(win)?.profile, isPrivate: true }) },
         { type: 'separator' },
         { label: 'Duplicate Tab', accelerator: key('duplicateTab'), click: inFocused((c) => { c.closePopup(); c.duplicateTab() }) },
         { label: 'Open Location…', accelerator: key('openLocation'), click: inFocused((c) => { c.closePopup(); c.focusAddress() }) },
@@ -1931,9 +2113,10 @@ function buildMenu() {
       submenu: [
         { label: 'Bookmark This Page…', accelerator: key('bookmarkPage'), click: inFocused((c) => c.bookmarkPage()) },
         { type: 'separator' },
-        { label: 'Show Bookmark Bar', type: 'checkbox', checked: settings.bookmarkBar, accelerator: key('bookmarkBar'), click: toggleBookmarkBar },
+        { label: 'Show Bookmark Bar', type: 'checkbox', checked: settings.bookmarkBar, accelerator: key('bookmarkBar'), click: (_item, win) => toggleBookmarkBar(controlsOf(win)?.profile ?? currentProfile) },
       ],
     },
+    { label: 'Profiles', submenu: profileItems(currentProfile) },
     {
       label: 'Window',
       role: 'window',
@@ -1972,6 +2155,7 @@ ipcMain.on('close-find', fromToolbar((c, tabId) => c.isActive(tabId) && c.closeF
 ipcMain.on('open-settings', fromToolbar((c) => c.openPopup('settings')))
 ipcMain.on('open-downloads', fromToolbar((c) => c.openPopup('downloads')))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
+ipcMain.on('profile-menu', fromToolbar((c, at) => isPoint(at) && c.showProfileMenu(at)))
 // Bookmarks, from the bar or the popup's lists, which share these.
 const fromBookmarks = (handler) => (event, ...args) => {
   const popup = windowsByPopup.get(event.sender)
@@ -2010,38 +2194,48 @@ ipcMain.handle('bookmarks-save', fromPopup('bookmarks', (c, values) => c.saveBoo
 ipcMain.on('bookmarks-remove', fromPopup('bookmarks', (c) => c.removeBookmark()))
 ipcMain.on('bookmarks-close', fromPopup('bookmarks', (c) => c.closePopup()))
 ipcMain.on('suggestions-pick', fromPopup('suggestions', (c, index, generation) => Number.isInteger(index) && c.pickSuggestion(index, generation)))
-ipcMain.handle('settings-get', fromSettings(() => settingsState()))
-ipcMain.handle('settings-set', fromSettings((_c, key, value) => settingsState(changeSetting(key, value))))
+ipcMain.handle('settings-get', fromSettings((c) => popupState('settings', c)))
+ipcMain.handle('settings-set', fromSettings((c, key, value) => settingsState(c.profile, changeSetting(c.profile, key, value))))
+// Profiles: adding, changing and deleting answer with the state.
+ipcMain.handle('profiles-add', fromSettings((c) => settingsState(c.profile, addProfile())))
+ipcMain.handle('profiles-update', fromSettings((c, id, changes) => settingsState(c.profile, updateProfile(id, { name: changes?.name, color: changes?.color }))))
+ipcMain.handle('profiles-delete', fromSettings(async (c, id) => settingsState(c.profile, await deleteProfile(c.win, id))))
+ipcMain.on('profiles-open', fromSettings((c, id) => {
+  const profile = profiles.find((each) => each.id === id)
+  if (!profile) return
+  c.closePopup()
+  switchProfile(profile)
+}))
 // Changes or forgets (null) one site's choice for one kind.
-ipcMain.handle('permissions-set', fromSettings((_c, site, kind, choice) => {
-  const saved = typeof site === 'string' && Object.hasOwn(permissions.KINDS, kind) && sitePermissions.get(site)?.[kind]
-  if (saved && (choice === null || permissions.CHOICES.includes(choice)) && !choosePermission(site, [kind], choice)) {
-    return settingsState('Couldn’t save site permissions, so this change lasts only until Lit quits.')
+ipcMain.handle('permissions-set', fromSettings((c, site, kind, choice) => {
+  const saved = typeof site === 'string' && Object.hasOwn(permissions.KINDS, kind) && c.profile.sitePermissions.get(site)?.[kind]
+  if (saved && (choice === null || permissions.CHOICES.includes(choice)) && !choosePermission(c.profile, site, [kind], choice)) {
+    return settingsState(c.profile, 'Couldn’t save site permissions, so this change lasts only until Lit quits.')
   }
-  return settingsState()
+  return settingsState(c.profile)
 }))
 ipcMain.on('settings-record', fromSettings((c, on, keys) => c.setRecording(on === true, keys)))
 ipcMain.on('settings-close', fromSettings((c) => c.closePopup()))
 
-ipcMain.handle('history-get', fromHistory(() => historyState()))
+ipcMain.handle('history-get', fromHistory((c) => historyState(c.profile)))
 // Only addresses already in history can be opened from it.
 ipcMain.on('history-open-page', fromHistory((c, url, background) => {
-  if (visited.some((entry) => entry.url === url)) c.openFromHistory(url, background === true)
+  if (c.profile.visited.some((entry) => entry.url === url)) c.openFromHistory(url, background === true)
 }))
 // Removing and clearing answer with the state, saying so if nothing changed.
 // Tabs forget their visits to what was removed, so neither taking a visit
 // back nor a page finishing loading brings it back.
-ipcMain.handle('history-remove', fromHistory((_c, url) => {
-  if (!setVisited(historyStore.remove(visited, url), { now: true })) return historyState('Couldn’t save history, so that page wasn’t removed.')
-  for (const controls of openWindows) controls.forgetVisits(url)
-  return historyState()
+ipcMain.handle('history-remove', fromHistory((c, url) => {
+  if (!setVisited(c.profile, historyStore.remove(c.profile.visited, url), { now: true })) return historyState(c.profile, 'Couldn’t save history, so that page wasn’t removed.')
+  for (const controls of windowsOf(c.profile)) controls.forgetVisits(url)
+  return historyState(c.profile)
 }))
 // Clearing history forgets closed tabs too.
-ipcMain.handle('history-clear', fromHistory(() => {
-  if (!setVisited([], { now: true })) return historyState('Couldn’t save history, so nothing was cleared.')
-  for (const controls of openWindows) controls.forgetVisits()
-  forgetClosed()
-  return historyState()
+ipcMain.handle('history-clear', fromHistory((c) => {
+  if (!setVisited(c.profile, [], { now: true })) return historyState(c.profile, 'Couldn’t save history, so nothing was cleared.')
+  for (const controls of windowsOf(c.profile)) controls.forgetVisits()
+  forgetClosed(c.profile)
+  return historyState(c.profile)
 }))
 ipcMain.on('history-close', fromHistory((c) => c.closePopup()))
 
@@ -2066,27 +2260,27 @@ ipcMain.on('downloads-clear', fromDownloads((c) => {
 ipcMain.on('downloads-close', fromDownloads((c) => c.closePopup()))
 
 app.whenReady().then(async () => {
-  settingsFile = path.join(app.getPath('userData'), 'settings.json')
-  settings = settingsStore.load(settingsFile)
-  zoomFile = path.join(app.getPath('userData'), 'zoom.json')
-  siteZooms = zoom.load(zoomFile)
-  permissionsFile = path.join(app.getPath('userData'), 'permissions.json')
-  sitePermissions = permissions.load(permissionsFile)
-  setUpSession(session.defaultSession, savedPermissions)
-  historyFile = path.join(app.getPath('userData'), 'history.json')
-  visited = historyStore.load(historyFile)
-  bookmarksFile = path.join(app.getPath('userData'), 'bookmarks.json')
-  bookmarks = bookmarkStore.load(bookmarksFile)
-  adblock = createAdblock(session.defaultSession, path.join(app.getPath('userData'), 'adblock.bin'))
+  const root = app.getPath('userData')
+  profilesFile = path.join(root, 'profiles.json')
+  profileList = profileStore.load(profilesFile)
+  // Deleted profiles' files go before any session is opened.
+  const swept = profileStore.sweep(root, profileList)
+  if (swept !== profileList) setProfileList(swept)
+  for (const profile of profileList.profiles) openProfile(profile)
+  currentProfile = profiles.find((profile) => profile.id === profileList.last)
+  adblock = createAdblock(path.join(root, 'adblock.bin'))
   // A saved engine is in use before any tab loads; first-time lists
   // download in the background.
-  await adblock.set(settings.blockAds)
+  await Promise.all(profiles.map((profile) => adblock.set(profile.session, profile.settings.blockAds)))
   // The packaged app gets its icon from the bundle; in development, show it in the Dock too.
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '..', 'build', 'icon.png'))
   Menu.setApplicationMenu(buildMenu())
   sessionFile = path.join(app.getPath('userData'), 'session.json')
   // The windows open when Lit last quit, the one in front opened last.
-  const restored = settings.restoreSession ? sessionStore.load(sessionFile) : []
+  // Windows of a profile since deleted don't.
+  const restored = (shared().restoreSession ? sessionStore.load(sessionFile) : [])
+    .map((saved) => ({ ...saved, profile: profiles.find(({ id }) => id === (saved.profile ?? profileStore.DEFAULT)) }))
+    .filter(({ profile }) => profile)
   if (restored.length) for (const saved of restored) createWindow(saved)
   else createWindow()
   // Like other Mac browsers, Lit keeps running with no windows open;
@@ -2102,5 +2296,5 @@ app.on('before-quit', () => {
   for (const controls of openWindows) controls.settleAll()
 })
 // A save still waiting when Lit quits is written now.
-app.on('will-quit', () => { if (historySave) saveVisited() })
+app.on('will-quit', () => { for (const profile of profiles) if (profile.historySave) saveVisited(profile) })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

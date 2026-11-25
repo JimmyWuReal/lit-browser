@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { SECTIONS, SETTINGS, clean, load, update, save } = require('../src/settings')
+const { SECTIONS, SETTINGS, isProfile, combine, ownOf, clean, load, update, save } = require('../src/settings')
 
 const defaults = clean()
 
@@ -87,4 +87,19 @@ test('save and load round-trip, and a bad file loads defaults', () => {
   fs.writeFileSync(file, '{ not json')
   assert.deepEqual(load(file), defaults)
   fs.rmSync(dir, { recursive: true })
+})
+
+test('a profile has its own search engine, and every profile the same shortcuts', () => {
+  assert.ok(['searchEngine', 'newTabPage', 'downloadLocation', 'saveHistory', 'blockAds'].every(isProfile))
+  assert.ok(['shortcuts.newTab', 'quickSearch', 'restoreSession', 'nope'].every((key) => !isProfile(key)))
+  const own = { ...defaults, searchEngine: 'bing', 'shortcuts.reload': 'F5' }
+  const shared = { ...defaults, searchEngine: 'duckduckgo', 'shortcuts.reload': 'F6' }
+  const values = combine(own, shared)
+  assert.equal(values.searchEngine, 'bing')
+  assert.equal(values['shortcuts.reload'], 'F6')
+  assert.deepEqual(Object.keys(values), Object.keys(defaults))
+  // A profile's file holds only its own, which load back the same.
+  assert.equal(ownOf(values).searchEngine, 'bing')
+  assert.ok(Object.keys(ownOf(values)).every(isProfile))
+  assert.deepEqual(combine(clean(ownOf(values)), shared), values)
 })
