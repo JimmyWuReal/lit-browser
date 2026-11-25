@@ -17,7 +17,8 @@ contextBridge.exposeInMainWorld('lit', {
   nudgeTab: (id, direction) => ipcRenderer.send('nudge-tab', id, direction),
   // Focus to the active tab's page, or what stands in for it.
   focusActive: () => ipcRenderer.send('focus-active'),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started, audio, find, zoom, signIn, prompt, error }] },
+  // { activeId, navigationButtons, tabs: [{ id, title, url, favicon, loading,
+  // started, canGoBack, canGoForward, audio, find, zoom, signIn, prompt, error }] },
   // `zoom` being '125%', or '' at the default zoom, `signIn` what asks for a
   // username and password, { id, name, asks, note, main }, `main` when it is
   // the page itself, and `prompt` the tab's permission request or offer to save
@@ -26,12 +27,19 @@ contextBridge.exposeInMainWorld('lit', {
   // be undefined. `audio` is
   // 'playing', 'muted' or null. `error` is
   // what to show instead of a page that failed, { title, detail, code,
-  // action, canGoBack }, or null.
+  // action }, or null.
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   // The error page's buttons, for the tab it is on.
   reload: (tabId) => ipcRenderer.send('reload', tabId),
   goBack: (tabId) => ipcRenderer.send('go-back', tabId),
+  // The toolbar's Back (`delta` -1), Forward (1) and Reload buttons, for the
+  // tab they showed. Back and Forward can open in a new tab instead, or list
+  // where they lead, at { x, y } in the window; Reload can skip the cache.
+  step: (tabId, delta, newTab = false) => ipcRenderer.send('step', tabId, delta, newTab),
+  showStepMenu: (tabId, delta, at) => ipcRenderer.send('step-menu', tabId, delta, at),
+  reloadTab: (tabId, ignoreCache = false) => ipcRenderer.send('reload-tab', tabId, ignoreCache),
+  stop: (tabId) => ipcRenderer.send('stop', tabId),
   // Main shows an error page and gives it focus; focusPage hands it to the
   // page once there is one again.
   onFocusError: (callback) => ipcRenderer.on('focus-error', () => callback()),

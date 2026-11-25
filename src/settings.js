@@ -67,6 +67,13 @@ const SECTIONS = [
         default: true,
       },
       {
+        key: 'navigationButtons',
+        label: 'Show back, forward and reload',
+        description: 'Buttons before the address bar. Their shortcuts work either way.',
+        type: 'toggle',
+        default: true,
+      },
+      {
         key: 'bookmarkBar',
         label: 'Show bookmark bar',
         description: 'A row of your bookmarks below the address bar. Hidden while there are none.',
