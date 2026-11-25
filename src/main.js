@@ -1139,7 +1139,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     tab.startedByPage = false
     tab.submitted = null
     dropPrompts(tab)
-    hideLogins()
+    hideLoginsOf(tab)
     dropSignIns(tab)
     if (tab.id === activeId) show(tab, win.isFocused() && !win.webContents.isFocused())
     sync()
@@ -1721,7 +1721,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
   // A new page came, or an error page, after which nothing is saved.
   function moveLogin(tab, status) {
-    hideLogins()
+    hideLoginsOf(tab)
     if (tab.submitted) {
       if (status >= 400 || Date.now() - tab.submitted.at > LOGIN_TIME) tab.submitted = null
       else tab.submitted.moved = true
@@ -1843,6 +1843,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     }, SUGGESTIONS_FADE)
   }
 
+  function hideLoginsOf(tab) {
+    if ((logins ?? loginsFading)?.tab === tab) hideLogins()
+  }
+
   // Whether the list took the key.
   function loginsKey(key) {
     loginsClosed = false
@@ -1901,7 +1905,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     } else tab.signIns.push({ id: nextPromptId++, ...request, callbacks: [callback] })
     // The question is in the toolbar.
     leaveFullScreen(tab)
-    if (logins?.tab === tab) hideLogins()
+    hideLoginsOf(tab)
     if (request.main && tab.id === activeId) show(tab, win.isFocused() && !win.webContents.isFocused())
     sync()
   }

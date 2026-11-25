@@ -27,8 +27,11 @@ function passwordOf(fields) {
 // Whether a form changes or makes a password rather than signing in.
 const isChange = (fields) => fields.filter((field) => field.value).length > 1 || fields.some(isNew)
 
-// Whether a button's words say it does something other than sign in.
-const leaves = (text) => /\b(cancel|close|dismiss|back|forgot|reset|clear|show|hide|generate|not now|later)\b|取消|關閉|关闭|返回/i.test(text)
+// Whether a button's words say it signs in, signs up or changes a password.
+// Only asked when the page sends no submit, so one in a language not here still
+// saves from a real form, or with Enter.
+const signsIn = (text) => /\b(sign[\s-]?(in|up|on)|log[\s-]?(in|on)|login|submit|continue|next|go|enter|unlock|register|join|create account|(save|change|update|set|reset) (my )?(password|changes)|save|update|confirm)\b|登入|登錄|登录|注册|註冊|下一步|繼續|继续|送出|提交|確認|确认|ログイン|로그인/i.test(text) &&
+  !/\b(cancel|close|forgot|show|hide|with|guest|without)\b/i.test(text)
 
 // The username field among a form's fields, in order: the one marked so, else
 // the last name-like one before the password. `visible` says which can be seen;
@@ -112,7 +115,7 @@ function start({ ipcRenderer }) {
     if (event.composedPath().some((each) => each instanceof Element && each.matches('a[href]'))) return abandon()
     const button = event.composedPath().find((each) => each instanceof Element && each.matches('button, input[type=submit], input[type=button], [role=button]'))
     if (!button || button.type === 'reset' || button.formMethod === 'dialog' || button.form?.method === 'dialog') return
-    if (leaves([button.textContent, button.value, button.getAttribute('aria-label'), button.title].join(' '))) return
+    if (!signsIn([button.textContent, button.value, button.getAttribute('aria-label'), button.title].join(' '))) return
     const form = button.closest('form')
     if (button.type === 'submit') {
       if (allowed(button)) submitted(fieldsWith(button))
@@ -142,7 +145,7 @@ function start({ ipcRenderer }) {
   function ask(target) {
     const login = loginAt(target)
     if (!login) return dismiss()
-    asked = login
+    asked = { ...login, target }
     anchor = target
     const { left, top, bottom, width } = target.getBoundingClientRect()
     ipcRenderer.send('login-field', { request: ++request, x: left, top, y: bottom, width, needsPassword: Boolean(login.password) })
@@ -165,22 +168,25 @@ function start({ ipcRenderer }) {
   addEventListener('resize', dismiss)
 
   function type(field, value) {
-    field.focus()
     // This world's own setter, so frameworks that watch theirs see a change.
     field.value = value
+    field.focus()
     field.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
     field.dispatchEvent(new Event('change', { bubbles: true }))
   }
   ipcRenderer.on('login-fill', (_event, login) => {
     if (login.request !== request || login.site !== location.origin || !asked) return
-    const { name, password } = asked
+    const { name, password, target } = asked
+    // The page may have changed its fields since, or do so as the name is
+    // filled: a password goes only where one would be offered now.
+    const still = (field, kind) => field && loginAt(target)?.[kind] === field
     asked = null
     dismiss()
-    if (name && visible(name) && login.username) type(name, login.username)
-    if (password && visible(password) && login.password !== null) type(password, login.password)
+    if (still(name, 'name') && login.username) type(name, login.username)
+    if (login.password !== null && still(password, 'password') && isField(password) && password.type === 'password') type(password, login.password)
   })
 }
 
 if (typeof window !== 'undefined') {
   if (/^https?:$/.test(location.protocol)) start(require('electron'))
-} else module.exports = { passwordOf, isChange, leaves, nameOf }
+} else module.exports = { passwordOf, isChange, signsIn, nameOf }

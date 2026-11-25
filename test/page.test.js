@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { passwordOf, isChange, leaves, nameOf } = require('../src/page')
+const { passwordOf, isChange, signsIn, nameOf } = require('../src/page')
 
 const field = (name, value = name, rest = {}) => ({ name, value, type: 'text', autocomplete: '', ...rest })
 const secret = (value, autocomplete = '') => field('p', value, { type: 'password', autocomplete })
@@ -23,9 +23,9 @@ test('isChange tells a change from a sign-in', () => {
   assert.equal(isChange([secret('a', 'new-password')]), true)
 })
 
-test('leaves tells buttons that do not sign in', () => {
-  for (const text of ['Cancel', 'Show password', '取消']) assert.equal(leaves(text), true, text)
-  for (const text of ['Sign in', 'Continue', '登入', 'Feedback']) assert.equal(leaves(text), false, text)
+test('signsIn tells buttons that sign in', () => {
+  for (const text of ['Sign in', 'Log In', 'Continue', 'Change password', '登入']) assert.equal(signsIn(text), true, text)
+  for (const text of ['', 'Cancel', 'Show password', 'Continue with Google', 'Forgot password?', 'Menu']) assert.equal(signsIn(text), false, text)
 })
 
 test('nameOf prefers the marked field, then the last one before the password', () => {
