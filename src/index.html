@@ -1090,14 +1090,14 @@
       { button: document.getElementById('back'), delta: -1, can: 'canGoBack' },
       { button: document.getElementById('forward'), delta: 1, can: 'canGoForward' },
     ]
-    // When Stop last became Reload, as the page finished.
+    // When Stop last became Reload under the pointer, as the page finished.
     let loadedAt = -Infinity
     function drawNav(tab, switched) {
       nav.hidden = !state.navigationButtons
       for (const { button, can } of stepButtons) button.setAttribute('aria-disabled', String(!tab?.[can]))
       const loading = Boolean(tab?.loading)
       if (loading === reloadButton.classList.contains('is-loading')) return
-      if (!loading) loadedAt = switched ? -Infinity : performance.now()
+      if (!loading) loadedAt = !switched && reloadButton.matches(':hover') ? performance.now() : -Infinity
       reloadButton.classList.toggle('is-loading', loading)
       // Stop has no shortcut.
       reloadButton.dataset.shortcut = loading ? '' : 'shortcuts.reload'
@@ -1139,13 +1139,14 @@
     }
 
     // What the button was as a press began: a click is for that. One aimed at
-    // Stop just as the page finished does nothing rather than reload it, nor
+    // Stop (the pointer was on it) just as the page finished does nothing
+    // rather than reload it, as in Chrome; ⇧-click can only mean Reload. Nor
     // does a double-click's second click stop what the first started.
     const isStop = () => reloadButton.classList.contains('is-loading')
     let pressedStop = false
     reloadButton.addEventListener('pointerdown', () => { pressedStop = isStop() })
     reloadButton.addEventListener('click', (event) => {
-      if (event.detail && (pressedStop !== isStop() || event.detail > 1 || (!isStop() && performance.now() - loadedAt < 400))) return
+      if (event.detail && (pressedStop !== isStop() || event.detail > 1 || (!isStop() && !event.shiftKey && performance.now() - loadedAt < 400))) return
       if (isStop()) {
         window.lit.stop(state.activeId)
         // The page that stays is the one to name, not what was being opened.

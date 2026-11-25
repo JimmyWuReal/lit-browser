@@ -1247,7 +1247,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // Stops loading. A tab stopped before its first page came has nothing to
-  // show, so it goes back to the search box.
+  // show, so it goes back to the search box. A restored one keeps its address
+  // and back/forward list, for Reload to load, as in other browsers.
   function stop(tab) {
     if (!tab?.started || tab.page.isDestroyed()) return
     // Before its first page, a restored tab stopped is not to try again (addTab).
