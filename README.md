@@ -131,7 +131,7 @@ That covers an address that can't be found or reached, being offline, a site tha
 
 ## Default browser
 
-Settings › Default Browser makes Lit the Mac's default browser (macOS asks you to confirm), so links clicked in other apps open in Lit. It needs the installed app (`npm run app`); run from source, it is unavailable. Web links and HTML files from other apps open in a new tab of the window used last, or in a new window, as Settings says; in the profile used last, and never in a private window.
+Settings › Default Browser makes Lit the Mac's default browser (macOS asks you to confirm), so links clicked in other apps open in Lit. HTML files keep the app they open with; Lit is in Finder’s Open With for them. It needs the installed app (`npm run app`); run from source, it is unavailable. Web links and HTML files from other apps open in a new tab of the window used last, or in a new window, as Settings says; in the profile used last, and never in a private window.
 
 ## Right-click menus
 

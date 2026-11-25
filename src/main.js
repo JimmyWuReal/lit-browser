@@ -712,14 +712,21 @@ function checkDefaultBrowser() {
   for (const controls of openWindows) controls.settingsChanged()
 }
 
-// Asks macOS, which asks the person; changing http changes https and HTML
-// files with it. Returns why it couldn't, if so.
+// Asks macOS, which asks the person, for http and, once Lit has that, https:
+// asked together, someone who says no would be asked twice. Returns why it
+// couldn't, if so.
 function makeDefaultBrowser() {
   if (defaultBrowser() !== 'no') return
-  if (!app.setAsDefaultProtocolClient('http')) return 'Couldn’t ask macOS. Choose Lit in System Settings › Desktop & Dock instead.'
   clearInterval(defaultBrowserTimer)
+  const ask = (scheme) => app.setAsDefaultProtocolClient(scheme)
+  let askedHttps = app.isDefaultProtocolClient('http')
+  if (!ask(askedHttps ? 'https' : 'http')) return 'Couldn’t ask macOS. Choose Lit in System Settings › Desktop & Dock instead.'
   let left = 60
   defaultBrowserTimer = setInterval(() => {
+    if (!askedHttps && app.isDefaultProtocolClient('http')) {
+      askedHttps = true
+      if (!app.isDefaultProtocolClient('https')) ask('https')
+    }
     checkDefaultBrowser()
     if (!--left || lastDefaultBrowser === 'yes') clearInterval(defaultBrowserTimer)
   }, 1000)
