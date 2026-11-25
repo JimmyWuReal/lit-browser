@@ -433,10 +433,11 @@ const REDIRECT_AFTER = 5000
 // The isolated world Lit's own code runs in on pages; 999 is Electron's.
 const LIT_WORLD = 1000
 // Run on a page to end its full screen. A page told it may enter has not
-// done so yet, and can't leave before it has.
+// done so yet, and can't leave before it has; waiting for that ends soon,
+// so as not to undo a later one.
 const EXIT_FULL_SCREEN = `document.fullscreenElement
   ? document.exitFullscreen()
-  : document.addEventListener('fullscreenchange', () => document.exitFullscreen(), { once: true })`
+  : document.addEventListener('fullscreenchange', () => document.exitFullscreen(), { once: true, signal: AbortSignal.timeout(1000) })`
 
 // A page's address without its #fragment, to tell a jump within a page
 // from a new page.
@@ -873,20 +874,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     for (const view of Object.values(popups)) view.setBounds({ x: 0, y: 0, width, height })
   }
 
-  // The tab's page is no longer full screen; its window is Electron's to
-  // restore, as it does when a page leaves by itself.
-  function leftFullScreen(tab) {
-    tab.fullScreen = false
-    if (fullScreenFor === tab) fullScreenFor = null
-    sync()
-  }
-
-  // Takes a full screen page out of it, bringing the toolbar back. Nothing
-  // waits for the page, which may be slow to answer, or already gone.
+  // Takes a full screen page out of it, bringing the toolbar back right
+  // away, as the page may be slow to answer. Electron then restores the
+  // window if the page had changed it; it needs the page to leave first.
   function leaveFullScreen(tab) {
     if (!tab?.fullScreen) return
-    if (fullScreenFor === tab) win.setFullScreen(false)
-    leftFullScreen(tab)
+    tab.fullScreen = false
+    sync()
     if (tab.page.isDestroyed()) return
     // In a world of Lit's own, as a page can replace the method in its own.
     // That would wait for a page still loading, whose own world doesn't.
@@ -1009,7 +1003,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       sync()
       if (tab.id !== activeId || tab.prompts.length) leaveFullScreen(tab)
     })
-    page.on('leave-html-full-screen', () => leftFullScreen(tab))
+    page.on('leave-html-full-screen', () => {
+      tab.fullScreen = false
+      if (fullScreenFor === tab) fullScreenFor = null
+      sync()
+    })
     // Escape in the page closes its find field too, as in Safari and
     // Firefox. The page still gets the key, and an input method's keeps it.
     page.on('before-input-event', (_event, input) => {
@@ -1252,7 +1250,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // is what reopens.
     const closesWindow = nextId === null && profile.settings.closeWindowWithLastTab
     if (tab.closedByUser && !isPrivate) rememberClosed(profile, closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
-    if (!closesWindow) leaveFullScreen(tab)
+    // A page gone while full screen never leaves it, so its window does here.
+    if (fullScreenFor === tab && !closesWindow) {
+      fullScreenFor = null
+      win.setFullScreen(false)
+    }
     if (nextId === null) return closesWindow ? win.close() : newTab()
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
@@ -1961,7 +1963,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   for (const change of ['move', 'resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(change, changed)
   win.on('enter-full-screen', () => { windowFullScreen = true })
   // Leaving by the green button or the menu takes the page out too.
-  win.on('leave-full-screen', () => { windowFullScreen = false; leaveFullScreen(active()) })
+  win.on('leave-full-screen', () => {
+    windowFullScreen = false
+    fullScreenFor = null
+    leaveFullScreen(active())
+  })
   win.on('focus', () => {
     openWindows.delete(controls)
     openWindows.add(controls)
