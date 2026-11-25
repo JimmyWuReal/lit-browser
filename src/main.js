@@ -324,7 +324,7 @@ function onShareRequest(contents, callback, details) {
   const site = siteFor(contents, details.securityOrigin ?? details.requestingUrl)
   if (site) {
     for (const controls of openWindows) {
-      if (controls.askShare(contents, site, Boolean(details.mediaTypes?.includes('audio')), callback)) return
+      if (controls.askShare(contents, site, details, callback)) return
     }
   }
   callback(false)
@@ -339,25 +339,32 @@ const ownFrames = (contents) => contents.mainFrame.framesInSubtree.filter((frame
 // captures whatever the page names, without onDisplayMedia. It can't be refused
 // beforehand: Electron's handler gets identical details for both, and only
 // picks the way after the answer (MediaAccessAllowed in its
-// web_contents_permission_helper.cc, as of 45). So a page that does that is
-// killed here, before this event ends: the capture is only starting, and no
-// frame can reach a process that is gone. SIGKILL, as forcefullyCrashRenderer
-// first writes a crash report. Site isolation keeps a process to one site, so
-// at most that same site's other tabs go with it.
+// web_contents_permission_helper.cc, as of 45). So the page is held still
+// (SIGSTOP) while it is granted, which is done within this call, and goes on
+// only if the choice was taken; else it is killed, having run nothing since and
+// so having seen nothing. Site isolation keeps a process to one site, so at
+// most that same site's other tabs go with it.
 let granting = null
 function grantShare(contents, callback, streams) {
-  const processes = new Set(ownFrames(contents).map((frame) => frame.osProcessId))
-  granting = streams
-  callback(true)
-  const taken = !granting
-  granting = null
-  if (taken) return
-  for (const pid of processes) {
-    try {
-      process.kill(pid, 'SIGKILL')
-    } catch {
-      // Already gone.
+  const processes = [...new Set(ownFrames(contents).map((frame) => frame.osProcessId))]
+  const signal = (name) => {
+    for (const pid of processes) {
+      try {
+        process.kill(pid, name)
+      } catch {
+        // Already gone.
+      }
     }
+  }
+  let taken = false
+  granting = streams
+  signal('SIGSTOP')
+  try {
+    callback(true)
+    taken = !granting
+  } finally {
+    granting = null
+    signal(taken ? 'SIGCONT' : 'SIGKILL')
   }
 }
 
@@ -1572,19 +1579,26 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   // Screen sharing. The tab's request waiting in the picker (src/share.html):
   // { tab, site, audio, callback, frames, sources, shown }, `audio` being
-  // whether it wants sound too, `frames` the page's own when it asked, `shown`
+  // whether it wants sound too, `frames` the frames that may have asked (none
+  // if the page did itself), `shown`
   // the tabs last sent to the picker, as text, and `sources` the windows and screens, null until listed. One
   // at a time, for the tab on show; others are refused, as is one while another
   // popup is open. Closing the picker, however that comes about, refuses it.
   let share = null
-  function askShare(contents, site, audio, callback) {
+  function askShare(contents, site, { mediaTypes = [], isMainFrame, requestingUrl }, callback) {
     const tab = tabs.find((each) => each.page === contents)
     if (!tab) return false
     if (!profile.settings.screenSharing || share || popupOpen || tab.id !== activeId) {
       callback(false)
       return true
     }
-    const asked = share = { tab, site, audio, callback, frames: ownFrames(contents).map((frame) => frame.frameToken), allowed: canCaptureScreen(), sources: null }
+    const asked = share = {
+      tab, site, callback,
+      audio: mediaTypes.includes('audio'),
+      frames: isMainFrame ? [] : ownFrames(contents).filter((frame) => frame.url === requestingUrl).map((frame) => frame.frameToken),
+      allowed: canCaptureScreen(),
+      sources: null,
+    }
     openPopup('share')
     const listed = asked.allowed
       ? desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 340, height: 212 }, fetchWindowIcons: true })
@@ -1625,8 +1639,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
   // Shares what was picked; what has since gone is refused. A tab is picked as
   // the page the picker showed (`page`): one that moved on meanwhile isn't it.
-  // A frame that asked and has gone can't be given anything, so once one of
-  // the page's own has, it is refused too.
+  // A frame that asked and has gone can't be given anything; all Electron says
+  // of it is its address, so any with that one that has gone refuses it.
   function chooseShare(kind, id, audio, page) {
     if (!share) return
     const { tab, callback, sources, audio: wantsAudio, frames } = share
