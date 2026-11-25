@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { isKind, isApp, opensApp, noteRedirect, redirectFor, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, list, load, save } = require('../src/permissions')
+const { isKind, isApp, opensApp, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, list, load, save } = require('../src/permissions')
 
 test('kindsOf maps the requests Lit asks about, and leaves the rest alone', () => {
   assert.deepEqual(kindsOf('media', ['video', 'audio']), ['camera', 'microphone'])
@@ -42,34 +42,6 @@ test('opening another app is a kind per scheme', () => {
 test('opensApp leaves out the schemes Chromium handles itself', () => {
   for (const url of ['mailto:a@b.com', 'zoommtg://join', 'ssh://host']) assert.equal(opensApp(url), true)
   for (const url of ['https://a.com', 'HTTP://a.com', 'about:blank', 'blob:https://a.com/1', 'data:,hi', '', 'not a url']) assert.equal(opensApp(url), false)
-})
-
-test('a redirect to an app belongs to the site that redirected, or to nobody', () => {
-  const [a, b, popup] = ['page a', 'page b', 'popup of a']
-  const to = 'mailto:x'
-  const one = noteRedirect([], { page: a, to, site: 'https://one.com' })
-  assert.equal(redirectFor(one, a, to).site, 'https://one.com')
-  // Not a redirect: a link.
-  assert.equal(redirectFor(one, a, 'mailto:y'), null)
-  assert.equal(redirectFor([], a, to), null)
-  // Another page asking for the same address never gets this one's site.
-  assert.deepEqual(redirectFor(one, b, to), { page: b, site: null })
-  // It stays while the page loads, so a second request doesn't become a link.
-  assert.equal(redirectFor(one, a, to).site, 'https://one.com')
-  // A page it opened; with its own going to the same address, either.
-  const popped = noteRedirect([], { page: popup, opener: a, to, site: 'https://two.com' })
-  assert.deepEqual(redirectFor(popped, a, to), popped[0])
-  assert.deepEqual(redirectFor(popped, popup, to), popped[0])
-  assert.equal(redirectFor([...one, ...popped], a, to).site, null)
-  // Each page has its own, whatever the others do.
-  const both = noteRedirect(one, { page: b, to, site: 'https://two.com' })
-  assert.equal(redirectFor(both, a, to).site, 'https://one.com')
-  assert.equal(redirectFor(both, b, to).site, 'https://two.com')
-  // Two sites at once, on one page.
-  assert.deepEqual(noteRedirect(one, one[0]), one)
-  const mixed = noteRedirect(one, { page: a, to, site: 'https://two.com' })
-  assert.equal(mixed.length, 1)
-  assert.equal(redirectFor(mixed, a, to).site, null)
 })
 
 test('checkKindsOf names one device, and an untyped media check is camera controls', () => {

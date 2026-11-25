@@ -81,28 +81,6 @@ function kindsOf(permission, mediaTypes = [], externalURL = '') {
   return BY_PERMISSION[permission] ? [BY_PERMISSION[permission]] : []
 }
 
-// Redirects to other apps on their way: { page, opener, to, site }, `site`
-// having redirected `page` (opened by `opener`, if any) to `to`. Electron
-// asks for the page the link was on instead, which would let a site allowed
-// to open an app vouch for every address it links to. The same page sent to
-// the same address by two sites at once belongs to neither (null).
-function noteRedirect(redirects, redirect) {
-  const same = redirects.find(({ page, to }) => page === redirect.page && to === redirect.to)
-  if (!same) return [...redirects, redirect]
-  return redirects.map((each) => (each === same && same.site !== redirect.site ? { ...same, site: null } : each))
-}
-
-// The redirect that a request by the page `asking` to open `url` is: its own,
-// or that of a page it opened. null when nothing is being redirected there,
-// so it is a link. When it can't be told whose it is, one without a site,
-// which is refused.
-function redirectFor(redirects, asking, url) {
-  const found = redirects.filter(({ to }) => to === url)
-  if (!found.length) return null
-  const own = found.filter(({ page, opener }) => page === asking || opener === asking)
-  return own.length === 1 ? own[0] : { page: asking, site: null }
-}
-
 // The kinds a check (Notification.permission, navigator.permissions.query)
 // is about, as in kindsOf. A media check names one device, or 'unknown'
 // for the camera's other streams; one without is pan, tilt and zoom.
@@ -216,4 +194,4 @@ function save(file, sites) {
   fs.renameSync(temporary, file)
 }
 
-module.exports = { CHOICES, isKind, isApp, opensApp, noteRedirect, redirectFor, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, privateView, list, load, save }
+module.exports = { CHOICES, isKind, isApp, opensApp, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, privateView, list, load, save }
