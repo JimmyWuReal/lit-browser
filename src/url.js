@@ -29,4 +29,8 @@ function searchUrl(text, engine = 'google') {
   return `${engineOf(engine).url}${encodeURIComponent(text.trim().toWellFormed())}`
 }
 
-module.exports = { toUrl, searchUrl, engineOf, SEARCH_ENGINES }
+// An address another app asks Lit to open, as it is, or null for one that is
+// not a web address: nothing else (javascript:, chrome:) is let in from outside.
+const webAddress = (url) => (/^https?:/i.test(url) && URL.canParse(url) ? url : null)
+
+module.exports = { toUrl, webAddress, searchUrl, engineOf, SEARCH_ENGINES }

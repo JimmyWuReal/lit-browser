@@ -20,7 +20,24 @@
       "icon": "build/icon.png",
       "category": "public.app-category.productivity",
       "identity": "-",
-      "hardenedRuntime": false
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "Web site URL",
+            "CFBundleTypeRole": "Viewer",
+            "CFBundleURLSchemes": ["http", "https"]
+          }
+        ],
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "HTML document",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["public.html", "public.xhtml"]
+          }
+        ]
+      }
     }
   },
   "license": "MIT",

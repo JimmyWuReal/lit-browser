@@ -131,6 +131,10 @@ A page that can't load, or crashes, shows what went wrong in its place, with the
 
 That covers an address that can't be found or reached, being offline, a site that redirects forever or sends nothing, a certificate Lit doesn't trust (there is no way past that one), a missing file, and a site answering with an HTTP error and an empty page. A page that breaks off halfway keeps what it has shown, and a site's own error page shows as it is. Text that only looks like an address, such as `example.com:99999`, is searched instead.
 
+## Default browser
+
+Settings › Default Browser makes Lit the Mac's default browser (macOS asks you to confirm), so links clicked in other apps open in Lit. HTML files keep the app they open with; Lit is in Finder’s Open With for them. It needs the installed app (`npm run app`); run from source, it is unavailable. Web links and HTML files from other apps open in a new tab of the window used last, or in a new window, as Settings says; in the profile used last, and never in a private window.
+
 ## Right-click menus
 
 Right-clicking a page shows what fits the spot: a link can be opened in a new tab, saved or copied; an image, video or audio can be saved or have its address copied, and opened in a new tab when it has a web address (an image can also be copied); selected text can be copied or searched with your search engine; a text field gets spelling suggestions and Undo, Cut, Copy, Paste and Select All. Anywhere else the menu has Back, Forward, Reload and Print. Every page menu ends with Inspect Element, except in a private window.
@@ -148,6 +152,7 @@ General, Downloads and Privacy are the profile's own; the rest are shared by eve
 - **General:** search engine (Google, DuckDuckGo or Bing), what new tabs open (the search box, or an address or search), the page zoom for sites you have not zoomed, whether the address bar suggests bookmarks and pages from history, and whether the bookmark bar shows.
 - **Downloads:** ask where to save, or save straight to Downloads.
 - **Privacy:** save history (pages visited and closed tabs; when off, nothing new is saved, closed tabs are forgotten, Reopen Closed Tab does nothing, and windows reopened at launch keep only each tab's page, not its back and forward history or what was typed into it), block ads and trackers (on by default, with Ghostery's prebuilt lists, downloaded the first time it is on, saved to `adblock.bin` in the app's data folder and refreshed when a week old; a saved copy is blocking before any tab loads, and a change shows or hides ads on open pages once they are reloaded), send Do Not Track and Global Privacy Control, and the site permissions you have given: switch each between Allow and Block, or remove it so the site is asked again.
+- **Default Browser:** whether links from other apps open in a new tab or a new window, and a button to make Lit the default browser.
 - **Quick Search:** turn quick search shortcuts on or off, and the character that starts them (`!`, `@`, `#`, `:` or `/`). Also lists every site and its shortcuts.
 - **Tabs:** where new tabs go, whether ⌘-clicked links come to the front, whether tabs show a speaker while they play sound or are muted, whether closing the last tab closes the window, whether Lit reopens the windows and tabs from last time, and how many closed tabs Reopen Closed Tab remembers (10, 25, 50 or 100; a closed window counts each of its tabs, and one bigger than the limit keeps the tabs around its active one).
 - **Profiles:** add, rename, recolor, open and delete profiles.
