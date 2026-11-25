@@ -18,7 +18,7 @@ const { pathToFileURL } = require('node:url')
 const fs = require('node:fs')
 const { toUrl, webAddress, searchUrl, engineOf } = require('./url')
 const quickSearch = require('./quicksearch')
-const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const bookmarkStore = require('./bookmarks')
@@ -1491,6 +1491,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     else tab.page.close({ waitForBeforeUnload: true })
   }
 
+  // The same tabs, in the order of their ids.
+  function arrange(order) {
+    tabs.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))
+    sync()
+  }
+
   function removeTab(tab) {
     if (!find(tab.id)) return
     dropPrompts(tab)
@@ -2178,6 +2184,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       newTab(url)
     },
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
+    // Before another tab, or last (null).
+    moveTab: (id, beforeId) => arrange(moved(ids(), id, beforeId)),
+    // One place left (-1) or right (1).
+    nudgeTab: (id, direction) => arrange(nudged(ids(), id, direction)),
     reopenTab(history, index) {
       closePopup()
       addTab({ history, index: reopenIndex(index, tabs.length) })
@@ -2208,6 +2218,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       sync()
     },
     isActive: (id) => id === activeId,
+    focusActive: () => { const tab = active(); if (tab) show(tab) },
     askPermission,
     askSignIn,
     answerSignIn,
@@ -2574,6 +2585,8 @@ const fromToolbar = (handler) => (event, ...args) => {
 ipcMain.on('navigate', fromToolbar((c, input) => typeof input === 'string' && c.navigate(input)))
 ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
 ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
+ipcMain.on('move-tab', fromToolbar((c, id, beforeId) => c.moveTab(id, beforeId)))
+ipcMain.on('nudge-tab', fromToolbar((c, id, direction) => (direction === -1 || direction === 1) && c.nudgeTab(id, direction)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
 // Find messages name the tab the toolbar showed, so a tab switch the
 // toolbar has not drawn yet never sends them to another tab.
@@ -2603,6 +2616,7 @@ ipcMain.on('bookmark-list', fromBookmarks((c, what, at) => {
 // The error page's, for the tab it was on.
 ipcMain.on('reload', fromToolbar((c, tabId) => c.isActive(tabId) && c.failed() && c.reload()))
 ipcMain.on('go-back', fromToolbar((c, tabId) => c.isActive(tabId) && c.failed() && c.page()?.navigationHistory.goBack()))
+ipcMain.on('focus-active', fromToolbar((c) => c.focusActive()))
 ipcMain.on('focus-page', fromToolbar((c, tabId) => c.isActive(tabId) && c.focusPage()))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
 // A prompt's answer: 'allow', 'block', or null to dismiss it, for the

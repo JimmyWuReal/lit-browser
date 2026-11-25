@@ -36,7 +36,7 @@ When a page goes full screen, as a video does, it fills the whole screen and the
 
 A tab playing sound shows a speaker. Click it to mute the tab, and again to unmute it; so do Mute Tab in the tab's right-click menu and Mute or Unmute Tab in the File menu. A muted tab shows a crossed-out speaker, even while nothing plays, and stays muted as it moves to other pages, until it closes: a reopened, restored or duplicated tab is not muted. When tabs are too narrow for both, the speaker takes the place of the tab's icon, and only the active tab's can be clicked.
 
-Middle-click closes a tab. In the tab strip, arrow keys move between tabs and Delete closes one.
+Drag a tab to move it along the strip. Middle-click closes a tab. In the tab strip, arrow keys move between tabs, ⇧← and ⇧→ move the tab itself, and Delete closes one.
 
 ⇧⌘T brings back the last tab you closed (⌘W, its close button, middle-click) as it was then, with its back/forward history, in its old place. A closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers up to 50 closed tabs by default (see Settings), counting each tab of a closed window. They are kept in memory only, so Lit forgets them when it quits; a page closing itself (such as a sign-in popup) is not remembered.
 
