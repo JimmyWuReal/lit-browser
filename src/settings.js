@@ -68,7 +68,7 @@ const SECTIONS = [
       {
         key: 'bookmarkBar',
         label: 'Show bookmark bar',
-        description: 'A row of your bookmarks below the address bar.',
+        description: 'A row of your bookmarks below the address bar. Hidden while there are none.',
         type: 'toggle',
         default: true,
       },

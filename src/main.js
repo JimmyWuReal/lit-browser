@@ -1102,11 +1102,14 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     return tab && promptOf(tab) ? PROMPT_HEIGHT : 0
   }
 
+  // With no bookmarks the bar would be an empty row, so it stays hidden.
+  const showsBookmarks = () => profile.settings.bookmarkBar && profile.bookmarks.length > 0
+
   // Everything the toolbar draws. Sent whenever any of it changes.
   function sync() {
     if (win.isDestroyed()) return
     const current = active()
-    const top = current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (profile.settings.bookmarkBar ? BOOKMARKS_HEIGHT : 0) + promptHeight(current)
+    const top = current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (showsBookmarks() ? BOOKMARKS_HEIGHT : 0) + promptHeight(current)
     if (top !== pageTop) { pageTop = top; layout() }
     const title = signInPage(current)?.url || current?.title || (current?.started ? current.url : '') || 'New Tab'
     const named = profiles.length > 1 ? `${title} — ${profile.name}` : title
@@ -1149,7 +1152,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   const sendQuickSearch = () => {
     if (!win.isDestroyed()) win.webContents.send('quick-search', profile.settings.quickSearch ? { prefix: profile.settings.quickSearchPrefix, sites: quickSearch.list() } : null)
   }
-  const sendBookmarks = () => { if (!win.isDestroyed()) win.webContents.send('bookmarks', { visible: profile.settings.bookmarkBar, items: profile.bookmarks }) }
+  const sendBookmarks = () => { if (!win.isDestroyed()) win.webContents.send('bookmarks', { visible: showsBookmarks(), items: profile.bookmarks }) }
   // The toolbar's profile button, shown while there is more than one.
   const sendProfile = () => { if (!win.isDestroyed()) win.webContents.send('profile', { name: profile.name, color: profileStore.colorOf(profile.color).value, shown: profiles.length > 1 }) }
   // The toolbar's downloads indicator.
@@ -2773,9 +2776,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       closePopup()
       if (id) deleteBookmark(id)
     },
-    // A list follows the change, and closes once nothing is left to list;
-    // a form keeps what is typed in it.
+    // The bar can come or go with the change, moving the page. A list follows
+    // the change, and closes once nothing is left to list; a form keeps what
+    // is typed in it.
     bookmarksChanged() {
+      sync()
       sendBookmarks()
       if (popupOpen !== 'bookmarks' || bookmarksView.kind !== 'list') return
       const gone = bookmarksView.folderId && !bookmarkStore.get(profile.bookmarks, bookmarksView.folderId)

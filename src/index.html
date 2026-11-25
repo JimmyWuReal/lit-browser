@@ -475,7 +475,6 @@
       transition: opacity 120ms ease-out, transform 160ms var(--settle);
     }
     .drop-mark.is-on { opacity: 1; }
-    .bookmark-hint { align-self: center; padding: 0 4px; overflow: hidden; color: var(--dim); font-size: 12px; letter-spacing: -.01em; white-space: nowrap; text-overflow: ellipsis; }
     .more-bookmarks { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; }
     .more-bookmarks[hidden] { display: none; }
 
@@ -1124,17 +1123,14 @@
 
     function drawBookmarks(next) {
       const items = JSON.stringify(next.items)
-      const changed = items !== JSON.stringify(bookmarks.items) || !bookmarkList.querySelector('.bookmark, .bookmark-hint')
+      const changed = items !== JSON.stringify(bookmarks.items)
       bookmarks = next
       bookmarkBar.classList.toggle('is-open', next.visible)
       if (changed) {
         // Redrawn whole; focus stays on the same bookmark.
         const focused = bookmarkButtons.find(({ root }) => root === document.activeElement)?.item.id
         bookmarkButtons = next.items.map((item) => ({ item, root: createBookmark(item) }))
-        const hint = document.createElement('span')
-        hint.className = 'bookmark-hint'
-        hint.textContent = 'Bookmark a page with the star in the address bar to keep it here'
-        bookmarkList.replaceChildren(dropMark, ...(next.items.length ? bookmarkButtons.map(({ root }) => root) : [hint]))
+        bookmarkList.replaceChildren(dropMark, ...bookmarkButtons.map(({ root }) => root))
         bookmarkButtons.find(({ item }) => item.id === focused)?.root.focus()
         endDrag()
       }
