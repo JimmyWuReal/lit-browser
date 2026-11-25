@@ -889,6 +889,8 @@
         button.tabIndex = on ? 0 : -1
       }
       placeThumb(nav, navThumb, navButtons.get(id), true)
+      // In a narrow window the sections scroll sideways.
+      navButtons.get(id).scrollIntoView({ block: 'nearest', inline: 'nearest' })
       for (const item of rows) item.stop?.()
       rows = section.settings.map(row)
       if (section.list) rows.push(lists[section.list]())
