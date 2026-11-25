@@ -489,6 +489,7 @@
       box-shadow: inset 0 0 0 1px var(--line);
       transition: box-shadow 200ms ease, background-color 200ms ease, transform 140ms var(--settle);
     }
+    .prompt-button[hidden] { display: none; }
     .prompt-button:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
     .prompt-button:active { transform: scale(.97); transition-duration: 55ms; }
     .prompt-button.is-primary { background: #ededed; color: #0a0a0a; box-shadow: none; }
@@ -668,8 +669,9 @@
     </button>
   </div>
 
-  <!-- Allow and Block are remembered for the site; × only answers this time. -->
-  <div class="prompt" id="prompt" role="region" aria-label="Permission request">
+  <!-- A permission request, or an offer to save a password. Allow and Block
+       (or Save and Never) are remembered for the site; × only answers this time. -->
+  <div class="prompt" id="prompt" role="region" aria-label="Request">
     <div class="prompt-box">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1015,7 +1017,7 @@
       endDrag()
     })
 
-    // The active tab's permission request. The row slides in for each new
+    // The active tab's permission request, or offer to save a password. The row slides in for each new
     // request, and stays put while the same one is redrawn; its text
     // follows what it asks about, which a choice made elsewhere can narrow.
     const promptRow = document.getElementById('prompt')
@@ -1026,7 +1028,7 @@
       const prompt = tab?.started ? tab.prompt : null
       const key = prompt ? `${tab.id}:${prompt.id}` : null
       // Only a change of text touches the live region, so it is read once.
-      if (prompt && promptText.textContent !== `${prompt.site} wants to ${prompt.does}`) {
+      if (prompt && promptText.textContent !== `${prompt.site} ${prompt.says}`) {
         // The name reads left to right inside its right-to-left box.
         const site = document.createElement('strong')
         const name = document.createElement('bdi')
@@ -1034,14 +1036,18 @@
         name.textContent = prompt.site
         site.append(name)
         const does = document.createElement('span')
-        does.textContent = `wants to ${prompt.does}`
+        does.textContent = prompt.says
         // The space is for screen readers; flex layout drops it, and the
         // margin spaces the two on screen.
         promptText.replaceChildren(site, ' ', does)
-        promptRow.title = `${prompt.site} wants to ${prompt.does}`
+        promptRow.title = `${prompt.site} ${prompt.says}`
         // The buttons name the whole site, however short the row.
-        document.getElementById('prompt-allow').setAttribute('aria-label', `Allow ${prompt.site} to ${prompt.does}`)
-        document.getElementById('prompt-block').setAttribute('aria-label', `Block ${prompt.site} from being able to ${prompt.does}`)
+        for (const name of ['allow', 'block']) {
+          const button = document.getElementById(`prompt-${name}`)
+          button.hidden = !prompt[name]
+          button.textContent = prompt[name]?.text ?? ''
+          button.setAttribute('aria-label', prompt[name]?.label ?? '')
+        }
       }
       // A different request, or a change in what it asks about, takes focus
       // off the buttons, so a repeated Enter never answers it unseen.

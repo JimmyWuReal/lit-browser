@@ -271,6 +271,12 @@
     .site-kind { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 14px; }
     .site-kind > span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12.5px; color: var(--sub); }
 
+    /* Saved passwords, in the same boxes. */
+    .passwords { display: flex; flex-direction: column; gap: 14px; }
+    .passwords .control-text { flex: none; }
+    .secret { display: block; padding: 4px 14px 10px; overflow-wrap: anywhere; font: 400 12px/1.5 'DM Mono', ui-monospace, monospace; color: #ededed; user-select: text; }
+    .secret:empty { display: none; }
+
     /* Profiles: one box each, its name and, below it, its color. */
     .profiles-list { display: flex; flex-direction: column; gap: 14px; }
     .profiles-list .control-text { flex: none; }
@@ -743,7 +749,7 @@
     lists.profiles = () => {
       const element = el('div', 'profiles-list')
       const text = el('div', 'control-text')
-      text.append(el('span', '', 'Each profile has its own sign-ins, history, bookmarks, site permissions and settings for General, Downloads and Privacy. Everything else is shared.'))
+      text.append(el('span', '', 'Each profile has its own sign-ins, history, bookmarks, saved passwords, site permissions and settings for General, Downloads, Passwords and Privacy. Everything else is shared.'))
       const error = el('span', 'error')
       error.setAttribute('role', 'alert')
       text.append(error)
@@ -850,6 +856,115 @@
       }
     }
 
+    // Saved logins, to show, copy or remove, and the sites never asked about.
+    // A shown password hides again after a while, or as Settings reopens.
+    lists.passwords = () => {
+      const element = el('div', 'passwords')
+      const text = el('div', 'control-text')
+      text.append(el('strong', '', 'Saved passwords'))
+      const error = el('span', 'error')
+      error.setAttribute('role', 'alert')
+      text.append(error)
+      const body = el('div', 'sites')
+      element.append(text, body)
+      let shown = null
+      let secrets = []
+      const hideAll = () => secrets.forEach((secret) => secret.hide())
+      const change = (ask) => {
+        const id = ++saves
+        return ask.then((next) => {
+          if (id !== saves) return
+          state = next
+          redraw({ passwords: next.error || '' })
+        })
+      }
+      function removeButton(label, run) {
+        const button = el('button', 'icon-button')
+        button.type = 'button'
+        button.title = 'Remove'
+        button.setAttribute('aria-label', label)
+        button.append(document.getElementById('remove-icon').content.cloneNode(true))
+        button.addEventListener('click', run)
+        return button
+      }
+      function outline(label, describe, run) {
+        const button = el('button', 'outline-button', label)
+        button.type = 'button'
+        button.setAttribute('aria-label', describe)
+        button.addEventListener('click', run)
+        return button
+      }
+      function login({ id, site, username }) {
+        const box = el('div', 'site')
+        const name = el('div', 'site-name', site)
+        name.title = site
+        const line = el('div', 'site-kind')
+        const who = el('span', '', username || 'No username')
+        const secret = el('code', 'secret')
+        const of = `${username || 'the login'} on ${site}`
+        let timer = null
+        const hide = () => {
+          clearTimeout(timer)
+          secret.textContent = ''
+          show.textContent = 'Show'
+        }
+        const show = outline('Show', `Show password for ${of}`, async () => {
+          if (secret.textContent) return hide()
+          error.textContent = ''
+          const answer = await settings.revealPassword(id)
+          if (answer.error) error.textContent = answer.error
+          if (!answer.password || !box.isConnected || !document.body.classList.contains('is-open')) return
+          secret.textContent = answer.password
+          show.textContent = 'Hide'
+          timer = setTimeout(hide, 30000)
+        })
+        const copy = outline('Copy', `Copy password for ${of}`, async () => {
+          error.textContent = ''
+          const answer = await settings.copyPassword(id)
+          if (answer.error) error.textContent = answer.error
+          if (!answer.copied) return
+          copy.textContent = 'Copied'
+          setTimeout(() => { copy.textContent = 'Copy' }, 1500)
+        })
+        line.append(who, show, copy, removeButton(`Remove password for ${of}`, () => change(settings.removePassword(id))))
+        box.append(name, line, secret)
+        secrets.push({ hide })
+        return box
+      }
+      function build() {
+        const hadFocus = body.contains(document.activeElement)
+        hideAll()
+        secrets = []
+        const { logins, never } = state.passwords
+        const children = logins.length ? logins.map(login) : [el('p', 'sites-empty', 'No saved passwords.')]
+        if (never.length) {
+          const heading = el('div', 'control-text')
+          heading.append(el('strong', '', 'Never saved'))
+          children.push(heading, ...never.map(({ site, label }) => {
+            const box = el('div', 'site')
+            const line = el('div', 'site-kind')
+            line.append(el('span', '', label), removeButton(`Ask again for ${label}`, () => change(settings.askAgain(site))))
+            box.append(line)
+            return box
+          }))
+        }
+        body.replaceChildren(...children)
+        // A removed row took focus with it; the panel keeps it instead.
+        if (hadFocus) document.getElementById('panel').focus()
+      }
+      return {
+        key: 'passwords',
+        error,
+        element,
+        hide: hideAll,
+        stop: hideAll,
+        draw() {
+          const key = JSON.stringify(state.passwords)
+          if (key !== shown) { shown = key; build() }
+        },
+      }
+    }
+
     // The shortcut control waiting for keys, if any.
     let recorder = null
     // The keyboard layout, so main can name keys that ⌥ or ⇧ change.
@@ -935,6 +1050,7 @@
       recorder?.stop()
       readLayout()
       clearErrors()
+      for (const item of rows) item.hide?.()
       state = next
       if (!sectionId) build(next.section)
       else if (next.section && next.section !== sectionId) showSection(next.section)
@@ -946,7 +1062,7 @@
       document.getElementById('panel').focus()
     }
 
-    const close = () => { recorder?.stop(); settings.close() }
+    const close = () => { recorder?.stop(); for (const item of rows) item.hide?.(); settings.close() }
     document.getElementById('close').addEventListener('click', close)
     backdrop.addEventListener('mousedown', (event) => { if (event.target === backdrop) close() })
     // Escape while recording only cancels the recording (main handles it).
