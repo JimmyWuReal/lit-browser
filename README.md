@@ -123,7 +123,7 @@ Once a file starts downloading, a button appears at the right of the tab strip, 
 
 ## Pages that fail or crash
 
-A page that can't load, or crashes, shows what went wrong in its place, with the error's code and buttons to try again (or reload) and go back. The address bar keeps the address that failed, and Reload tries it again. A failed page is not added to History. Trying again never sends a form a second time: a page that came from one opens its address without it.
+A page that can't load, or crashes, shows what went wrong in its place, with the error's code and buttons to try again (or reload) and go back. The address bar keeps the address that failed, and Reload tries it again. A page that couldn't load is not added to History. Trying again never sends a form a second time: a page that came from one opens its address without it.
 
 That covers an address that can't be found or reached, being offline, a site that redirects forever or sends nothing, a certificate Lit doesn't trust (there is no way past that one), a missing file, and a site answering with an HTTP error and an empty page. A page that breaks off halfway keeps what it has shown, and a site's own error page shows as it is. Text that only looks like an address, such as `example.com:99999`, is searched instead.
 

@@ -960,11 +960,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     layout()
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
-    page.on('did-stop-loading', async () => {
-      tab.loading = false
-      sync()
-      if (!await emptyError(tab)) settle(tab)
-    })
+    page.on('did-stop-loading', () => { tab.loading = false; settle(tab); sync(); checkResponse(tab) })
     // The address being opened, before it commits: a tab duplicated or
     // closed before its first page commits gets it.
     // Whether the page started it (a link, a script) or Lit did (the
@@ -989,8 +985,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       // A new page has not asked for anything yet; the old page's requests go.
       dropPrompts(tab)
       setZoom(tab, zoomOf(url))
-      // Its HTTP status, and whether it was checked not to be an empty error.
-      tab.response = { status, checked: false }
+      // For checkResponse; a new object for each page.
+      tab.response = { status }
       committed(tab, url, false)
       if (tab.error) {
         tab.error = null
@@ -1193,7 +1189,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // - A restored page (a reopened or restored tab, a duplicate) is not
   //   one either.
   // tab.visit is the visit this tab's page recorded; tab.toRecord is the
-  // page ({ url, title, response }) still waiting to be.
+  // page ({ url, title }) still waiting to be.
   function committed(tab, url, sameDocument) {
     const list = tab.page.navigationHistory
     const position = { length: list.length(), index: list.getActiveIndex(), next: list.getEntryAtIndex(list.getActiveIndex() + 1)?.url }
@@ -1226,16 +1222,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     }
     // A page left while loading, other than by its own doing, still counts.
     if (!redirected) settle(tab)
-    tab.toRecord = { url, title: tab.title, response: tab.response }
+    tab.toRecord = { url, title: tab.title }
     if (!tab.page.isLoading()) settle(tab)
   }
 
-  // A private window records nothing. Nor is an HTTP error recorded before it
-  // is known not to be an empty one (see emptyError), even if it is left by then.
+  // A private window records nothing.
   function settle(tab) {
     if (!tab.toRecord) return
-    const { response } = tab.toRecord
-    if (response?.status >= 400 && !response.checked) return
     tab.visit = isPrivate ? null : recordVisit(profile, tab.toRecord.url, tab.toRecord.title)
     tab.toRecord = null
   }
@@ -1246,23 +1239,18 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // A site can answer with an HTTP error and an empty page, which would show
-  // as a blank one. The page is asked once it has loaded; only exactly what
-  // Chromium makes of an empty response counts (the same for HTML, plain text,
-  // JSON, CSS, scripts and no type; other types get its viewers, which show
-  // something), so anything visible from the site is left alone. Answers whether the tab now shows an error, or another page.
-  async function emptyError(tab) {
+  // as a blank one. The page is asked once it has loaded: what Chromium makes
+  // of no bytes (HTML, plain text, JSON and the like) has nothing in it to
+  // see, and anything else from the site is left alone. The site answered,
+  // so History has it like its other error pages.
+  async function checkResponse(tab) {
     const { response } = tab
-    if (!(response?.status >= 400) || response.checked || tab.error || tab.page.isDestroyed()) return false
+    if (!(response?.status >= 400) || tab.error || tab.page.isDestroyed()) return
     const empty = await tab.page.executeJavaScriptInIsolatedWorld(CHECK_WORLD, [{
       code: `document.documentElement?.outerHTML === '<html><head></head><body></body></html>'`,
     }]).catch(() => false)
-    if (tab.response !== response || tab.error) return true
-    if (empty === true) {
-      fail(tab, { kind: 'http', status: response.status })
-      return true
-    }
-    response.checked = true
-    return false
+    // Another page may have come meanwhile.
+    if (empty === true && tab.response === response && !tab.error) fail(tab, { kind: 'http', status: response.status })
   }
 
   // A tab's first load turns it from the search box into its page.
