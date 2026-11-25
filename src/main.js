@@ -2046,6 +2046,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       sync()
     },
     isActive: (id) => id === activeId,
+    focusActive: () => { const tab = active(); if (tab) show(tab) },
     askPermission,
     hasTab: (contents) => tabs.some((tab) => tab.page === contents),
     // Whether a frame started the page's current navigation.
@@ -2436,6 +2437,7 @@ ipcMain.on('bookmark-list', fromBookmarks((c, what, at) => {
 // The error page's, for the tab it was on.
 ipcMain.on('reload', fromToolbar((c, tabId) => c.isActive(tabId) && c.failed() && c.reload()))
 ipcMain.on('go-back', fromToolbar((c, tabId) => c.isActive(tabId) && c.failed() && c.page()?.navigationHistory.goBack()))
+ipcMain.on('focus-active', fromToolbar((c) => c.focusActive()))
 ipcMain.on('focus-page', fromToolbar((c, tabId) => c.isActive(tabId) && c.focusPage()))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
 // A prompt's answer: 'allow', 'block', or null to dismiss it, for the

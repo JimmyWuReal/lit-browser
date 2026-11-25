@@ -814,7 +814,7 @@
       root.addEventListener('dragend', () => {
         endTabDrag()
         if (pressedFrom?.isConnected && pressedFrom !== document.body) pressedFrom.focus({ preventScroll: true })
-        else window.lit.activateTab(state.activeId)
+        else window.lit.focusActive()
       })
       labelShortcut(close)
       const elements = { root, select, close, icon: root.querySelector('.tab-icon'), title: root.querySelector('.tab-title'), iconKey: null }
@@ -1223,11 +1223,19 @@
     // scrolls a strip with more past it.
     const strip = document.getElementById('strip')
     let draggedTab = null
-    // The tab it would land before, null for last, or undefined if it
+    // The tab it would land before at `x`, null for last, or undefined if it
     // would stay where it is.
-    let dropBefore
-    function setTabDrop(before) {
-      dropBefore = before
+    function tabDropAt(x) {
+      const ids = state.tabs.map((tab) => tab.id)
+      const at = ids.findIndex((id) => {
+        const box = tabElements.get(id).root.getBoundingClientRect()
+        return x < box.left + box.width / 2
+      })
+      const to = at === -1 ? ids.length : at
+      const from = ids.indexOf(draggedTab)
+      return to === from || to === from + 1 ? undefined : ids[to] ?? null
+    }
+    function markTabDrop(before) {
       const last = state.tabs.at(-1)?.id
       for (const [id, { root }] of tabElements) {
         root.classList.toggle('drop-before', id === before)
@@ -1242,26 +1250,21 @@
     function endTabDrag() {
       tabElements.get(draggedTab)?.root.classList.remove('is-dragged')
       draggedTab = null
-      setTabDrop(undefined)
+      markTabDrop(undefined)
     }
     strip.addEventListener('dragover', (event) => {
       if (draggedTab === null) return
       event.preventDefault()
       event.dataTransfer.dropEffect = 'move'
-      const ids = state.tabs.map((tab) => tab.id)
-      const at = ids.findIndex((id) => {
-        const box = tabElements.get(id).root.getBoundingClientRect()
-        return event.clientX < box.left + box.width / 2
-      })
-      const to = at === -1 ? ids.length : at
-      const from = ids.indexOf(draggedTab)
-      setTabDrop(to === from || to === from + 1 ? undefined : ids[to] ?? null)
+      markTabDrop(tabDropAt(event.clientX))
     })
-    strip.addEventListener('dragleave', (event) => { if (!strip.contains(event.relatedTarget)) setTabDrop(undefined) })
+    strip.addEventListener('dragleave', (event) => { if (!strip.contains(event.relatedTarget)) markTabDrop(undefined) })
     strip.addEventListener('drop', (event) => {
       if (draggedTab === null) return
       event.preventDefault()
-      if (dropBefore !== undefined) window.lit.moveTab(draggedTab, dropBefore)
+      // Read again, as the strip may have scrolled since.
+      const before = tabDropAt(event.clientX)
+      if (before !== undefined) window.lit.moveTab(draggedTab, before)
       endTabDrag()
     })
 
