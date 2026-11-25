@@ -1262,7 +1262,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // Back (`delta` -1) or forward (1) one page, or in a new tab next to this
-  // one, with its back/forward list, as ⌘-clicked links open.
+  // one, with its back/forward list, as ⌘-clicked links open. Chromium may
+  // skip a page that added itself to the list; the new tab can't, as Electron
+  // doesn't say which those are.
   function stepPage(tab, delta, newTab) {
     if (!tab?.started || tab.page.isDestroyed()) return
     const list = tab.page.navigationHistory
