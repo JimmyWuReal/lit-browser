@@ -27,12 +27,10 @@ const APP = /^app:([a-z][a-z0-9+.-]{0,99})$/
 const isApp = (kind) => APP.test(kind)
 const isKind = (kind) => Object.hasOwn(KINDS, kind) || isApp(kind)
 
-// The kind's `label` and `does`, as in KINDS. A long scheme is shortened, so
-// it never crowds the site out of the prompt.
+// The kind's `label` and `does`, as in KINDS.
 function infoOf(kind) {
   if (!isApp(kind)) return KINDS[kind]
-  const scheme = kind.match(APP)[1]
-  const links = `${scheme.length > 24 ? `${scheme.slice(0, 23)}…` : scheme} links`
+  const links = `${kind.match(APP)[1]} links`
   return { label: links, does: `open ${links} in another app` }
 }
 

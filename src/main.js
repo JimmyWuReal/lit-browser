@@ -991,11 +991,14 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // closed before its first page commits gets it.
     // Whether the page started it (a link, a script) or Lit did (the
     // address bar, Back, a reload), for `committed`.
-    page.on('did-start-navigation', ({ url, isMainFrame, initiator }) => {
+    page.on('did-start-navigation', ({ url, isMainFrame, isSameDocument, initiator }) => {
       if (!isMainFrame) return
       tab.pendingUrl = url
-      // Read now: a frame can be gone by the time its navigation redirects.
-      tab.startedByFrame = Boolean(initiator?.parent)
+      // For onAppRedirect. Read now: a frame can be gone by the time its
+      // navigation redirects. A new page cancels the one still on its way, so
+      // this is the latest's; a move within the page (#section) leaves it
+      // loading, so it changes nothing here.
+      if (!isSameDocument) tab.startedByFrame = Boolean(initiator?.parent)
       tab.startedByPage = Boolean(initiator)
     })
     // Asked about in onAppRedirect, not here; a frame's is refused.

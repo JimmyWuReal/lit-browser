@@ -36,7 +36,6 @@ test('opening another app is a kind per scheme', () => {
   assert.equal(status(sites, 'https://a.com', ['app:mailto']), 'allow')
   assert.equal(status(sites, 'https://a.com', ['app:zoommtg']), 'ask')
   assert.equal(describe(['app:mailto']), 'open mailto links in another app')
-  assert.equal(describe([`app:${'a'.repeat(100)}`]), `open ${'a'.repeat(23)}… links in another app`)
 })
 
 test('opensApp leaves out the schemes Chromium handles itself', () => {

@@ -466,11 +466,13 @@
       white-space: nowrap;
     }
     .prompt-text strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; direction: rtl; color: #ededed; font-weight: 500; }
-    .prompt-text span { flex: none; margin-left: .3em; }
+    /* Only an app's link can be named at such length that it would take the
+       site's room too; it is cut, and the row's tooltip has it whole. */
+    .prompt-text span { flex: none; max-width: 70%; margin-left: .3em; overflow: hidden; text-overflow: ellipsis; }
     @media (max-width: 720px) {
       .prompt-text { flex-direction: column; justify-content: center; font-size: 12px; line-height: 15px; }
       .prompt-text strong { align-self: flex-start; max-width: 100%; }
-      .prompt-text span { margin-left: 0; overflow: hidden; text-overflow: ellipsis; }
+      .prompt-text span { max-width: 100%; margin-left: 0; }
     }
     .home .prompt { display: none; }
     /* The kit's buttons, small: outline for Block, solid for Allow. */
