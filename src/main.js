@@ -1711,13 +1711,14 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // that stayed lost its own. Then tab.offer asks, until it is answered or a
   // later page comes. The password never leaves main.
   const LOGIN_TIME = 60000
-  function loginSubmitted(tab, site, { username, password, changing }) {
+  const savesPasswords = () => profile.settings.savePasswords && !isPrivate
+  function loginSubmitted(tab, site, { username, password, old }) {
     const { loginName } = tab
     // A click and the submit it makes both say so, the name only once.
     const before = tab.submitted
     const known = before?.site === site && before.password === password && !before.moved ? before.username : loginName?.site === site && Date.now() - loginName.at < LOGIN_TIME * 5 ? loginName.username : ''
     tab.loginName = null
-    tab.submitted = profile.settings.savePasswords && !isPrivate ? { site, username: username || known, password, changing, at: Date.now(), moved: false } : null
+    tab.submitted = savesPasswords() ? { site, username: username || known, password, old, at: Date.now(), moved: false } : null
   }
   // A new page came, or an error page, after which nothing is saved.
   function moveLogin(tab, status) {
@@ -1733,8 +1734,19 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const { submitted } = tab
     if (!submitted?.moved || tab.page.isDestroyed()) return
     const failed = await tab.page.executeJavaScriptInIsolatedWorld(CHECK_WORLD, [{
-      code: `[...document.querySelectorAll('input[type=password]')].some((field) => field.checkVisibility())`,
-    }]).catch(() => true)
+      // Pages often draw their form after they load, maybe in a shadow tree,
+      // so it is looked for a while.
+      code: `(async () => {
+        const asks = (root) => [...root.querySelectorAll('*')].some((each) => (each.matches('input[type=password]') && each.checkVisibility()) || (each.shadowRoot && asks(each.shadowRoot)))
+        for (let i = 0; i < 8; i++) {
+          if (asks(document)) return true
+          await new Promise((resolve) => setTimeout(resolve, 250))
+        }
+        return asks(document)
+      })()`,
+    }]).catch(() => null)
+    // The page left before it could tell; the next one is checked.
+    if (failed === null) return
     // Another page or sign-in may have come meanwhile.
     if (tab.submitted !== submitted || tab.page.isDestroyed() || tab.page.isLoadingMainFrame()) return
     if (failed) tab.submitted = null
@@ -1743,7 +1755,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function offerLogin(tab) {
     const { submitted } = tab
     tab.submitted = null
-    if (!submitted || !find(tab.id) || !profile.settings.savePasswords || isPrivate) return
+    if (!submitted || !find(tab.id) || !savesPasswords()) return
     const offer = passwords.offerFor(profile.passwords, submitted, decrypt)
     if (!offer) return
     tab.offer = { id: nextPromptId++, site: submitted.site, action: offer.action, username: offer.username, login: offer.id, secret: offer.secret, submitted, at: Date.now() }
@@ -2492,6 +2504,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       sync()
     },
     isActive: (id) => id === activeId,
+    savesPasswords,
     askPermission,
     pickLogin,
     // A message from src/page.js in the tab whose top frame sent it, now on
@@ -2500,7 +2513,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       const tab = tabs.find((each) => each.page === contents)
       if (!tab) return
       // Kept for the second step of a sign-in (loginSubmitted).
-      if (message === 'name') tab.loginName = isPrivate ? null : { site, username: value.username, at: Date.now() }
+      if (message === 'name') tab.loginName = !savesPasswords() ? null : { site, username: value.username, at: Date.now() }
       else if (message === 'abandoned') tab.submitted = tab.loginName = null
       else if (message === 'submitted') loginSubmitted(tab, site, value)
       else if (message === 'done') { if (tab.submitted?.site === site && !tab.submitted.moved) offerLogin(tab) }
@@ -2563,7 +2576,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     },
     settingsChanged() {
       if (!profile.settings.savePasswords) {
-        for (const tab of tabs) { tab.submitted = null; tab.offer = null }
+        for (const tab of tabs) { tab.submitted = tab.loginName = tab.offer = null }
       }
       if (!profile.settings.fillPasswords) hideLogins()
       sendShortcuts()
@@ -2978,7 +2991,12 @@ const fromPage = (message, read) => (event, value) => {
   if (!checked) return
   for (const controls of openWindows) controls.pageMessage(event.sender, frame, site, message, checked)
 }
-ipcMain.on('login-submitted', fromPage('submitted', (value) => (passwords.isText(value?.username) && passwords.isText(value?.password) && value.password ? { username: value.username, password: value.password, changing: value.changing === true } : null)))
+// Whether what is typed into a login may be sent to be saved. Always answered,
+// as the page waits for it.
+ipcMain.on('login-saves', (event) => {
+  event.returnValue = [...openWindows].some((controls) => controls.hasTab(event.sender) && controls.savesPasswords())
+})
+ipcMain.on('login-submitted', fromPage('submitted', (value) => (passwords.isText(value?.username) && passwords.isText(value?.password) && value.password ? { username: value.username, password: value.password, old: passwords.isText(value.old) ? value.old : '' } : null)))
 ipcMain.on('login-name', fromPage('name', (value) => (passwords.isText(value?.username) ? { username: value.username } : null)))
 ipcMain.on('login-abandoned', fromPage('abandoned', () => true))
 ipcMain.on('login-done', fromPage('done', () => true))

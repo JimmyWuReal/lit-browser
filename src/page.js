@@ -24,8 +24,12 @@ function passwordOf(fields) {
   return filled.find((field, i) => filled.slice(i + 1).some((other) => other.value === field.value)) || filled[1]
 }
 
-// Whether a form changes or makes a password rather than signing in.
-const isChange = (fields) => fields.filter((field) => field.value).length > 1 || fields.some(isNew)
+// The password being replaced, typed before the new one (`password`, as
+// passwordOf picks it), or ''.
+function oldOf(fields, password) {
+  const filled = fields.filter((field) => field.value)
+  return filled.slice(0, filled.indexOf(password)).findLast((field) => !isNew(field))?.value || ''
+}
 
 // Whether a button's words say it signs in, signs up or changes a password.
 // Only asked when the page sends no submit, so one in a language not here still
@@ -50,6 +54,8 @@ function start({ ipcRenderer }) {
   // What a field goes with: its form, else everything in its document (or
   // shadow tree).
   const fieldsWith = (element) => [...(element.form?.elements ?? element.getRootNode().querySelectorAll('input'))].filter((each) => each instanceof HTMLInputElement)
+  // Every input in the page, in open shadow trees too.
+  const inputsIn = (root) => [...root.querySelectorAll('*')].flatMap((each) => [...(each instanceof HTMLInputElement ? [each] : []), ...(each.shadowRoot ? inputsIn(each.shadowRoot) : [])])
   const passwords = (fields) => fields.filter((field) => field.type === 'password' && visible(field))
 
   // The name field of a form without a password: the first step of two.
@@ -62,9 +68,14 @@ function start({ ipcRenderer }) {
   // save it once the sign-in seems to have worked: another page comes, or, in
   // a page that stays, its password field goes away for good.
   let watch = null
-  // With `later`, only if the password is still one a moment after: a button
-  // that shows it has made it text by then.
-  function submitted(fields, later = false) {
+  // With `maybe`, taken back if the password is no longer one a moment after:
+  // a button that shows it has made it text by then. Said at once all the same,
+  // as signing in may leave the page before that.
+  function submitted(fields, maybe = false) {
+    const filled = passwords(fields).some((field) => field.value) || nameAlone(fields)?.value
+    // Nothing typed leaves the page unless it may be saved. Asked each time,
+    // as Settings can change it, and now, as the page may be about to go.
+    if (!filled || !ipcRenderer.sendSync('login-saves')) return
     const password = passwordOf(passwords(fields))
     if (!password) {
       // The second step may not repeat it.
@@ -73,9 +84,12 @@ function start({ ipcRenderer }) {
       return
     }
     const name = nameOf(fields, password, visible)
-    const login = { username: (name?.value || '').trim(), password: password.value, changing: isChange(passwords(fields)) }
-    if (later) setTimeout(() => { if (password.type === 'password') begin(password, login) }, 50)
-    else begin(password, login)
+    const login = { username: (name?.value || '').trim(), password: password.value, old: oldOf(passwords(fields), password) }
+    begin(password, login)
+    if (maybe) {
+      const mine = watch
+      setTimeout(() => { if (watch === mine && password.type !== 'password') abandon() }, 50)
+    }
   }
   function begin(password, login) {
     ipcRenderer.send('login-submitted', login)
@@ -84,7 +98,7 @@ function start({ ipcRenderer }) {
     let left = 60
     watch = setInterval(() => {
       // Another password field in its place is the form, drawn again.
-      gone = visible(password) || passwords([...document.querySelectorAll('input')]).length ? 0 : gone + 1
+      gone = visible(password) || passwords(inputsIn(document)).length ? 0 : gone + 1
       if (gone < 3 && --left > 0) return
       clearInterval(watch)
       if (gone >= 3) ipcRenderer.send('login-done')
@@ -189,4 +203,4 @@ function start({ ipcRenderer }) {
 
 if (typeof window !== 'undefined') {
   if (/^https?:$/.test(location.protocol)) start(require('electron'))
-} else module.exports = { passwordOf, isChange, signsIn, nameOf }
+} else module.exports = { passwordOf, oldOf, signsIn, nameOf }

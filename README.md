@@ -110,7 +110,7 @@ The address bar suggests only bookmarks there, nothing from history. Once the wi
 
 ## Passwords
 
-After you sign in to a site, or change its password there, a row below the address bar offers to save the password (or update the saved one). Never stops Lit asking for that site; × answers no just this time. The offer comes once the sign-in seems to have worked: the next page has no password field, or the page that stayed lost its own. It goes when answered, when its tab closes, or with a page opened more than a minute later.
+After you sign in to a site, or change its password there, a row below the address bar offers to save the password (or update the saved one). Never stops Lit asking for that site; × answers no just this time. The offer comes once the sign-in seems to have worked: the next page shows no password field within about two seconds, or the page that stayed lost its own. A change of password on a form without a username updates a saved one only when the old password typed there is that of just one login. It goes when answered, when its tab closes, or with a page opened more than a minute later.
 
 Click a login field, Tab into it or press ↓ in it, and Lit lists the site's saved logins under it. Pick one (or use ↓, ↑ and Enter; Escape closes the list) to fill the username and password. Nothing is filled until you pick, so a page can never read a password you didn't choose. A password is only offered on the exact site it was saved on (its scheme, host and port), in the page itself, not in frames inside it. A sign-in split in two steps gets its username in the first (a field the site marks as a username, or the form's only email field) and its password in the second.
 

@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { passwordOf, isChange, signsIn, nameOf } = require('../src/page')
+const { passwordOf, oldOf, signsIn, nameOf } = require('../src/page')
 
 const field = (name, value = name, rest = {}) => ({ name, value, type: 'text', autocomplete: '', ...rest })
 const secret = (value, autocomplete = '') => field('p', value, { type: 'password', autocomplete })
@@ -17,10 +17,14 @@ test('passwordOf takes the new password when one is being changed', () => {
   assert.equal(passwordOf([secret('a', 'current-password'), secret('a'), secret('a')]).value, 'a')
 })
 
-test('isChange tells a change from a sign-in', () => {
-  assert.equal(isChange([secret('a')]), false)
-  assert.equal(isChange([secret('a'), secret('b')]), true)
-  assert.equal(isChange([secret('a', 'new-password')]), true)
+test('oldOf is the password typed before the new one', () => {
+  const old = (...fields) => oldOf(fields, passwordOf(fields))
+  assert.equal(old(secret('a')), '')
+  assert.equal(old(secret('old'), secret('new')), 'old')
+  assert.equal(old(secret('old'), secret('new'), secret('new')), 'old')
+  assert.equal(old(secret('new'), secret('new')), '')
+  assert.equal(old(secret('old', 'current-password'), secret('new', 'new-password')), 'old')
+  assert.equal(old(secret('a', 'new-password'), secret('a', 'new-password')), '')
 })
 
 test('signsIn tells buttons that sign in', () => {
