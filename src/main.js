@@ -13,13 +13,13 @@
 // A private window (⇧⌘N) browses in an in-memory session of its own and
 // keeps nothing once it closes (see privateSession), except the bookmarks
 // someone adds in it. Every window belongs to one profile (see openProfile).
-const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, safeStorage, screen, session, shell, systemPreferences } = require('electron')
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, safeStorage, screen, session, shell, systemPreferences } = require('electron')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const fs = require('node:fs')
 const { toUrl, webAddress, searchUrl, engineOf } = require('./url')
 const quickSearch = require('./quicksearch')
-const { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const bookmarkStore = require('./bookmarks')
@@ -29,6 +29,7 @@ const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
 const permissions = require('./permissions')
 const passwords = require('./passwords')
+const shareStore = require('./share')
 const signIn = require('./signin')
 const errors = require('./errors')
 const profileStore = require('./profiles')
@@ -72,6 +73,9 @@ const windowsByPopup = new WeakMap()
 const openWindows = new Set()
 let nextTabId = 1
 let nextPromptId = 1
+// Names each page a tab loads, so the sharing picker can tell one from the next.
+let nextPageId = 1
+let nextShareId = 1
 // Names a window for Reopen Closed Tab; a reopened window keeps its key,
 // so tabs closed from it earlier still find their way back to it.
 let nextWindowKey = 1
@@ -326,11 +330,92 @@ function onAppRedirect(store, { webContents: page, url, redirectURL }) {
 // or duplicated tab, not yet on a page, has no site. Anything not from a tab (Lit's own pages, a
 // service worker) is refused too. `store` is the session's choices.
 function onPermissionRequest(store, contents, permission, callback, details) {
+  if (permission === 'display-capture') return onShareRequest(contents, callback, details)
   const kinds = permissions.kindsOf(permission, details.mediaTypes, details.externalURL)
   if (!kinds) return callback(true)
   const site = siteFor(contents, details.securityOrigin ?? details.requestingUrl)
   if (!details.isMainFrame && !details.securityOrigin) return callback(false)
   answerRequest(store, contents, site, kinds, callback)
+}
+
+// A site wants to share the screen (getDisplayMedia, as Meet and Zoom do).
+// Asked each time, in the picker of the tab that asked; the page or a frame
+// of its own site, as for the camera.
+function onShareRequest(contents, callback, details) {
+  const site = siteFor(contents, details.securityOrigin ?? details.requestingUrl)
+  if (site) {
+    for (const controls of openWindows) {
+      if (controls.askShare(contents, site, details, callback)) return
+    }
+  }
+  callback(false)
+}
+
+// The page's own frames: those on its origin, the only ones that can ask.
+const ownFrames = (contents) => contents.mainFrame.framesInSubtree.filter((frame) => frame.origin === contents.mainFrame.origin)
+
+// What grantShare is granting, for onDisplayMedia, which Electron calls from
+// within `callback(true)`.
+// getUserMedia with chromeMediaSource makes the very same request, but then
+// captures whatever the page names, without onDisplayMedia. It can't be refused
+// beforehand: Electron's handler gets identical details for both, and only
+// picks the way after the answer (MediaAccessAllowed in its
+// web_contents_permission_helper.cc, as of 45). So the page is held still
+// (SIGSTOP) while it is granted, which is done within this call, and goes on
+// only if the choice was taken; else it is killed, having run nothing since and
+// so having seen nothing. Site isolation keeps a process to one site, so at
+// most that same site's other tabs go with it.
+// A page that can't be held is refused.
+let granting = null
+function grantShare(contents, site, callback, streams) {
+  const held = []
+  const release = (name) => {
+    for (const pid of held) {
+      try {
+        process.kill(pid, name)
+      } catch {
+        // Already gone.
+      }
+    }
+  }
+  try {
+    for (const pid of new Set(ownFrames(contents).map((frame) => frame.osProcessId))) {
+      process.kill(pid, 'SIGSTOP')
+      held.push(pid)
+    }
+  } catch {
+    release('SIGCONT')
+    return callback(false)
+  }
+  let taken = false
+  granting = { contents, site, streams, take: () => { taken = true } }
+  try {
+    callback(true)
+  } finally {
+    granting = null
+    release(taken ? 'SIGCONT' : 'SIGKILL')
+  }
+}
+
+// Captures only what grantShare is granting, to the page and site it is for.
+// A request from anywhere else leaves the grant alone, and is refused.
+function onDisplayMedia({ frame, securityOrigin }, callback) {
+  const grant = granting
+  const top = grant && !grant.contents.isDestroyed() ? grant.contents.mainFrame : null
+  if (!frame || !top || frame.top?.frameTreeNodeId !== top.frameTreeNodeId || permissions.originOf(securityOrigin) !== grant.site) return callback(null)
+  granting = null
+  grant.take()
+  callback(grant.streams)
+}
+
+// Whether macOS lets Lit see windows and screens. Tabs need no permission.
+const canCaptureScreen = () => process.platform !== 'darwin' || systemPreferences.getMediaAccessStatus('screen') === 'granted'
+
+// Opens where macOS grants that. Trying to list them first is what puts Lit
+// on the list there.
+function openScreenPermission() {
+  desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } }).catch(() => {})
+  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture').catch(() => {})
 }
 
 // Answers `site`'s request for `kinds` from its choices, or asks on the tab.
@@ -377,6 +462,7 @@ app.on('login', (event, contents, details, authInfo, callback) => {
 function setUpSession(ses, profile, store) {
   ses.setPermissionRequestHandler((...args) => onPermissionRequest(store, ...args))
   ses.setPermissionCheckHandler((...args) => onPermissionCheck(store, ...args))
+  ses.setDisplayMediaRequestHandler(onDisplayMedia)
   ses.on('will-download', (_event, item) => trackDownload(item, ses, profile))
   ses.webRequest.onBeforeRedirect({ urls: ['<all_urls>'], types: ['mainFrame'] }, (details) => onAppRedirect(store, details))
   ses.registerPreloadScript({ type: 'frame', filePath: PAGE_PRELOAD })
@@ -762,6 +848,7 @@ const popupState = (name, c) => ({
   settings: () => ({ ...settingsState(c.profile), section: c.settingsSection() }),
   history: () => historyState(c.profile),
   downloads: () => downloadsState(c.session),
+  share: () => c.shareState(),
 })[name]()
 
 // What the Settings popup draws in a window of `profile`: the values, plus
@@ -1050,6 +1137,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
         },
       })),
     })
+    for (const each of openWindows) each.shareTabsChanged()
     // A private window is no part of the saved session.
     if (!isPrivate) sessionChanged()
   }
@@ -1164,6 +1252,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const tab = find(id)
     if (!tab) return
     if (id !== activeId) hideLogins()
+    // Sharing is asked by the tab on show.
+    if (share && share.tab !== tab) closePopup()
     activeId = id
     // A page stays full screen only while it is the one on show.
     for (const other of tabs) if (other !== tab) leaveFullScreen(other)
@@ -1233,6 +1323,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       const history = page.navigationHistory
       tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
       tab.favicon = null
+      tab.pageId = nextPageId++
       tab.find = findState.reset(tab.find)
       // A new page has not asked for anything yet; the old page's requests go.
       dropPrompts(tab)
@@ -1565,6 +1656,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     else tab.page.close({ waitForBeforeUnload: true })
   }
 
+  // The same tabs, in the order of their ids.
+  function arrange(order) {
+    tabs.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))
+    sync()
+  }
+
   function removeTab(tab) {
     if (!find(tab.id)) return
     dropPrompts(tab)
@@ -1656,6 +1753,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   // Refuses the tab's waiting requests, without saving anything.
   function dropPrompts(tab) {
+    if (share?.tab === tab) closePopup(!tab.page.isDestroyed())
     if (!tab.prompts.length) return
     for (const prompt of tab.prompts.splice(0)) for (const callback of prompt.callbacks) callback(false)
     sync()
@@ -1901,6 +1999,103 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     }
     tab.page.focus()
     frame.send('login-fill', { request, site, username: login.username, password })
+  }
+
+  // Screen sharing. The tab's request waiting in the picker (src/share.html):
+  // { id, tab, site, audio, callback, frames, sources, shown }, `audio` being
+  // whether it wants sound too, `frames` the frames that may have asked (none
+  // if the page did itself), `shown`
+  // the tabs last sent to the picker, as text, and `sources` the windows and screens, null until listed. One
+  // at a time, for the tab on show; others are refused, as is one while another
+  // popup is open. Closing the picker, however that comes about, refuses it.
+  let share = null
+  function askShare(contents, site, { mediaTypes = [], isMainFrame, requestingUrl }, callback) {
+    const tab = tabs.find((each) => each.page === contents)
+    if (!tab) return false
+    if (!profile.settings.screenSharing || share || popupOpen || tab.id !== activeId) {
+      callback(false)
+      return true
+    }
+    const asked = share = {
+      id: nextShareId++,
+      tab, site, callback,
+      audio: mediaTypes.includes('audio'),
+      frames: isMainFrame ? [] : ownFrames(contents).filter((frame) => frame.url === requestingUrl).map((frame) => frame.frameToken),
+      allowed: canCaptureScreen(),
+      sources: null,
+    }
+    openPopup('share')
+    const listed = asked.allowed
+      ? desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 340, height: 212 }, fetchWindowIcons: true })
+      : Promise.resolve([])
+    listed.catch(() => []).then((sources) => {
+      if (share !== asked) return
+      asked.sources = shareStore.sourceRows(sources)
+      popups.share.webContents.send('share-changed', shareState())
+    })
+    return true
+  }
+  const dropShare = () => {
+    if (!share) return
+    const { callback } = share
+    share = null
+    callback(false)
+  }
+  // The tabs a share can be of: those of the windows on the same session (so
+  // never across profiles, or in and out of private windows), but for the one
+  // asking, which would show itself.
+  const shareTabs = () => [...openWindows].filter((c) => c.session === ses).flatMap((c) => c.shareableTabs()).filter((tab) => tab !== share?.tab)
+  const shareRows = () => shareTabs().map(({ id, pageId, title, url, favicon }) => ({ id, page: `${pageId} ${url}`, name: title || url, icon: favicon }))
+  // A tab changed somewhere, which the picker follows.
+  function shareTabsChanged() {
+    if (!share) return
+    const shown = JSON.stringify(shareRows())
+    if (shown === share.shown) return
+    share.shown = shown
+    popups.share?.webContents.send('share-changed', shareState())
+  }
+  const shareState = () => share && {
+    id: share.id,
+    site: permissions.label(share.site),
+    audio: share.audio,
+    allowed: share.allowed,
+    tabs: shareRows(),
+    windows: share.sources && share.sources.windows,
+    screens: share.sources && share.sources.screens,
+  }
+  // Shares what was picked. A tab is picked as the page the picker showed
+  // (`page`): one that moved on meanwhile isn't it. A window or screen is looked
+  // for again, as they may have gone while the picker was open; by id, since a
+  // window's title can change all the time. What has gone is taken off the
+  // picker, to choose again. A later choice replaces one still being looked for.
+  // A frame that asked and has gone can't be given anything; all Electron says
+  // of it is its address, so any with that one that has gone refuses it.
+  async function chooseShare(kind, id, audio, page) {
+    if (!share) return
+    const asked = share
+    const { tab, site, callback, audio: wantsAudio, frames } = asked
+    const choice = asked.choice = {}
+    let streams = null
+    if (kind === 'tabs') {
+      const picked = shareTabs().find((each) => each.id === id)
+      if (picked && !shareRows().some((row) => row.id === id && row.page === page)) return shareTabsChanged()
+      const frame = picked?.page.mainFrame
+      if (frame && !frame.isDestroyed()) streams = shareStore.tabStreams(frame, wantsAudio && audio === true)
+    } else if (kind === 'windows' || kind === 'screens') {
+      const now = await desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 0, height: 0 } }).catch(() => [])
+      if (share !== asked || asked.choice !== choice) return
+      const source = asked.sources?.[kind].find((each) => each.id === id)
+      if (source && !now.some((each) => each.id === id)) {
+        asked.sources = shareStore.stillThere(asked.sources, now)
+        return popups.share?.webContents.send('share-changed', shareState())
+      }
+      if (source) streams = shareStore.sourceStreams(source)
+    }
+    const own = new Set(ownFrames(tab.page).map((frame) => frame.frameToken))
+    if (!streams || !frames.every((token) => own.has(token))) return closePopup()
+    share = null
+    closePopup()
+    grantShare(tab.page, site, callback, streams)
   }
 
   // Sign-in prompts. A tab's wait in order, one at a time, each { id,
@@ -2149,8 +2344,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     Menu.buildFromTemplate(profileItems(profile)).popup({ window: win, x: Math.round(x), y: Math.round(y) })
   }
 
-  // The Settings, History, Downloads and Bookmarks popups (src/settings.html,
-  // src/history.html, src/downloads.html, src/bookmarks.html): each is made on first use, then hidden and shown; one is open at a time.
+  // The Settings, History, Downloads, Bookmarks and screen sharing popups
+  // (src/settings.html, src/history.html, src/downloads.html,
+  // src/bookmarks.html, src/share.html): each is made on first use, then hidden and shown; one is open at a time.
   // While a shortcut is being recorded in Settings, key presses go to it
   // instead of the menu, so ⌘T records ⌘T rather than opening a tab.
   function popupView(name) {
@@ -2189,6 +2385,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     else if (popupOpen !== name) {
       popups[popupOpen].setVisible(false)
       recording = false
+      dropShare()
     }
     popupOpen = name
     settingsSection = section
@@ -2202,11 +2399,15 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // Popups have no exit animation, so they just hide. Focus goes back
   // where it was: the toolbar (its settings button, or the address bar)
   // keeps its own focused element, otherwise the page gets it.
-  function closePopup() {
+  // `focus` is false when the active page has gone, and whatever comes next
+  // takes it.
+  function closePopup(focus = true) {
     if (!popupOpen) return
     popups[popupOpen].setVisible(false)
     popupOpen = null
     recording = false
+    dropShare()
+    if (!focus) return
     if (toolbarHadFocus) return win.webContents.focus()
     const tab = active()
     if (tab) show(tab)
@@ -2478,6 +2679,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       newTab(url)
     },
     closeTab: (id = activeId, focus = true) => closeTab(id, focus),
+    // Before another tab, or last (null).
+    moveTab: (id, beforeId) => arrange(moved(ids(), id, beforeId)),
+    // One place left (-1) or right (1).
+    nudgeTab: (id, direction) => arrange(nudged(ids(), id, direction)),
     reopenTab(history, index) {
       closePopup()
       addTab({ history, index: reopenIndex(index, tabs.length) })
@@ -2524,6 +2729,14 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       else if (message === 'field') showLogins(tab, frame, site, value)
       else if (logins?.tab === tab) hideLogins(true)
     },
+    focusActive: () => { const tab = active(); if (tab) show(tab) },
+    askPermission,
+    askShare,
+    shareState,
+    shareTabsChanged,
+    chooseShare,
+    isSharing: (id) => Boolean(share) && share.id === id,
+    shareableTabs: () => tabs.filter((tab) => tab.started && !tab.error && tab.url && !tab.page.isDestroyed()),
     askSignIn,
     answerSignIn,
     hasTab: (contents) => tabs.some((tab) => tab.page === contents),
@@ -2587,6 +2800,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       sync()
       sendQuickSearch()
       sendBookmarks()
+      // Sharing turned off refuses what is being asked.
+      if (share && !profile.settings.screenSharing) closePopup()
       popups.settings?.webContents.send('settings-changed', settingsState(profile))
       controls.historyChanged()
     },
@@ -2670,6 +2885,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendQuickSearch(); sendBookmarks(); sendDownloads(); sendProfile() })
   win.on('closed', () => {
     openWindows.delete(controls)
+    dropShare()
     changed()
     if (closingWindow) rememberClosed(profile, closingWindow)
     // Its own pages too, read before they close.
@@ -2897,6 +3113,8 @@ const fromToolbar = (handler) => (event, ...args) => {
 ipcMain.on('navigate', fromToolbar((c, input) => typeof input === 'string' && c.navigate(input)))
 ipcMain.on('new-tab', fromToolbar((c) => c.newTab()))
 ipcMain.on('close-tab', fromToolbar((c, id, focus) => c.closeTab(id, focus !== false)))
+ipcMain.on('move-tab', fromToolbar((c, id, beforeId) => c.moveTab(id, beforeId)))
+ipcMain.on('nudge-tab', fromToolbar((c, id, direction) => (direction === -1 || direction === 1) && c.nudgeTab(id, direction)))
 ipcMain.on('activate-tab', fromToolbar((c, id, focus) => c.activate(id, focus !== false)))
 // Find messages name the tab the toolbar showed, so a tab switch the
 // toolbar has not drawn yet never sends them to another tab.
@@ -2926,6 +3144,7 @@ ipcMain.on('bookmark-list', fromBookmarks((c, what, at) => {
 // The error page's, for the tab it was on.
 ipcMain.on('reload', fromToolbar((c, tabId) => c.isActive(tabId) && c.failed() && c.reload()))
 ipcMain.on('go-back', fromToolbar((c, tabId) => c.isActive(tabId) && c.failed() && c.page()?.navigationHistory.goBack()))
+ipcMain.on('focus-active', fromToolbar((c) => c.focusActive()))
 ipcMain.on('focus-page', fromToolbar((c, tabId) => c.isActive(tabId) && c.focusPage()))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
 // A prompt's answer: 'allow', 'block', or null to dismiss it, for the
@@ -3052,6 +3271,13 @@ ipcMain.on('downloads-clear', fromDownloads((c) => {
   if (!downloadsOf(c.session).length) c.closePopup()
 }))
 ipcMain.on('downloads-close', fromDownloads((c) => c.closePopup()))
+
+ipcMain.handle('share-get', fromPopup('share', (c) => c.shareState()))
+// What the picker does counts only for the request it was shown for.
+const fromShare = (handler) => fromPopup('share', (c, shareId, ...args) => { if (c.isSharing(shareId)) handler(c, ...args) })
+ipcMain.on('share-choose', fromShare((c, kind, id, audio, page) => c.chooseShare(kind, id, audio, page)))
+ipcMain.on('share-allow', fromShare(openScreenPermission))
+ipcMain.on('share-close', fromShare((c) => c.closePopup()))
 
 // Other apps opening links and HTML files. Registered before Lit is ready,
 // as macOS sends the link that launched it early.

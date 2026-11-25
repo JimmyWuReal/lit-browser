@@ -24,6 +24,23 @@ function byNumber(ids, number) {
   return number === 9 ? ids[ids.length - 1] : ids[number - 1] ?? null
 }
 
+// The tabs with `id` moved before `beforeId`, or last (null). Unchanged when
+// either is gone, as one can close while it is being dragged.
+function moved(ids, id, beforeId) {
+  if (id === beforeId || !ids.includes(id) || (beforeId !== null && !ids.includes(beforeId))) return ids
+  const rest = ids.filter((each) => each !== id)
+  rest.splice(beforeId === null ? rest.length : rest.indexOf(beforeId), 0, id)
+  return rest
+}
+
+// The tabs with `id` moved one place left (-1) or right (1), if there is one.
+function nudged(ids, id, direction) {
+  const index = ids.indexOf(id)
+  const to = index + direction
+  if (index === -1 || to < 0 || to >= ids.length) return ids
+  return moved(ids, id, direction < 0 ? ids[to] : ids[to + 1] ?? null)
+}
+
 // Closed tabs and windows, for Reopen Closed Tab: newest last, holding
 // at most `limit` tabs (the Closed tabs to remember setting).
 function remember(closed, entry, limit) {
@@ -63,4 +80,4 @@ const onScreen = (bounds, areas) => areas.some((area) =>
   bounds.x < area.x + area.width && bounds.x + bounds.width > area.x &&
   bounds.y < area.y + area.height && bounds.y + bounds.height > area.y)
 
-module.exports = { afterClose, step, byNumber, remember, keepNewest, reopenIndex, onScreen }
+module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen }

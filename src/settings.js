@@ -16,7 +16,9 @@ const quickSearch = require('./quicksearch')
 // shortcuts) in a shared one. The profile ones come first.
 // A section can also name a `list` the popup draws after its settings, from
 // state main sends with them (sitePermissions, passwords, quickSearchSites, profiles, defaultBrowser).
-// Each setting: { key, label, description?, type, default, ...type fields }.
+// Each setting: { key, label, description?, group?, type, default, ...type
+// fields }. Settings next to each other with the same `group` get it as a
+// heading.
 // Types the popup can draw:
 //   choice    `options` is [{ value, label }]; a segmented control.
 //   toggle    true or false; a switch.
@@ -24,6 +26,7 @@ const quickSearch = require('./quicksearch')
 //   shortcut  an accelerator from src/shortcuts.js, or '' for none; recorded
 //             by pressing it. Each one is a menu command (see buildMenu).
 const shortcut = (command, label, accelerator) => ({ key: `shortcuts.${command}`, label, type: 'shortcut', default: accelerator })
+const group = (name, settings) => settings.map((setting) => ({ ...setting, group: name }))
 
 const SECTIONS = [
   {
@@ -128,6 +131,13 @@ const SECTIONS = [
         key: 'blockAds',
         label: 'Block ads and trackers',
         description: 'Stops requests to ad and tracking servers and hides the space ads leave, using Ghostery’s lists, which download the first time and refresh weekly. Reload open pages to show or hide their ads.',
+        type: 'toggle',
+        default: true,
+      },
+      {
+        key: 'screenSharing',
+        label: 'Let sites ask to share your screen',
+        description: 'You choose the tab, window or screen each time. When off, sites are refused.',
         type: 'toggle',
         default: true,
       },
@@ -239,37 +249,47 @@ const SECTIONS = [
     id: 'shortcuts',
     title: 'Keyboard Shortcuts',
     settings: [
-      shortcut('newTab', 'New Tab', 'CmdOrCtrl+T'),
-      shortcut('newWindow', 'New Window', 'CmdOrCtrl+N'),
-      shortcut('newPrivateWindow', 'New Private Window', 'Shift+CmdOrCtrl+N'),
-      shortcut('reopenTab', 'Reopen Closed Tab', 'Shift+CmdOrCtrl+T'),
-      shortcut('history', 'Show History', 'CmdOrCtrl+Y'),
-      shortcut('downloads', 'Show Downloads', 'Alt+CmdOrCtrl+L'),
-      shortcut('openLocation', 'Open Location', 'CmdOrCtrl+L'),
-      shortcut('closeTab', 'Close Tab', 'CmdOrCtrl+W'),
-      shortcut('closeWindow', 'Close Window', 'Shift+CmdOrCtrl+W'),
-      shortcut('duplicateTab', 'Duplicate Tab', ''),
-      shortcut('muteTab', 'Mute or Unmute Tab', ''),
-      shortcut('closeOtherTabs', 'Close Other Tabs', 'Alt+CmdOrCtrl+W'),
-      shortcut('closeTabsToRight', 'Close Tabs to the Right', ''),
-      shortcut('bookmarkPage', 'Bookmark This Page', 'CmdOrCtrl+D'),
-      shortcut('bookmarkBar', 'Show Bookmark Bar', 'Shift+CmdOrCtrl+B'),
-      shortcut('print', 'Print', 'CmdOrCtrl+P'),
-      shortcut('reload', 'Reload', 'CmdOrCtrl+R'),
-      shortcut('back', 'Back', 'CmdOrCtrl+['),
-      shortcut('forward', 'Forward', 'CmdOrCtrl+]'),
-      shortcut('zoomIn', 'Zoom In', 'CmdOrCtrl+='),
-      shortcut('zoomOut', 'Zoom Out', 'CmdOrCtrl+-'),
-      shortcut('resetZoom', 'Reset Zoom', 'CmdOrCtrl+0'),
-      shortcut('find', 'Find', 'CmdOrCtrl+F'),
-      shortcut('findNext', 'Find Next', 'CmdOrCtrl+G'),
-      shortcut('findPrevious', 'Find Previous', 'Shift+CmdOrCtrl+G'),
-      shortcut('nextTab', 'Show Next Tab', 'Ctrl+Tab'),
-      shortcut('previousTab', 'Show Previous Tab', 'Ctrl+Shift+Tab'),
-      shortcut('devTools', 'Developer Tools', 'Alt+CmdOrCtrl+I'),
-      shortcut('newProfile', 'New Profile', ''),
-      shortcut('profiles', 'Manage Profiles', 'Shift+CmdOrCtrl+M'),
-      shortcut('settings', 'Settings', 'CmdOrCtrl+,'),
+      ...group('Tabs and windows', [
+        shortcut('newTab', 'New Tab', 'CmdOrCtrl+T'),
+        shortcut('newWindow', 'New Window', 'CmdOrCtrl+N'),
+        shortcut('newPrivateWindow', 'New Private Window', 'Shift+CmdOrCtrl+N'),
+        shortcut('reopenTab', 'Reopen Closed Tab', 'Shift+CmdOrCtrl+T'),
+        shortcut('closeTab', 'Close Tab', 'CmdOrCtrl+W'),
+        shortcut('closeWindow', 'Close Window', 'Shift+CmdOrCtrl+W'),
+        shortcut('duplicateTab', 'Duplicate Tab', ''),
+        shortcut('muteTab', 'Mute or Unmute Tab', ''),
+        shortcut('closeOtherTabs', 'Close Other Tabs', 'Alt+CmdOrCtrl+W'),
+        shortcut('closeTabsToRight', 'Close Tabs to the Right', ''),
+        shortcut('nextTab', 'Show Next Tab', 'Ctrl+Tab'),
+        shortcut('previousTab', 'Show Previous Tab', 'Ctrl+Shift+Tab'),
+      ]),
+      ...group('Page', [
+        shortcut('openLocation', 'Open Location', 'CmdOrCtrl+L'),
+        shortcut('reload', 'Reload', 'CmdOrCtrl+R'),
+        shortcut('back', 'Back', 'CmdOrCtrl+['),
+        shortcut('forward', 'Forward', 'CmdOrCtrl+]'),
+        shortcut('print', 'Print', 'CmdOrCtrl+P'),
+        shortcut('zoomIn', 'Zoom In', 'CmdOrCtrl+='),
+        shortcut('zoomOut', 'Zoom Out', 'CmdOrCtrl+-'),
+        shortcut('resetZoom', 'Reset Zoom', 'CmdOrCtrl+0'),
+        shortcut('devTools', 'Developer Tools', 'Alt+CmdOrCtrl+I'),
+      ]),
+      ...group('Find', [
+        shortcut('find', 'Find', 'CmdOrCtrl+F'),
+        shortcut('findNext', 'Find Next', 'CmdOrCtrl+G'),
+        shortcut('findPrevious', 'Find Previous', 'Shift+CmdOrCtrl+G'),
+      ]),
+      ...group('Bookmarks, history and downloads', [
+        shortcut('bookmarkPage', 'Bookmark This Page', 'CmdOrCtrl+D'),
+        shortcut('bookmarkBar', 'Show Bookmark Bar', 'Shift+CmdOrCtrl+B'),
+        shortcut('history', 'Show History', 'CmdOrCtrl+Y'),
+        shortcut('downloads', 'Show Downloads', 'Alt+CmdOrCtrl+L'),
+      ]),
+      ...group('Lit', [
+        shortcut('settings', 'Settings', 'CmdOrCtrl+,'),
+        shortcut('profiles', 'Manage Profiles', 'Shift+CmdOrCtrl+M'),
+        shortcut('newProfile', 'New Profile', ''),
+      ]),
     ],
   },
 ]

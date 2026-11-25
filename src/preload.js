@@ -11,6 +11,12 @@ contextBridge.exposeInMainWorld('lit', {
   // `focus: false` keeps keyboard focus in the toolbar.
   closeTab: (id, focus = true) => ipcRenderer.send('close-tab', id, focus),
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
+  // Before another tab, or last (null).
+  moveTab: (id, beforeId) => ipcRenderer.send('move-tab', id, beforeId),
+  // One place left (-1) or right (1), from where it is by then.
+  nudgeTab: (id, direction) => ipcRenderer.send('nudge-tab', id, direction),
+  // Focus to the active tab's page, or what stands in for it.
+  focusActive: () => ipcRenderer.send('focus-active'),
   // { activeId, tabs: [{ id, title, url, favicon, loading, started, audio, find, zoom, signIn, prompt, error }] },
   // `zoom` being '125%', or '' at the default zoom, `signIn` what asks for a
   // username and password, { id, name, asks, note, main }, `main` when it is
@@ -176,5 +182,19 @@ contextBridge.exposeInMainWorld('lit', {
     close: () => ipcRenderer.send('downloads-close'),
     onOpen: (callback) => on('downloads-open', callback),
     onChanged: (callback) => on('downloads-changed', callback),
+  },
+  // For the screen sharing picker only. State is { id, site, audio, allowed,
+  // tabs, windows, screens } (see shareState in main), or null once it is over.
+  // Each call names the request it answers, `shareId`.
+  share: {
+    get: () => ipcRenderer.invoke('share-get'),
+    // `kind` is 'tabs', 'windows' or 'screens'; `audio` adds a tab's sound,
+    // and `page` is the page the tab was shown with.
+    choose: (shareId, kind, id, audio, page) => ipcRenderer.send('share-choose', shareId, kind, id, audio, page),
+    // Opens macOS's Screen Recording permission.
+    allow: (shareId) => ipcRenderer.send('share-allow', shareId),
+    close: (shareId) => ipcRenderer.send('share-close', shareId),
+    onOpen: (callback) => on('share-open', callback),
+    onChanged: (callback) => on('share-changed', callback),
   },
 })
