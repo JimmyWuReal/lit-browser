@@ -810,14 +810,18 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // The keyboard layout's code -> character map, sent by the popup.
   let keyboardLayout = {}
   // How far down the pages start: lower with the bookmark bar, and while the
-  // active tab has a prompt.
+  // active tab has a prompt; at the very top, over the toolbar, while the
+  // active page is full screen.
   let pageTop = BAR_HEIGHT
+  // The tab whose page took the window full screen with it, if one did: the
+  // window leaves with that page. One you made full screen yourself stays.
+  let fullScreenFor = null
 
   // Everything the toolbar draws. Sent whenever any of it changes.
   function sync() {
     if (win.isDestroyed()) return
     const current = active()
-    const top = BAR_HEIGHT + (profile.settings.bookmarkBar ? BOOKMARKS_HEIGHT : 0) + (current?.prompts.length ? PROMPT_HEIGHT : 0)
+    const top = current?.fullScreen ? 0 : BAR_HEIGHT + (profile.settings.bookmarkBar ? BOOKMARKS_HEIGHT : 0) + (current?.prompts.length ? PROMPT_HEIGHT : 0)
     if (top !== pageTop) { pageTop = top; layout() }
     const title = current?.title || (current?.started ? current.url : '') || 'New Tab'
     const named = profiles.length > 1 ? `${title} — ${profile.name}` : title
@@ -859,7 +863,26 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     for (const view of Object.values(popups)) view.setBounds({ x: 0, y: 0, width, height })
   }
 
+  // The tab's page is no longer full screen; its window is Electron's to
+  // restore, as it does when a page leaves by itself.
+  function leftFullScreen(tab) {
+    tab.fullScreen = false
+    if (fullScreenFor === tab) fullScreenFor = null
+    sync()
+  }
+
+  // Takes a full screen page out of it, bringing the toolbar back. Nothing
+  // waits for the page, which may be slow to answer, or already gone.
+  function leaveFullScreen(tab) {
+    if (!tab?.fullScreen) return
+    if (fullScreenFor === tab) win.setFullScreen(false)
+    leftFullScreen(tab)
+    // Through the frame, as the page's own executeJavaScript waits for loading.
+    if (!tab.page.isDestroyed()) tab.page.mainFrame.executeJavaScript('document.exitFullscreen()').catch(() => {})
+  }
+
   function focusAddress() {
+    leaveFullScreen(active())
     win.webContents.focus()
     win.webContents.send('focus-address')
   }
@@ -879,6 +902,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const tab = find(id)
     if (!tab) return
     activeId = id
+    // A page stays full screen only while it is the one on show.
+    for (const other of tabs) if (other !== tab) leaveFullScreen(other)
     show(tab, focus)
     sync()
   }
@@ -902,7 +927,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [] }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], fullScreen: false }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -959,6 +984,17 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       if (!isPrivate) addIcon(profile, tab.url, tab.favicon, ses)
       sync()
     })
+    // The page asked to be full screen (a video's button), or stopped.
+    // Electron makes the window full screen with it; the toolbar hides.
+    // One that was only granted it after its tab was left gives it back.
+    page.on('enter-html-full-screen', () => {
+      tab.fullScreen = true
+      // Sent before the window changes.
+      if (!win.isFullScreen()) fullScreenFor = tab
+      if (tab.id === activeId) sync()
+      else leaveFullScreen(tab)
+    })
+    page.on('leave-html-full-screen', () => leftFullScreen(tab))
     // Escape in the page closes its find field too, as in Safari and
     // Firefox. The page still gets the key, and an input method's keeps it.
     page.on('before-input-event', (_event, input) => {
@@ -1158,9 +1194,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     tab.toRecord = null
   }
 
-  // What Reopen Closed Tab needs to bring this window back.
+  // What Reopen Closed Tab needs to bring this window back. Full screen only
+  // if it was without a page's help, as the page won't be when it reopens.
   function closedWindow(histories, activeIndex) {
-    return { key, tabs: histories, activeIndex, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen(), profile: profile.id }
+    return { key, tabs: histories, activeIndex, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen() && !fullScreenFor, profile: profile.id }
   }
 
   // A tab's first load turns it from the search box into its page.
@@ -1200,6 +1237,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // is what reopens.
     const closesWindow = nextId === null && profile.settings.closeWindowWithLastTab
     if (tab.closedByUser && !isPrivate) rememberClosed(profile, closesWindow ? closedWindow([history], 0) : { windowKey: key, index, history })
+    if (!closesWindow) leaveFullScreen(tab)
     if (nextId === null) return closesWindow ? win.close() : newTab()
     if (nextId !== activeId) activate(nextId, focus)
     else sync()
@@ -1227,6 +1265,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const same = tab.prompts.find((prompt) => prompt.site === site && prompt.kinds.join() === kinds.join())
     if (same) same.callbacks.push(callback)
     else tab.prompts.push({ id: nextPromptId++, site, kinds, callbacks: [callback] })
+    // The question is in the toolbar.
+    leaveFullScreen(tab)
     sync()
     return true
   }
@@ -1304,6 +1344,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const tab = active()
     if (!tab?.started || tab.page.isDestroyed()) return
     closePopup()
+    leaveFullScreen(tab)
     if (!tab.find) {
       tab.find = findState.open(null, tab.lastFindText)
       if (tab.find.text) search(tab, forward)
@@ -1903,6 +1944,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // launch; a private window changes none of that.
   const changed = () => { if (!isPrivate) sessionChanged() }
   for (const change of ['move', 'resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(change, changed)
+  // Leaving by the green button or the menu takes the page out too.
+  win.on('leave-full-screen', () => leaveFullScreen(active()))
   win.on('focus', () => {
     openWindows.delete(controls)
     openWindows.add(controls)
