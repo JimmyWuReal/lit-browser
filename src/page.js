@@ -227,5 +227,5 @@ function start({ ipcRenderer }) {
 }
 
 if (typeof window !== 'undefined') {
-  if (/^https?:$/.test(location.protocol)) start(require('electron'))
+  if (window === window.top && /^https?:$/.test(location.protocol)) start(require('electron'))
 } else module.exports = { passwordOf, oldOf, signsIn, nameOf }

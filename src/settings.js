@@ -209,6 +209,19 @@ const SECTIONS = [
     ],
   },
   {
+    id: 'securityKeys',
+    title: 'Security Keys',
+    settings: [
+      {
+        key: 'securityKeys',
+        label: 'Let sites ask for a security key',
+        description: 'For USB security keys. Nothing shows while a site waits, so touch the key when the site says to. Passkeys don’t work in Lit yet; when this is off, sites offer another way to sign in. Takes effect the next time Lit opens.',
+        type: 'toggle',
+        default: false,
+      },
+    ],
+  },
+  {
     id: 'tabs',
     title: 'Tabs',
     settings: [

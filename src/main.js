@@ -54,6 +54,10 @@ const BOOKMARKS_HEIGHT = 34
 const PRELOAD = path.join(__dirname, 'preload.js')
 // What runs in web pages.
 const PAGE_PRELOAD = path.join(__dirname, 'page.js')
+const PASSKEYS_PRELOAD = path.join(__dirname, 'passkeys.js')
+// Runs preloads in the frames inside a page too, for passkeys.js. page.js and
+// the ad blocker's keep to the top frame. Pages get no Node either way.
+const PAGE_PREFERENCES = { nodeIntegrationInSubFrames: true }
 // Keep in sync with .menu padding and .row height in suggestions.html.
 const SUGGESTION_ROW = 38
 const SUGGESTIONS_PAD = 5
@@ -459,7 +463,8 @@ app.on('login', (event, contents, details, authInfo, callback) => {
 })
 
 // What every session browsing pages needs: Lit's permission prompts, Do
-// Not Track, and downloads followed into the Downloads list.
+// Not Track, downloads followed into the Downloads list, and what runs in
+// its pages.
 function setUpSession(ses, profile, store) {
   ses.setPermissionRequestHandler((...args) => onPermissionRequest(store, ...args))
   ses.setPermissionCheckHandler((...args) => onPermissionCheck(store, ...args))
@@ -467,6 +472,7 @@ function setUpSession(ses, profile, store) {
   ses.on('will-download', (_event, item) => trackDownload(item, ses, profile))
   ses.webRequest.onBeforeRedirect({ urls: ['<all_urls>'], types: ['mainFrame'] }, (details) => onAppRedirect(store, details))
   ses.registerPreloadScript({ type: 'frame', filePath: PAGE_PRELOAD })
+  ses.registerPreloadScript({ type: 'frame', filePath: PASSKEYS_PRELOAD })
   applyDoNotTrack(ses, profile)
 }
 
@@ -930,6 +936,18 @@ function applyDoNotTrack(ses, profile) {
 // A profile's session, and those of its private windows.
 const sessionsOf = (profile) => [profile.session, ...[...privateSessions].filter(([, owner]) => owner === profile).map(([ses]) => ses)]
 
+// Unless Security Keys is on, Lit has no passkeys (src/passkeys.js). Called
+// once, before any page: their processes take this as they start, and tabs and
+// profiles share them.
+function turnAwayPasskeys() {
+  // Sites that look for PublicKeyCredential find none, in any frame, and offer
+  // another way to sign in.
+  app.commandLine.appendSwitch('disable-blink-features', 'WebAuth')
+  // A request made anyway fails at once, as if cancelled, since macOS won't
+  // let Lit use its passkey sheet.
+  app.configureWebAuthn({ platformPasskeys: true })
+}
+
 // Ad and tracker blocking, in private sessions too (src/adblock.js), made at
 // launch and switched with each profile's Block ads and trackers setting.
 let adblock
@@ -1325,8 +1343,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function addTab({ url, webContents, history, referrer, background = false, index = tabs.length } = {}) {
     // A page a tab opened is already in its session.
     // Private pages get no DevTools, which saves its state (breakpoints and
-    // the like) to the profile on disk, whatever the session.
-    const view = new WebContentsView(webContents ? { webContents } : { webPreferences: { session: ses, devTools: !isPrivate } })
+    // the like) to the profile on disk, whatever the session. A page opened
+    // by another needs PAGE_PREFERENCES both here and in its opener's
+    // setWindowOpenHandler, or its frames miss them.
+    const view = new WebContentsView(webContents ? { webContents, webPreferences: PAGE_PREFERENCES } : { webPreferences: { ...PAGE_PREFERENCES, session: ses, devTools: !isPrivate } })
     // `page` keeps the WebContents itself: once it is destroyed (a popup
     // calling window.close()), Electron clears `view.webContents`.
     const page = view.webContents
@@ -1529,6 +1549,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     page.setWindowOpenHandler(({ url, disposition }) => ({
       action: 'allow',
       outlivesOpener: true,
+      overrideBrowserWindowOptions: { webPreferences: PAGE_PREFERENCES },
       createWindow: (options) => {
         const toApp = permissions.opensApp(url)
         const opened = addTab({
@@ -3376,6 +3397,7 @@ app.whenReady().then(async () => {
   if (swept !== profileList) setProfileList(swept)
   for (const profile of profileList.profiles) openProfile(profile)
   currentProfile = profiles.find((profile) => profile.id === profileList.last)
+  if (!shared().securityKeys) turnAwayPasskeys()
   adblock = createAdblock(path.join(root, 'adblock.bin'))
   // A saved engine is in use before any tab loads; first-time lists
   // download in the background.
