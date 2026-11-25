@@ -28,6 +28,8 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | ⌘G / ⇧⌘G | Next / previous match |
 | ⌘P | Print the page |
 
+Back, forward and reload buttons sit before the address bar once a tab has a page. ⌘-click or middle-click Back or Forward to go there in a new tab, with the tab's back/forward history; right-click or hold it to list the pages that way. Reload becomes Stop while the page loads, and ⇧-click reloads without the cache. Stopping a tab before its first page brings back its search box.
+
 Zoom is per site, as in Chrome: zooming a page zooms every tab on that site, and Lit remembers it for next time (in `zoom.json` in the app's data folder). A page that is not at the default zoom, or whose site has a zoom of its own, shows its zoom at the right of the address bar; click it, or press ⌘0, to go back to the default zoom set in Settings.
 
 ⌘F opens a find field at the end of the address row. It highlights matches as you type and shows the count; Enter and ⇧Enter (or ⌘G and ⇧⌘G) move between them, and Escape closes it. Each tab keeps its own search, and reopening brings back the tab's last one.
@@ -174,7 +176,7 @@ Right-clicking a tab offers Reload, Duplicate (which keeps the tab's back and fo
 
 General, Downloads, Passwords and Privacy are the profile's own; the rest are shared by every profile. With more than one profile, the sidebar groups them by whose they are.
 
-- **General:** search engine (Google, DuckDuckGo or Bing), what new tabs open (the search box, or an address or search), the page zoom for sites you have not zoomed, whether the address bar suggests bookmarks and pages from history, and whether the bookmark bar shows.
+- **General:** search engine (Google, DuckDuckGo or Bing), what new tabs open (the search box, or an address or search), the page zoom for sites you have not zoomed, whether the address bar suggests bookmarks and pages from history, whether the back, forward and reload buttons show, and whether the bookmark bar shows.
 - **Downloads:** ask where to save, or save straight to Downloads.
 - **Passwords:** whether Lit offers to save passwords, and whether it suggests saved ones in login fields. Also lists the saved ones, to show, copy or remove, and the sites never asked about, to ask again.
 - **Privacy:** save history (pages visited and closed tabs; when off, nothing new is saved, closed tabs are forgotten, Reopen Closed Tab does nothing, and windows reopened at launch keep only each tab's page, not its back and forward history or what was typed into it), block ads and trackers (on by default, with Ghostery's prebuilt lists, downloaded the first time it is on, saved to `adblock.bin` in the app's data folder and refreshed when a week old; a saved copy is blocking before any tab loads, and a change shows or hides ads on open pages once they are reloaded), let sites ask to share your screen (on by default; when off they are refused), send Do Not Track and Global Privacy Control, and the site permissions you have given: switch each between Allow and Block, or remove it so the site is asked again.
@@ -210,7 +212,7 @@ The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that f
 ## How it works
 
 - `src/main.js` opens windows and gives each tab its own Chromium `WebContentsView` under the toolbar in its profile's session (in a private window, in that window's in-memory session, from `session.fromPartition`); only the active tab's view is shown. It owns the tab list and sends it to the toolbar whenever it changes. The application menu holds every shortcut, so they work whether the toolbar or a page has focus.
-- `src/index.html` is the toolbar: the tab strip (also the window's title bar), the address bar and the find field. When the active tab has not loaded anything, the address bar fills the window as the centered search box and the tab's page view stays hidden.
+- `src/index.html` is the toolbar: the tab strip (also the window's title bar), the back, forward and reload buttons, the address bar and the find field. When the active tab has not loaded anything, the address bar fills the window as the centered search box and the tab's page view stays hidden.
 - `src/preload.js` is the bridge between Lit's own pages (the toolbar, the address bar's suggestions, and the Settings, History, Downloads, Bookmarks and screen sharing popups) and the main process.
 - `src/profiles.js` keeps the list of profiles and says where each one's files and session are; main opens each as an object holding its session, settings, history, bookmarks and the rest, and gives every window one.
 - `src/settings.js` lists every setting, grouped in sections (each a profile's own or shared), with its type and default; it also loads, checks and saves them. `src/settings.html` is the Settings popup, drawn entirely from that list, so a new setting only needs an entry there (plus a control in `settings.html` if it brings a new type). Each window shows the popup in its own transparent view over the tabs. While a shortcut is recorded, main passes the key presses to it instead of the menu.

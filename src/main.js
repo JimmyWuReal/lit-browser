@@ -34,7 +34,7 @@ const signIn = require('./signin')
 const errors = require('./errors')
 const profileStore = require('./profiles')
 const findState = require('./find')
-const { pageMenu, tabMenu, bookmarkMenu } = require('./menus')
+const { pageMenu, tabMenu, navigationMenu, bookmarkMenu } = require('./menus')
 const { createAdblock } = require('./adblock')
 
 // Keep in sync with .strip and .bar heights in index.html.
@@ -1116,8 +1116,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     win.setTitle(isPrivate ? `${named} (Private)` : named)
     win.webContents.send('tabs', {
       activeId,
+      navigationButtons: profile.settings.navigationButtons,
       tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts, signIns, offer, error, audible }) => ({
         id, title, url, favicon, loading, started,
+        canGoBack: !page.isDestroyed() && page.navigationHistory.canGoBack(),
+        canGoForward: !page.isDestroyed() && page.navigationHistory.canGoForward(),
         audio: profile.settings.tabAudio ? audioOf({ page, audible }) : null,
         // The address asking to sign in, not the page it would replace, so
         // another site's name is never over its prompt.
@@ -1136,7 +1139,6 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
         error: error && !signInPage({ signIns }) && {
           ...errors.describe(error, url),
           action: error.kind === 'crash' ? 'Reload' : 'Try again',
-          canGoBack: !page.isDestroyed() && page.navigationHistory.canGoBack(),
         },
       })),
     })
@@ -1237,10 +1239,48 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // Reload, for a page as it is or one that failed.
-  function reload(tab) {
+  function reload(tab, ignoreCache = false) {
     if (!tab?.started || tab.page.isDestroyed()) return
     if (tab.error) retry(tab)
+    else if (ignoreCache) tab.page.reloadIgnoringCache()
     else tab.page.reload()
+  }
+
+  // Stops loading. A tab stopped before its first page came has nothing to
+  // show, so it goes back to the search box.
+  function stop(tab) {
+    if (!tab?.started || tab.page.isDestroyed()) return
+    // Before its first page, a restored tab stopped is not to try again (addTab).
+    tab.stopped = true
+    tab.page.stop()
+    if (tab.url || tab.error || tab.page.getURL()) return
+    tab.started = false
+    tab.pendingUrl = undefined
+    show(tab)
+    sync()
+  }
+
+  // Back (`delta` -1) or forward (1) one page, or in a new tab next to this
+  // one, with its back/forward list, as ⌘-clicked links open.
+  function stepPage(tab, delta, newTab) {
+    if (!tab?.started || tab.page.isDestroyed()) return
+    const list = tab.page.navigationHistory
+    if (!newTab) return delta < 0 ? list.goBack() : list.goForward()
+    const history = { entries: list.getAllEntries(), index: list.getActiveIndex() + delta }
+    if (history.entries[history.index]) addTab({ history, index: tabs.indexOf(tab) + 1, background: !profile.settings.switchToNewTabs })
+  }
+
+  // The pages Back or Forward leads to, to pick one.
+  function showStepMenu(tab, delta, { x, y }) {
+    if (!tab?.started || tab.page.isDestroyed()) return
+    const list = tab.page.navigationHistory
+    const entries = list.getAllEntries()
+    popup(navigationMenu({ entries, index: list.getActiveIndex() }, delta), (_command, index) => {
+      // The list may have changed while the menu was open.
+      if (tab.page.isDestroyed() || list.getEntryAtIndex(index)?.url !== entries[index].url) return
+      list.goToIndex(index)
+      if (tab.id === activeId) show(tab)
+    }, { x, y })
   }
 
   // Loads the failed address again. Chromium reloads nothing when that would
@@ -1319,6 +1359,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // committed, for `committed`: a page moving on with none is redirecting.
     page.on('input-event', (_event, input) => {
       if (['mouseDown', 'rawKeyDown', 'keyDown', 'touchStart', 'mouseWheel', 'gestureScrollBegin'].includes(input.type)) tab.touched = true
+      // Back skips pages that added themselves with no click or key press on
+      // them, so one can be what makes it possible, with no other event.
+      // Chromium counts it a moment later.
+      const canGoBack = () => !page.isDestroyed() && page.navigationHistory.canGoBack()
+      if (['mouseDown', 'rawKeyDown', 'keyDown', 'touchEnd'].includes(input.type) && !canGoBack()) {
+        setTimeout(() => { if (canGoBack()) sync() }, 200)
+      }
     })
     // Each new page opens at its site's zoom. A new page has no title yet; a restored one keeps its entry's title,
     // as Chromium does not announce a title it already had.
@@ -1359,8 +1406,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // from a page that couldn't load or crashed is never one of these, even
     // to the same page: Chromium loads that again.
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => {
-      if (!isMainFrame) return
-      committed(tab, url, true)
+      if (isMainFrame) committed(tab, url, true)
+      // A frame's moves are in the back/forward list too.
       sync()
     })
     // A title goes to the tab's visit once it is recorded; until then the
@@ -1499,7 +1546,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       page.navigationHistory.restore(history).catch(() => {
         // Restored, though its page couldn't load; the error page says so.
         if (tab.error) return
-        if (retry && !page.isDestroyed()) page.loadURL(retry).catch(restored)
+        if (retry && !tab.stopped && !page.isDestroyed()) page.loadURL(retry).catch(restored)
         else restored()
       })
     } else if (url) page.loadURL(url, referrer ? { httpReferrer: referrer } : {}).catch(() => {})
@@ -2218,10 +2265,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     show(tab)
   }
 
-  // Pops up a right-click menu of items from src/menus.js; `run` gets
-  // each chosen item's command and arg. Shortcuts are only shown, since the
-  // application menu already answers them.
-  function popup(items, run) {
+  // Pops up a right-click menu of items from src/menus.js, at `at` ({ x, y },
+  // in the window) or the pointer; `run` gets each chosen item's command and
+  // arg. Shortcuts are only shown, since the application menu already answers
+  // them.
+  function popup(items, run, at) {
     if (!items.length || win.isDestroyed()) return
     Menu.buildFromTemplate(items.map((item) => (item.type === 'separator' ? item : {
       label: item.label,
@@ -2229,7 +2277,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       accelerator: item.accelerator || undefined,
       registerAccelerator: false,
       click: () => item.command && run(item.command, item.arg),
-    }))).popup({ window: win })
+    }))).popup({ window: win, ...(at && { x: Math.round(at.x), y: Math.round(at.y) }) })
   }
 
   // The right-click menu for a page, or (isPage false) for a text field in
@@ -2699,7 +2747,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     page: () => (active()?.started && !active().page.isDestroyed() ? active().page : null),
     // Whether it failed, so there is nothing of it to print.
     failed: () => Boolean(active()?.error),
-    reload: () => reload(active()),
+    reload: (ignoreCache) => reload(active(), ignoreCache),
+    stop: () => stop(active()),
+    stepPage: (delta, newTab) => stepPage(active(), delta, newTab),
+    showStepMenu: (delta, at) => showStepMenu(active(), delta, at),
     // The page came back while its error page or sign-in prompt had focus,
     // or asks to sign in again already.
     focusPage: () => { const tab = active(); if (tab?.started && !tab.error && !popupOpen && !tab.page.isDestroyed()) show(tab) },
@@ -3149,6 +3200,12 @@ ipcMain.on('bookmark-list', fromBookmarks((c, what, at) => {
 // The error page's, for the tab it was on.
 ipcMain.on('reload', fromToolbar((c, tabId) => c.isActive(tabId) && c.failed() && c.reload()))
 ipcMain.on('go-back', fromToolbar((c, tabId) => c.isActive(tabId) && c.failed() && c.page()?.navigationHistory.goBack()))
+// The toolbar's Back, Forward, Reload and Stop buttons, for the tab they showed.
+const isStep = (delta) => delta === -1 || delta === 1
+ipcMain.on('step', fromToolbar((c, tabId, delta, newTab) => c.isActive(tabId) && isStep(delta) && c.stepPage(delta, newTab === true)))
+ipcMain.on('step-menu', fromToolbar((c, tabId, delta, at) => c.isActive(tabId) && isStep(delta) && isPoint(at) && c.showStepMenu(delta, at)))
+ipcMain.on('reload-tab', fromToolbar((c, tabId, ignoreCache) => c.isActive(tabId) && c.reload(ignoreCache === true)))
+ipcMain.on('stop', fromToolbar((c, tabId) => c.isActive(tabId) && c.stop()))
 ipcMain.on('focus-active', fromToolbar((c) => c.focusActive()))
 ipcMain.on('focus-page', fromToolbar((c, tabId) => c.isActive(tabId) && c.focusPage()))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))

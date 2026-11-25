@@ -262,6 +262,20 @@
       padding: 0 12px 4px;
     }
 
+    /* Back, forward and reload, before the address; not on home, where
+       there is no page to move from. */
+    .nav { display: flex; flex: 0 0 auto; gap: 2px; margin: 0 8px 0 -2px; }
+    .nav[hidden], .home .nav { display: none; }
+    .nav .icon-button { width: 28px; height: 28px; border-radius: 8px; }
+    /* Not `disabled`, so a button keeps focus as it runs out of pages. */
+    .nav .icon-button[aria-disabled="true"] { opacity: .35; pointer-events: none; }
+    /* Reload and Stop trade places as the page loads. */
+    .reload svg { grid-area: 1 / 1; transition: opacity 200ms ease, transform 240ms var(--settle); }
+    .reload:not(.is-loading) .icon-stop,
+    .reload.is-loading .icon-reload { opacity: 0; transform: scale(.6); }
+    /* Find needs the room in a narrow window. */
+    @media (max-width: 600px) { .bar:has(.find.is-open) .nav { display: none; } }
+
     .address { position: relative; flex: 1; min-width: 0; margin: 0; }
     .address input {
       width: 100%;
@@ -723,6 +737,22 @@
   </div>
   <!-- Two separate fields, so Enter in each does its own thing. -->
   <div class="bar">
+    <div class="nav" id="nav" role="group" aria-label="Navigation">
+      <button class="icon-button" id="back" type="button" aria-label="Back" title="Back" data-shortcut="shortcuts.back" aria-disabled="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7"></path><path d="M19 12H5"></path></svg>
+      </button>
+      <button class="icon-button" id="forward" type="button" aria-label="Forward" title="Forward" data-shortcut="shortcuts.forward" aria-disabled="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+      </button>
+      <button class="icon-button reload" id="reload" type="button" aria-label="Reload" title="Reload" data-shortcut="shortcuts.reload">
+        <svg class="icon-reload" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
+        <svg class="icon-stop" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+      </button>
+    </div>
     <form class="address" id="address-form">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1040,12 +1070,83 @@
         zoomButton.textContent = zoom
         zoomButton.setAttribute('aria-label', `Zoom ${zoom}, reset zoom`)
       }
+      drawNav(tab, switched)
       drawStar()
       drawFind(tab?.find, switched)
       drawPrompt(tab)
       drawSignIn(tab)
       drawError(tab)
     }
+
+    // Back, forward and reload, for the active tab.
+    const nav = document.getElementById('nav')
+    const reloadButton = document.getElementById('reload')
+    const stepButtons = [
+      { button: document.getElementById('back'), delta: -1, can: 'canGoBack' },
+      { button: document.getElementById('forward'), delta: 1, can: 'canGoForward' },
+    ]
+    // When Reload last became Stop, or Stop Reload, by the tab itself.
+    let swappedAt = -Infinity
+    function drawNav(tab, switched) {
+      nav.hidden = !state.navigationButtons
+      for (const { button, can } of stepButtons) button.setAttribute('aria-disabled', String(!tab?.[can]))
+      const loading = Boolean(tab?.loading)
+      if (loading === reloadButton.classList.contains('is-loading')) return
+      swappedAt = switched ? -Infinity : performance.now()
+      reloadButton.classList.toggle('is-loading', loading)
+      // Stop has no shortcut.
+      reloadButton.dataset.shortcut = loading ? '' : 'shortcuts.reload'
+      reloadButton.dataset.name = loading ? 'Stop' : 'Reload'
+      reloadButton.setAttribute('aria-label', reloadButton.dataset.name)
+      labelShortcut(reloadButton)
+    }
+    // A mouse click leaves focus with the page, as other browsers do; Enter
+    // and Space keep it here.
+    nav.addEventListener('mousedown', (event) => event.preventDefault())
+    const toPage = (event) => { if (event.detail) window.lit.focusActive() }
+
+    for (const { button, delta } of stepButtons) {
+      const isOff = () => button.getAttribute('aria-disabled') === 'true'
+      // ⌘-click or middle click opens a new tab, as for a link.
+      const go = (event) => {
+        if (isOff()) return
+        const newTab = event.metaKey || event.button === 1
+        window.lit.step(state.activeId, delta, newTab)
+        toPage(event)
+      }
+      // A right-click or a long press lists the pages that way, under the
+      // button. The press is then no click.
+      let hold
+      let held = false
+      const list = () => {
+        const { left, bottom } = button.getBoundingClientRect()
+        if (!isOff()) window.lit.showStepMenu(state.activeId, delta, { x: left, y: bottom + 4 })
+      }
+      button.addEventListener('pointerdown', (event) => {
+        held = false
+        clearTimeout(hold)
+        if (event.button === 0 && !event.ctrlKey) hold = setTimeout(() => { held = true; list() }, 500)
+      })
+      for (const end of ['pointerup', 'pointerleave', 'pointercancel']) button.addEventListener(end, () => clearTimeout(hold))
+      button.addEventListener('click', (event) => { if (!held || !event.detail) go(event) })
+      button.addEventListener('auxclick', (event) => { if (event.button === 1) go(event) })
+      button.addEventListener('contextmenu', (event) => { event.preventDefault(); clearTimeout(hold); list() })
+    }
+
+    reloadButton.addEventListener('click', (event) => {
+      // A click aimed at the button as it was a moment ago, or the second of
+      // a double-click, does nothing rather than the opposite.
+      if (event.detail && performance.now() - swappedAt < 400) return
+      if (reloadButton.classList.contains('is-loading')) {
+        window.lit.stop(state.activeId)
+        // The page that stays is the one to name, not what was being opened.
+        closeSuggestions()
+        editing = false
+        setChip(null)
+        if (shownUrl) address.value = shownUrl
+      } else window.lit.reloadTab(state.activeId, event.shiftKey)
+      toPage(event)
+    })
 
     // The bookmark bar ({ visible, items } from main; see src/bookmarks.js).
     const star = document.getElementById('star')
@@ -1363,7 +1464,7 @@
       document.getElementById('error-detail').textContent = error.detail
       document.getElementById('error-code').textContent = error.code
       errorRetry.textContent = error.action
-      errorBack.hidden = !error.canGoBack
+      errorBack.hidden = !tab.canGoBack
       if (focusError) { focusError = false; errorPage.focus() }
     }
     window.lit.onFocusError(() => {
