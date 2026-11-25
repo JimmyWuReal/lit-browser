@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, list, load, save } = require('../src/permissions')
+const { isKind, isApp, opensApp, escapeAppURL, kindsOf, checkKindsOf, originOf, label, describe, status, undecided, choose, list, load, save } = require('../src/permissions')
 
 test('kindsOf maps the requests Lit asks about, and leaves the rest alone', () => {
   assert.deepEqual(kindsOf('media', ['video', 'audio']), ['camera', 'microphone'])
@@ -18,6 +18,36 @@ test('kindsOf maps the requests Lit asks about, and leaves the rest alone', () =
   assert.equal(kindsOf('fullscreen'), null)
   assert.equal(kindsOf('clipboard-sanitized-write'), null)
   assert.equal(kindsOf('constructor'), null)
+})
+
+test('opening another app is a kind per scheme', () => {
+  assert.deepEqual(kindsOf('openExternal', undefined, 'mailto:a@b.com'), ['app:mailto'])
+  assert.deepEqual(kindsOf('openExternal', [], 'ZOOMMTG://join?x=a:b'), ['app:zoommtg'])
+  // Refused: nothing to open, or a scheme too long to name.
+  assert.deepEqual(kindsOf('openExternal'), [])
+  assert.deepEqual(kindsOf('openExternal', [], 'mailto'), [])
+  assert.deepEqual(kindsOf('openExternal', [], `${'a'.repeat(101)}:x`), [])
+  assert.deepEqual(checkKindsOf('openExternal'), [])
+  assert.ok(isApp('app:mailto') && isKind('app:mailto') && isKind('camera'))
+  for (const kind of ['app:', 'app:a b', 'app:__proto__', 'constructor', 'mailto', undefined, null]) assert.equal(isKind(kind), false)
+  assert.equal(isApp('camera'), false)
+  // Allowing one app leaves the others asking.
+  const sites = choose(new Map(), 'https://a.com', ['app:mailto'], 'allow')
+  assert.equal(status(sites, 'https://a.com', ['app:mailto']), 'allow')
+  assert.equal(status(sites, 'https://a.com', ['app:zoommtg']), 'ask')
+  assert.equal(describe(['app:mailto']), 'open mailto links in another app')
+})
+
+test('opensApp leaves out the schemes Chromium handles itself', () => {
+  for (const url of ['mailto:a@b.com', 'zoommtg://join', 'ssh://host']) assert.equal(opensApp(url), true)
+  for (const url of ['https://a.com', 'HTTP://a.com', 'about:blank', 'blob:https://a.com/1', 'filesystem:https://a.com/temporary/x', 'data:,hi', '', 'not a url']) assert.equal(opensApp(url), false)
+})
+
+test('escapeAppURL escapes as Electron does, and keeps existing escapes', () => {
+  const plain = "x://a.b/c?d=e&f=(g)*!$+,;~[1]#h@i'j_k-l%20%C3%A9"
+  assert.equal(escapeAppURL(plain), plain)
+  assert.equal(escapeAppURL('x:a "b" <c>|`{d}\\^'), 'x:a%20%22b%22%20%3Cc%3E%7C%60%7Bd%7D%5C%5E')
+  assert.equal(escapeAppURL('x:100% %zz é😀'), 'x:100%25%20%25zz%20%C3%A9%F0%9F%98%80')
 })
 
 test('checkKindsOf names one device, and an untyped media check is camera controls', () => {
@@ -82,7 +112,7 @@ test('choose returns a new map, and forgetting the last kind drops the site', ()
 
 test('list sorts sites by name and kinds in a fixed order', () => {
   const sites = new Map([
-    ['https://b.com', { notifications: 'block', camera: 'allow' }],
+    ['https://b.com', { 'app:zoommtg': 'allow', notifications: 'block', 'app:mailto': 'block', camera: 'allow' }],
     ['https://a.com', { location: 'allow' }],
   ])
   assert.deepEqual(list(sites), [
@@ -90,6 +120,8 @@ test('list sorts sites by name and kinds in a fixed order', () => {
     { site: 'https://b.com', label: 'b.com', kinds: [
       { kind: 'camera', label: 'Camera', choice: 'allow' },
       { kind: 'notifications', label: 'Notifications', choice: 'block' },
+      { kind: 'app:mailto', label: 'mailto links', choice: 'block' },
+      { kind: 'app:zoommtg', label: 'zoommtg links', choice: 'allow' },
     ] },
   ])
 })
@@ -98,11 +130,11 @@ test('save and load round-trip, keeping only valid sites, kinds and choices', ()
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lit-permissions-'))
   const file = path.join(dir, 'nested', 'permissions.json')
   assert.deepEqual(load(file), new Map())
-  const sites = new Map([['https://example.com', { camera: 'allow', location: 'block' }], ['http://localhost:3000', { microphone: 'allow' }]])
+  const sites = new Map([['https://example.com', { camera: 'allow', 'app:mailto': 'allow', location: 'block' }], ['http://localhost:3000', { microphone: 'allow' }]])
   save(file, sites)
   assert.deepEqual(load(file), sites)
   fs.writeFileSync(file, JSON.stringify({
-    'https://a.com': { camera: 'allow', speakers: 'allow', location: 'maybe' },
+    'https://a.com': { camera: 'allow', speakers: 'allow', location: 'maybe', 'app:a b': 'allow', 'app:mailto': 'maybe' },
     'https://b.com/path': { camera: 'allow' },
     'file://': { camera: 'allow' },
     'not a site': { camera: 'allow' },

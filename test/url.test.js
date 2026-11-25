@@ -35,3 +35,10 @@ test('searchUrl searches even for text that looks like an address', () => {
   // Half of an emoji's surrogate pair becomes U+FFFD instead of throwing.
   assert.equal(searchUrl('hi \uD83D'), 'https://www.google.com/search?q=hi%20%EF%BF%BD')
 })
+
+test('toUrl never gives an address that opens another app', () => {
+  const { opensApp } = require('../src/permissions')
+  for (const input of ['mailto:a@b.com', 'zoommtg://zoom.us/join', 'slack://open', 'tel:123', 'javascript:alert(1)', 'x:a.com', 'itms-apps://apps.apple.com/app']) {
+    assert.equal(opensApp(toUrl(input)), false, input)
+  }
+})

@@ -269,7 +269,7 @@
       user-select: text;
     }
     .site-kind { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 14px; }
-    .site-kind > span { flex: 1; min-width: 0; font-size: 12.5px; color: var(--sub); }
+    .site-kind > span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12.5px; color: var(--sub); }
 
     /* Profiles: one box each, its name and, below it, its color. */
     .profiles-list { display: flex; flex-direction: column; gap: 14px; }
@@ -649,7 +649,7 @@
         const element = el('div', 'site-permissions')
         const text = el('div', 'control-text')
         text.append(el('strong', '', 'Site permissions'))
-        text.append(el('span', '', 'Sites that asked to use your camera, microphone, location, notifications or clipboard. Changes apply the next time a site asks; reload a page to stop a camera or microphone it is already using. Remove one to be asked again.'))
+        text.append(el('span', '', 'Sites that asked to use your camera, microphone, location, notifications or clipboard, or to open another app. Changes apply the next time a site asks; reload a page to stop a camera or microphone it is already using. Remove one to be asked again.'))
         const error = el('span', 'error')
         error.setAttribute('role', 'alert')
         text.append(error)
