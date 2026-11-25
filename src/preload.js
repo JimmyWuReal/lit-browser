@@ -152,8 +152,9 @@ contextBridge.exposeInMainWorld('lit', {
   // windows, screens } (see shareState in main), or null once it is over.
   share: {
     get: () => ipcRenderer.invoke('share-get'),
-    // `kind` is 'tabs', 'windows' or 'screens'; `audio` adds a tab's sound.
-    choose: (kind, id, audio) => ipcRenderer.send('share-choose', kind, id, audio),
+    // `kind` is 'tabs', 'windows' or 'screens'; `audio` adds a tab's sound,
+    // and `url` is the page the tab was shown with.
+    choose: (kind, id, audio, url) => ipcRenderer.send('share-choose', kind, id, audio, url),
     // Opens macOS's Screen Recording permission.
     allow: () => ipcRenderer.send('share-allow'),
     close: () => ipcRenderer.send('share-close'),

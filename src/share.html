@@ -207,7 +207,7 @@
       const input = el('input')
       input.type = 'radio'
       input.name = 'option'
-      input.addEventListener('change', () => { chosen = row.id; drawFoot() })
+      input.addEventListener('change', () => { chosen = row; drawFoot() })
       const body = el('span', 'option-body')
       if (kind !== 'tabs') {
         const picture = el('span', 'picture')
@@ -281,7 +281,7 @@
     }
 
     function submit() {
-      if (chosen !== null) share.choose(kind, chosen, !$('audio-row').hidden && $('audio').checked)
+      if (chosen !== null) share.choose(kind, chosen.id, !$('audio-row').hidden && $('audio').checked, chosen.url)
     }
 
     for (const input of kinds) input.addEventListener('change', () => show(input.value))
@@ -293,11 +293,28 @@
     })
 
     share.onOpen(open)
-    // The windows and screens have been listed; the tabs are as they were.
+    // A tab changed, or the windows and screens have been listed. A choice
+    // stays, unless its tab has moved to another page. The list is redrawn
+    // only if it changed, with its scroll and focus kept.
     share.onChanged((next) => {
       if (!state || !next) return
+      const same = JSON.stringify(state[kind]) === JSON.stringify(next[kind])
       state = next
-      if (kind !== 'tabs') show(kind)
+      if (same) return drawFoot()
+      const before = chosen
+      const scroll = $('choices').scrollTop
+      const focused = document.activeElement.name === 'option'
+      const listed = Boolean(document.querySelector('.options'))
+      drawChoices()
+      // It is the list already there, so it doesn't enter again.
+      if (listed) document.querySelector('.options')?.style.setProperty('animation', 'none')
+      $('choices').scrollTop = scroll
+      const index = before ? (state[kind] || []).findIndex((row) => row.id === before.id && row.url === before.url) : -1
+      chosen = index < 0 ? null : state[kind][index]
+      const input = document.querySelectorAll('[name="option"]')[index]
+      if (input) input.checked = true
+      if (focused) (input || $('panel')).focus()
+      drawFoot()
     })
     // The first open is sent before this page has loaded, so it asks.
     share.get().then(open)
