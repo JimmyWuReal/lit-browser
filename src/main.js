@@ -989,7 +989,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       // A new page has not asked for anything yet; the old page's requests go.
       dropPrompts(tab)
       setZoom(tab, zoomOf(url))
-      tab.response = { status }
+      // Its HTTP status, and whether it was checked not to be an empty error.
+      tab.response = { status, checked: false }
       committed(tab, url, false)
       if (tab.error) {
         tab.error = null
@@ -1189,7 +1190,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // - A restored page (a reopened or restored tab, a duplicate) is not
   //   one either.
   // tab.visit is the visit this tab's page recorded; tab.toRecord is the
-  // page ({ url, title }) still waiting to be.
+  // page ({ url, title, response }) still waiting to be.
   function committed(tab, url, sameDocument) {
     const list = tab.page.navigationHistory
     const position = { length: list.length(), index: list.getActiveIndex(), next: list.getEntryAtIndex(list.getActiveIndex() + 1)?.url }
@@ -1222,13 +1223,16 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     }
     // A page left while loading, other than by its own doing, still counts.
     if (!redirected) settle(tab)
-    tab.toRecord = { url, title: tab.title }
+    tab.toRecord = { url, title: tab.title, response: tab.response }
     if (!tab.page.isLoading()) settle(tab)
   }
 
-  // A private window records nothing.
+  // A private window records nothing. Nor is an HTTP error recorded before it
+  // is known not to be an empty one (see emptyError), even if it is left by then.
   function settle(tab) {
     if (!tab.toRecord) return
+    const { response } = tab.toRecord
+    if (response?.status >= 400 && !response.checked) return
     tab.visit = isPrivate ? null : recordVisit(profile, tab.toRecord.url, tab.toRecord.title)
     tab.toRecord = null
   }
@@ -1239,22 +1243,22 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // A site can answer with an HTTP error and an empty page, which would show
-  // as a blank one. The page is asked once it has loaded; only what Chromium
-  // itself makes of an empty response counts (for plain text, a <pre> and a
-  // color scheme), so anything from the site is left alone. Answers whether
-  // it was one, or another page has come meanwhile: nothing to record.
-  const EMPTY = `Boolean(document.body) && !document.documentElement.textContent.trim() &&
-    !document.documentElement.attributes.length && !document.body.attributes.length &&
-    !document.querySelector('head > :not(meta[name="color-scheme"]), body > :not(pre), pre *')`
+  // as a blank one. The page is asked once it has loaded; only exactly what
+  // Chromium makes of an empty response counts, so anything from the site is
+  // left alone. Answers whether the tab now shows an error, or another page.
   async function emptyError(tab) {
     const { response } = tab
-    if (!(response?.status >= 400) || tab.error || tab.page.isDestroyed()) return false
-    const empty = await tab.page.executeJavaScriptInIsolatedWorld(CHECK_WORLD, [{ code: EMPTY }]).catch(() => false)
+    if (!(response?.status >= 400) || response.checked || tab.error || tab.page.isDestroyed()) return false
+    const empty = await tab.page.executeJavaScriptInIsolatedWorld(CHECK_WORLD, [{
+      code: `document.documentElement?.outerHTML === '<html><head></head><body></body></html>'`,
+    }]).catch(() => false)
     if (tab.response !== response || tab.error) return true
-    if (empty !== true) return false
-    tab.toRecord = null
-    fail(tab, { kind: 'http', status: response.status })
-    return true
+    if (empty === true) {
+      fail(tab, { kind: 'http', status: response.status })
+      return true
+    }
+    response.checked = true
+    return false
   }
 
   // A tab's first load turns it from the search box into its page.
