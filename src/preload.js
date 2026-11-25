@@ -1,6 +1,6 @@
 // The only bridge between Lit's own pages (the toolbar, the address bar's
 // suggestions, and the Settings, History and Downloads popups) and the
-// main process.
+// main process. Web pages get src/page.js instead.
 const { contextBridge, ipcRenderer } = require('electron')
 
 const on = (channel, callback) => ipcRenderer.on(channel, (_event, value) => callback(value))
@@ -20,8 +20,10 @@ contextBridge.exposeInMainWorld('lit', {
   // { activeId, tabs: [{ id, title, url, favicon, loading, started, audio, find, zoom, signIn, prompt, error }] },
   // `zoom` being '125%', or '' at the default zoom, `signIn` what asks for a
   // username and password, { id, name, asks, note, main }, `main` when it is
-  // the page itself, and `prompt` the tab's permission request, { id, site,
-  // kinds, does }; both can be undefined. `audio` is
+  // the page itself, and `prompt` the tab's permission request or offer to save
+  // a password, { id, site, kinds, says, allow, block }: what to say after the
+  // site, and the two buttons, { text, label } (block null for none). Both can
+  // be undefined. `audio` is
   // 'playing', 'muted' or null. `error` is
   // what to show instead of a page that failed, { title, detail, code,
   // action, canGoBack }, or null.
@@ -105,7 +107,7 @@ contextBridge.exposeInMainWorld('lit', {
     onChanged: (callback) => on('bookmarks-changed', callback),
   },
   // For the Settings popup only; main ignores these from anywhere else.
-  // State is { sections, values, labels, sitePermissions, quickSearchSites,
+  // State is { sections, values, labels, sitePermissions, passwords, quickSearchSites,
   // profileId, profiles, profileColors, defaultBrowser, error? } (see settingsState in main),
   // for the window's profile, with the `section` to show as it opens, if any.
   settings: {
@@ -113,6 +115,13 @@ contextBridge.exposeInMainWorld('lit', {
     set: (key, value) => ipcRenderer.invoke('settings-set', key, value),
     // A site's choice for one kind: 'allow', 'block', or null to forget it.
     setPermission: (site, kind, choice) => ipcRenderer.invoke('permissions-set', site, kind, choice),
+    // Saved passwords. Removing answers with the state; revealing (after
+    // Touch ID, where there is one) with { password } or { error }, and
+    // copying with {} or { error }.
+    removePassword: (id) => ipcRenderer.invoke('passwords-remove', id),
+    askAgain: (site) => ipcRenderer.invoke('passwords-ask-again', site),
+    revealPassword: (id) => ipcRenderer.invoke('passwords-reveal', id),
+    copyPassword: (id) => ipcRenderer.invoke('passwords-copy', id),
     // Profiles. All but openProfile answer with the new state.
     addProfile: () => ipcRenderer.invoke('profiles-add'),
     // { name? , color? }
@@ -152,6 +161,15 @@ contextBridge.exposeInMainWorld('lit', {
     onShow: (callback) => on('suggestions-show', callback),
     onSelect: (callback) => on('suggestions-select', callback),
     onHide: (callback) => ipcRenderer.on('suggestions-hide', () => callback()),
+  },
+  // For the list of saved logins under a page's login field only: it shows
+  // them (onShow, { logins: [{ id, username }], site, generation }),
+  // highlights the one main selects, and says which was clicked.
+  logins: {
+    pick: (id, generation) => ipcRenderer.send('logins-pick', id, generation),
+    onShow: (callback) => on('logins-show', callback),
+    onSelect: (callback) => on('logins-select', callback),
+    onHide: (callback) => ipcRenderer.on('logins-hide', () => callback()),
   },
   // For the Downloads popup only. State is { downloads: [{ id, name, state,
   // progress, status }] }, newest first (see row in src/downloads.js).

@@ -5,14 +5,15 @@
 // everything, shown only while open. Find in page lives in the toolbar; each tab keeps its own
 // search (src/find.js). A site asking for the camera, location and the like,
 // or to open another app, gets a prompt in the toolbar, below the address
-// row (src/permissions.js). A server or proxy asking for a username and
-// password gets one there too (src/signin.js).
+// row (src/permissions.js), and so does the offer to save a password just
+// used (src/passwords.js; src/page.js watches pages for them). A server or
+// proxy asking for a username and password gets one there too (src/signin.js).
 // The toolbar also draws the page shown in place of one that failed to load
 // or crashed (src/errors.js), while that tab's view is hidden.
 // A private window (⇧⌘N) browses in an in-memory session of its own and
 // keeps nothing once it closes (see privateSession), except the bookmarks
 // someone adds in it. Every window belongs to one profile (see openProfile).
-const { app, BrowserWindow, Menu, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, screen, session, shell, systemPreferences } = require('electron')
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, safeStorage, screen, session, shell, systemPreferences } = require('electron')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const fs = require('node:fs')
@@ -27,6 +28,7 @@ const shortcuts = require('./shortcuts')
 const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
 const permissions = require('./permissions')
+const passwords = require('./passwords')
 const shareStore = require('./share')
 const signIn = require('./signin')
 const errors = require('./errors')
@@ -49,9 +51,17 @@ const SIGN_IN_NOTE = 18
 // index.html.
 const BOOKMARKS_HEIGHT = 34
 const PRELOAD = path.join(__dirname, 'preload.js')
+// What runs in web pages.
+const PAGE_PRELOAD = path.join(__dirname, 'page.js')
 // Keep in sync with .menu padding and .row height in suggestions.html.
 const SUGGESTION_ROW = 38
 const SUGGESTIONS_PAD = 5
+// The list under a login field: the same rows, with a header; keep in sync
+// with logins.html.
+const LOGINS_HEADER = 26
+const LOGINS_WIDTH = 240
+// The most rows before it scrolls.
+const LOGINS_ROWS = 5
 // How long the suggestions list takes to fade out (its opacity transition).
 const SUGGESTIONS_FADE = 160
 
@@ -91,6 +101,8 @@ let currentProfile
 //   saved. A private window has a store of its own (see createWindow).
 // - visited: pages visited (src/history.js), newest first; historySave is
 //   the timer of a save still waiting.
+// - passwords: saved logins (src/passwords.js), which its private windows can
+//   fill but never change.
 // - bookmarks (src/bookmarks.js), which its private windows share.
 // - closed: recently closed tabs and windows, newest last, for Reopen Closed
 //   Tab (see rememberClosed).
@@ -99,7 +111,7 @@ let currentProfile
 function openProfile({ id, name, color }) {
   const folder = profileStore.folder(app.getPath('userData'), id)
   const partition = profileStore.partition(id)
-  const files = Object.fromEntries(['settings', 'zoom', 'permissions', 'history', 'bookmarks'].map((file) => [file, path.join(folder, `${file}.json`)]))
+  const files = Object.fromEntries(['settings', 'zoom', 'permissions', 'passwords', 'history', 'bookmarks'].map((file) => [file, path.join(folder, `${file}.json`)]))
   const own = settingsStore.load(files.settings)
   const profile = {
     id, name, color, files,
@@ -110,6 +122,7 @@ function openProfile({ id, name, color }) {
     sitePermissions: permissions.load(files.permissions),
     visited: historyStore.load(files.history),
     historySave: null,
+    passwords: passwords.load(files.passwords),
     bookmarks: bookmarkStore.load(files.bookmarks),
     closed: [],
     deleted: false,
@@ -197,7 +210,7 @@ async function deleteProfile(win, id) {
     defaultId: 1,
     cancelId: 1,
     message: `Delete “${profile.name}”?`,
-    detail: 'Its history, bookmarks, settings, sign-ins and site data are deleted, its windows close, and downloads on their way are cancelled. This can’t be undone.',
+    detail: 'Its history, bookmarks, saved passwords, settings, sign-ins and site data are deleted, its windows close, and downloads on their way are cancelled. This can’t be undone.',
   })
   if (response !== 0 || profile.deleted) return
   if (!setProfileList(profileStore.remove(profileList, id))) return 'Couldn’t save profiles, so nothing was deleted.'
@@ -452,6 +465,7 @@ function setUpSession(ses, profile, store) {
   ses.setDisplayMediaRequestHandler(onDisplayMedia)
   ses.on('will-download', (_event, item) => trackDownload(item, ses, profile))
   ses.webRequest.onBeforeRedirect({ urls: ['<all_urls>'], types: ['mainFrame'] }, (details) => onAppRedirect(store, details))
+  ses.registerPreloadScript({ type: 'frame', filePath: PAGE_PRELOAD })
   applyDoNotTrack(ses, profile)
 }
 
@@ -604,6 +618,54 @@ function setBookmarks(profile, next) {
   profile.bookmarks = next
   for (const controls of windowsOf(profile)) controls.bookmarksChanged()
   return true
+}
+
+// The same for saved passwords.
+function setPasswords(profile, next) {
+  if (profile.deleted) return false
+  try {
+    passwords.save(profile.files.passwords, next)
+  } catch {
+    return false
+  }
+  profile.passwords = next
+  for (const controls of windowsOf(profile)) controls.settingsChanged()
+  return true
+}
+
+// The Keychain holds the key; null when it won't give it, or the password was
+// encrypted with another one. Passwords are read only as they are needed.
+function encrypt(password) {
+  try {
+    return safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(password).toString('base64') : null
+  } catch {
+    return null
+  }
+}
+function decrypt(secret) {
+  try {
+    return safeStorage.decryptString(Buffer.from(secret, 'base64'))
+  } catch {
+    return null
+  }
+}
+
+// A saved password for Settings, after Touch ID on a Mac that has it:
+// { password } or { error }, or {} when Touch ID was cancelled.
+async function readPassword(profile, id) {
+  const find = () => profile.passwords.logins.find((login) => login.id === id)
+  const login = find()
+  if (!login) return {}
+  if (systemPreferences.canPromptTouchID?.()) {
+    try {
+      await systemPreferences.promptTouchID(`show the password for ${passwords.label(login.site)}`)
+    } catch {
+      return {}
+    }
+  }
+  if (profile.deleted || !find()) return {}
+  const password = decrypt(find().secret)
+  return password === null ? { error: 'Couldn’t read this password from the Keychain.' } : { password }
 }
 
 // The same, for changes with nowhere of their own to show a failure.
@@ -797,7 +859,7 @@ function settingsState(profile, error) {
   for (const setting of settingsStore.SETTINGS) {
     if (setting.type === 'shortcut') labels[setting.key] = settings[setting.key] ? shortcuts.label(settings[setting.key]) : ''
   }
-  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, defaultBrowser: defaultBrowser(), ...(error && { error }) }
+  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), passwords: passwords.list(profile.passwords), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, defaultBrowser: defaultBrowser(), ...(error && { error }) }
 }
 
 // Whether Lit is the Mac's default browser: 'yes', 'no', or 'unavailable' when
@@ -1037,7 +1099,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   const promptHeight = (tab) => {
     const asked = signInOf(tab)
     if (asked) return SIGN_IN_HEIGHT + (asked.note ? SIGN_IN_NOTE : 0)
-    return tab?.prompts.length ? PROMPT_HEIGHT : 0
+    return tab && promptOf(tab) ? PROMPT_HEIGHT : 0
   }
 
   // Everything the toolbar draws. Sent whenever any of it changes.
@@ -1051,7 +1113,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     win.setTitle(isPrivate ? `${named} (Private)` : named)
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts, signIns, error, audible }) => ({
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts, signIns, offer, error, audible }) => ({
         id, title, url, favicon, loading, started,
         audio: profile.settings.tabAudio ? audioOf({ page, audible }) : null,
         // The address asking to sign in, not the page it would replace, so
@@ -1059,8 +1121,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
         ...(signInPage({ signIns }) && { title: '', url: signInPage({ signIns }).url, favicon: null }),
         // The tab's oldest unanswered sign-in; the rest wait.
         signIn: signIns[0] && { id: signIns[0].id, name: signIns[0].name, asks: signIn.asks(signIns[0]), note: signIns[0].note, main: signIns[0].main },
-        // The tab's oldest unanswered permission request; the rest wait.
-        prompt: prompts[0] && !signIns[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
+        // The tab's oldest unanswered permission request; the rest wait. Then
+        // its offer to save a password.
+        prompt: signIns[0] ? undefined : promptOf({ prompts, offer }),
         // The address bar shows the zoom, to reset it, when it is not the
         // default or the site has its own (which can match a later default).
         zoom: started && !error && !signInPage({ signIns }) && (!zoom.same(factor, profile.settings.defaultZoom) || ownZoom(page.isDestroyed() ? '' : page.getURL()))
@@ -1162,7 +1225,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     tab.find = null
     tab.restoring = false
     tab.startedByPage = false
+    tab.submitted = null
     dropPrompts(tab)
+    hideLoginsOf(tab)
     dropSignIns(tab)
     if (tab.id === activeId) show(tab, win.isFocused() && !win.webContents.isFocused())
     sync()
@@ -1186,6 +1251,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function activate(id, focus = true) {
     const tab = find(id)
     if (!tab) return
+    if (id !== activeId) hideLogins()
     // Sharing is asked by the tab on show.
     if (share && share.tab !== tab) closePopup()
     activeId = id
@@ -1214,7 +1280,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], signIns: [], fullScreen: null, error: null, audible: false }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], signIns: [], submitted: null, offer: null, fullScreen: null, error: null, audible: false }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -1223,7 +1289,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     layout()
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
-    page.on('did-stop-loading', () => { tab.loading = false; tab.leaving = false; settle(tab); dropSignIns(tab, true); sync(); checkResponse(tab) })
+    page.on('did-stop-loading', () => { tab.loading = false; tab.leaving = false; settle(tab); dropSignIns(tab, true); sync(); checkResponse(tab); checkLogin(tab) })
     // The address being opened, before it commits: a tab duplicated or
     // closed before its first page commits gets it.
     // Whether the page started it (a link, a script) or Lit did (the
@@ -1241,6 +1307,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       // loading, so it changes nothing here.
       if (!isSameDocument) tab.startedByFrame = Boolean(initiator?.parent)
       tab.startedByPage = Boolean(initiator)
+      // The address bar, Back or a reload is not the sign-in going on.
+      if (!isSameDocument && !initiator) tab.submitted = tab.loginName = null
     })
     // Asked about in onAppRedirect, not here; a frame's is refused.
     page.on('will-redirect', (event) => { if (permissions.opensApp(event.url)) event.preventDefault() })
@@ -1259,6 +1327,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tab.find = findState.reset(tab.find)
       // A new page has not asked for anything yet; the old page's requests go.
       dropPrompts(tab)
+      moveLogin(tab, status)
       dropSignIns(tab)
       tab.leaving = false
       setZoom(tab, zoomOf(url))
@@ -1330,10 +1399,15 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       if (fullScreenFor === tab) windowDone()
       sync()
     })
+    // Keys for the list under a login field, while it shows; any other goes
+    // to the page. Here, so the page never answers them itself.
+    page.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown' && !input.isComposing && tab.id === activeId && loginsKey(input.key)) event.preventDefault()
+    })
     // Escape in the page closes its find field too, as in Safari and
     // Firefox. The page still gets the key, and an input method's keeps it.
     page.on('before-input-event', (_event, input) => {
-      if (input.type === 'keyDown' && input.key === 'Escape' && !input.isComposing && tab.find && tab.id === activeId) closeFind()
+      if (input.type === 'keyDown' && input.key === 'Escape' && !input.isComposing && !loginsClosed && tab.find && tab.id === activeId) closeFind()
     })
     // A new page (or a reload) gets the open search run again once its
     // document is ready, without waiting for slow images; did-stop-loading
@@ -1649,6 +1723,31 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     sync()
     return true
   }
+  // What the toolbar shows for a tab: its oldest request, else its offer to
+  // save a password, or undefined.
+  function promptOf({ prompts: [prompt], offer }) {
+    if (prompt) {
+      const site = permissions.label(prompt.site)
+      const kinds = asking(prompt)
+      const does = permissions.describe(kinds)
+      return {
+        id: prompt.id, site, kinds, says: `wants to ${does}`,
+        allow: { text: 'Allow', label: `Allow ${site} to ${does}` },
+        block: { text: 'Block', label: `Block ${site} from being able to ${does}` },
+      }
+    }
+    if (!offer) return undefined
+    const site = passwords.label(offer.site)
+    const update = offer.action === 'update'
+    const text = update ? 'Update' : 'Save'
+    const whose = offer.username ? ` for ${offer.username}` : ''
+    return {
+      id: offer.id, site, kinds: ['password'], says: `— ${text.toLowerCase()} password${whose}?`,
+      allow: { text, label: `${text} password${whose} on ${site}` },
+      // A site with a saved password was never refused one.
+      block: update ? null : { text: 'Never', label: `Never save passwords for ${site}` },
+    }
+  }
   // What a prompt asks about now: its kinds without a choice yet.
   const asking = (prompt) => permissions.undecided(permissionStore.sites, prompt.site, prompt.kinds)
 
@@ -1666,6 +1765,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // answer to a row that has since changed is ignored.
   function answerPrompt(tabId, promptId, kinds, choice) {
     const tab = find(tabId)
+    if (tab?.offer && tabId === activeId && !tab.prompts.length && !tab.signIns.length && tab.offer.id === promptId) return answerOffer(tab, choice)
     // Only the prompt on show: the active tab's first.
     const prompt = tabId === activeId ? tab?.prompts[0] : null
     if (prompt?.id !== promptId || !Array.isArray(kinds) || kinds.join() !== asking(prompt).join()) return
@@ -1701,6 +1801,204 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       }
     }
     sync()
+  }
+
+  // Saving a password someone signed in with. src/page.js says what was
+  // submitted, kept on the tab (tab.submitted) until the sign-in looks to have
+  // worked: the next page, once loaded, has no password field, or the page
+  // that stayed lost its own. Then tab.offer asks, until it is answered or a
+  // later page comes. The password never leaves main.
+  const LOGIN_TIME = 60000
+  const savesPasswords = () => profile.settings.savePasswords && !isPrivate
+  function loginSubmitted(tab, site, { username, password, old }) {
+    const { loginName } = tab
+    // A click and the submit it makes both say so, the name only once.
+    const before = tab.submitted
+    const known = before?.site === site && before.password === password && !before.moved ? before.username : loginName?.site === site && Date.now() - loginName.at < LOGIN_TIME * 5 ? loginName.username : ''
+    tab.loginName = null
+    tab.submitted = savesPasswords() ? { site, username: username || known, password, old, at: Date.now(), moved: false } : null
+  }
+  // A new page came, or an error page, after which nothing is saved.
+  function moveLogin(tab, status) {
+    hideLoginsOf(tab)
+    if (tab.submitted) {
+      if (status >= 400 || Date.now() - tab.submitted.at > LOGIN_TIME) tab.submitted = null
+      else tab.submitted.moved = true
+    }
+    // The second step's page comes by itself; one the person went on to from
+    // there is no part of it.
+    if (tab.loginName?.moved && tab.touched) tab.loginName = null
+    else if (tab.loginName) tab.loginName.moved = true
+    // Signing in often passes through more pages by itself.
+    if (tab.offer && Date.now() - tab.offer.at > LOGIN_TIME) tab.offer = null
+  }
+  async function checkLogin(tab) {
+    const { submitted } = tab
+    if (!submitted?.moved || tab.page.isDestroyed()) return
+    const failed = await tab.page.executeJavaScriptInIsolatedWorld(CHECK_WORLD, [{
+      // Pages often draw their form after they load, maybe in a shadow tree,
+      // so it is looked for a while.
+      code: `(async () => {
+        const asks = (root) => [...root.querySelectorAll('*')].some((each) => (each.matches('input[type=password]') && each.checkVisibility()) || (each.shadowRoot && asks(each.shadowRoot)))
+        for (let i = 0; i < 8; i++) {
+          if (asks(document)) return true
+          await new Promise((resolve) => setTimeout(resolve, 250))
+        }
+        return asks(document)
+      })()`,
+    }]).catch(() => null)
+    // The page left before it could tell; the next one is checked.
+    if (failed === null) return
+    // Another page or sign-in may have come meanwhile.
+    if (tab.submitted !== submitted || tab.page.isDestroyed() || tab.page.isLoadingMainFrame()) return
+    if (failed) tab.submitted = null
+    else offerLogin(tab)
+  }
+  function offerLogin(tab) {
+    const { submitted } = tab
+    tab.submitted = null
+    if (!submitted || !find(tab.id) || !savesPasswords()) return
+    const offer = passwords.offerFor(profile.passwords, submitted, decrypt)
+    if (!offer) return
+    tab.offer = { id: nextPromptId++, site: submitted.site, action: offer.action, username: offer.username, login: offer.id, secret: offer.secret, submitted, at: Date.now() }
+    sync()
+  }
+  // 'allow' saves it, 'block' never asks for the site again, null is not now.
+  function answerOffer(tab, choice) {
+    const { offer } = tab
+    tab.offer = null
+    sync()
+    // Saved, changed or removed meanwhile (in another tab or Settings): what
+    // was asked no longer holds, so ask again if there is still reason to.
+    const now = passwords.offerFor(profile.passwords, offer.submitted, decrypt)
+    if (choice && (now?.action !== offer.action || now.id !== offer.login || now.secret !== offer.secret)) {
+      tab.submitted = offer.submitted
+      return offerLogin(tab)
+    }
+    let saved = true
+    if (choice === 'allow') {
+      const secret = encrypt(offer.submitted.password)
+      saved = secret !== null && setPasswords(profile, passwords.put(profile.passwords, { site: offer.site, username: offer.username, secret }))
+    } else if (choice === 'block' && offer.action === 'save') saved = setPasswords(profile, passwords.neverFor(profile.passwords, offer.site))
+    if (saved || win.isDestroyed()) return
+    dialog.showMessageBox(win, {
+      type: 'warning',
+      message: choice === 'allow' ? 'Couldn’t save the password' : 'Couldn’t save that choice',
+      detail: 'Nothing was changed.',
+    }).catch(() => {})
+  }
+
+  // The site's saved logins, listed under the field someone is in (src/
+  // logins.html), in a view of its own like the suggestions. The page keeps
+  // focus, and main handles the keys. `logins` is the list on show, or null:
+  // { tab, frame, site, request, items, selected }. A click on it takes focus
+  // from the page, which closes it, so it lasts until it has faded.
+  let loginsView = null
+  let logins = null
+  let loginsFading = null
+  let loginsHide = null
+  let loginsGeneration = 0
+  // Whether the Escape being handled closed the list, so it only does that.
+  let loginsClosed = false
+
+  function showLogins(tab, frame, site, { request, x, top: fieldTop, y, width, needsPassword }) {
+    const items = profile.settings.fillPasswords ? passwords.forSite(profile.passwords, site).map(({ id, username }) => ({ id, username })) : []
+    if (!items.length || tab.id !== activeId || tab.error || popupOpen || !win.isFocused()) return hideLogins()
+    if (!loginsView) {
+      loginsView = new WebContentsView({ webPreferences: { preload: PRELOAD, session: ses } })
+      loginsView.setBackgroundColor('#00000000')
+      loginsView.setVisible(false)
+      windowsByPopup.set(loginsView.webContents, { controls, name: 'logins' })
+      // The first list is sent before the page can hear it; send it again.
+      loginsView.webContents.on('did-finish-load', sendLogins)
+      loginsView.webContents.loadFile(path.join(__dirname, 'logins.html'))
+    }
+    clearTimeout(loginsHide)
+    loginsFading = null
+    logins = { tab, frame, site, request, needsPassword, items, selected: -1 }
+    loginsGeneration++
+    const bounds = win.getContentBounds()
+    const listWidth = Math.min(Math.max(Math.round(width * tab.zoom), LOGINS_WIDTH), bounds.width)
+    const height = LOGINS_HEADER + Math.min(items.length, LOGINS_ROWS) * SUGGESTION_ROW + SUGGESTIONS_PAD * 2
+    // Above the field when only there it fits; else below, moved up to fit.
+    const below = pageTop + Math.round(y * tab.zoom) + 4
+    const above = pageTop + Math.round(fieldTop * tab.zoom) - 4 - height
+    const top = below + height > bounds.height && above >= pageTop ? above : Math.max(pageTop, Math.min(below, bounds.height - height))
+    loginsView.setBounds({
+      x: Math.max(0, Math.min(Math.round(x * tab.zoom), bounds.width - listWidth)),
+      y: top,
+      width: listWidth,
+      height: Math.max(1, Math.min(height, bounds.height - top)),
+    })
+    if (!loginsView.getVisible()) win.contentView.addChildView(loginsView)
+    loginsView.setVisible(true)
+    sendLogins()
+  }
+  function sendLogins() {
+    if (logins) loginsView.webContents.send('logins-show', { logins: logins.items, site: passwords.label(logins.site), generation: loginsGeneration })
+  }
+
+  // `left` is the page's field losing focus, which a click on the list does
+  // too, so that click still counts while the list fades.
+  function hideLogins(left = false) {
+    if (!left) loginsFading = null
+    if (!logins) return
+    loginsFading = left ? logins : null
+    logins = null
+    loginsView.webContents.send('logins-hide')
+    clearTimeout(loginsHide)
+    loginsHide = setTimeout(() => {
+      loginsFading = null
+      if (win.isDestroyed()) return
+      const hadFocus = loginsView.webContents.isFocused()
+      loginsView.setVisible(false)
+      const tab = active()
+      if (hadFocus && tab) show(tab)
+    }, SUGGESTIONS_FADE)
+  }
+
+  function hideLoginsOf(tab) {
+    if ((logins ?? loginsFading)?.tab === tab) hideLogins()
+  }
+
+  // Whether the list took the key.
+  function loginsKey(key) {
+    loginsClosed = false
+    if (!logins) return false
+    const count = logins.items.length
+    if (key === 'Escape') {
+      hideLogins()
+      return (loginsClosed = true)
+    }
+    if (key === 'ArrowDown' || key === 'ArrowUp') {
+      logins.selected = key === 'ArrowDown' ? (logins.selected + 1) % count : logins.selected < 1 ? count - 1 : logins.selected - 1
+      loginsView.webContents.send('logins-select', logins.selected)
+      return true
+    }
+    if (key !== 'Enter' || logins.selected < 0) return false
+    pickLogin(logins.items[logins.selected].id, loginsGeneration)
+    return true
+  }
+
+  // Fills the picked login, only into the very page that asked: the frame must
+  // still be there and on that site, and it checks again itself.
+  function pickLogin(id, generation) {
+    const list = logins || loginsFading
+    const login = list && generation === loginsGeneration && list.items.some((item) => item.id === id)
+      ? passwords.forSite(profile.passwords, list.site).find((each) => each.id === id)
+      : null
+    if (!login) return
+    hideLogins()
+    const { tab, frame, site, request } = list
+    if (tab.page.isDestroyed() || frame.isDestroyed() || frame !== tab.page.mainFrame || frame.origin !== site) return
+    // A field for the name alone (the first step of two) gets just that.
+    const password = list.needsPassword ? decrypt(login.secret) : null
+    if (list.needsPassword && password === null) {
+      dialog.showMessageBox(win, { type: 'warning', message: 'Couldn’t read this password', detail: 'The Keychain didn’t unlock it. You can remove it in Settings and save it again.' }).catch(() => {})
+      return
+    }
+    tab.page.focus()
+    frame.send('login-fill', { request, site, username: login.username, password })
   }
 
   // Screen sharing. The tab's request waiting in the picker (src/share.html):
@@ -1818,6 +2116,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     } else tab.signIns.push({ id: nextPromptId++, ...request, callbacks: [callback] })
     // The question is in the toolbar.
     leaveFullScreen(tab)
+    hideLoginsOf(tab)
     if (request.main && tab.id === activeId) show(tab, win.isFocused() && !win.webContents.isFocused())
     sync()
   }
@@ -2080,6 +2379,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // `section` is the Settings section to show, if not the one shown last.
   function openPopup(name, section) {
     hideSuggestions()
+    hideLogins()
     const view = popupView(name)
     if (!popupOpen) toolbarHadFocus = win.webContents.isFocused()
     else if (popupOpen !== name) {
@@ -2363,7 +2663,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // Every page the window has besides its toolbar, to wait for as they close.
-  const pages = () => [...tabs.map((tab) => tab.page), ...Object.values(popups).map((view) => view.webContents), suggestionsView?.webContents]
+  const pages = () => [...tabs.map((tab) => tab.page), ...Object.values(popups).map((view) => view.webContents), suggestionsView?.webContents, loginsView?.webContents]
 
   const controls = {
     win,
@@ -2413,6 +2713,22 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       sync()
     },
     isActive: (id) => id === activeId,
+    savesPasswords,
+    askPermission,
+    pickLogin,
+    // A message from src/page.js in the tab whose top frame sent it, now on
+    // `site`.
+    pageMessage(contents, frame, site, message, value) {
+      const tab = tabs.find((each) => each.page === contents)
+      if (!tab) return
+      // Kept for the second step of a sign-in (loginSubmitted).
+      if (message === 'name') tab.loginName = !savesPasswords() ? null : { site, username: value.username, at: Date.now() }
+      else if (message === 'abandoned') tab.submitted = tab.loginName = null
+      else if (message === 'submitted') loginSubmitted(tab, site, value)
+      else if (message === 'done') { if (tab.submitted?.site === site && !tab.submitted.moved) offerLogin(tab) }
+      else if (message === 'field') showLogins(tab, frame, site, value)
+      else if (logins?.tab === tab) hideLogins(true)
+    },
     focusActive: () => { const tab = active(); if (tab) show(tab) },
     askPermission,
     askShare,
@@ -2476,6 +2792,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       keyboardLayout = on && keys && typeof keys === 'object' ? keys : {}
     },
     settingsChanged() {
+      if (!profile.settings.savePasswords) {
+        for (const tab of tabs) { tab.submitted = tab.loginName = tab.offer = null }
+      }
+      if (!profile.settings.fillPasswords) hideLogins()
       sendShortcuts()
       sync()
       sendQuickSearch()
@@ -2517,7 +2837,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   windowsByToolbar.set(win.webContents, controls)
   openWindows.add(controls)
 
-  win.on('resize', layout)
+  win.on('resize', () => { hideLogins(); layout() })
+  // Another app or window comes to the front.
+  win.on('blur', () => hideLogins())
   // Where the window is, and which window was in front, come back next
   // launch; a private window changes none of that.
   const changed = () => { if (!isPrivate) sessionChanged() }
@@ -2577,6 +2899,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     for (const view of Object.values(popups)) view.webContents.close()
     clearTimeout(suggestionsHide)
     suggestionsView?.webContents.close()
+    clearTimeout(loginsHide)
+    loginsView?.webContents.close()
     if (isPrivate) {
       dropDownloads(ses)
       forgetSession(ses, open)
@@ -2869,6 +3193,39 @@ ipcMain.handle('permissions-set', fromSettings((c, site, kind, choice) => {
   }
   return settingsState(c.profile)
 }))
+// Saved passwords: removing one, asking about a site again, and showing or
+// copying one.
+ipcMain.handle('passwords-remove', fromSettings((c, id) => settingsState(c.profile, setPasswords(c.profile, passwords.remove(c.profile.passwords, id)) ? undefined : 'Couldn’t save passwords, so nothing was removed.')))
+ipcMain.handle('passwords-ask-again', fromSettings((c, site) => settingsState(c.profile, setPasswords(c.profile, passwords.askAgain(c.profile.passwords, site)) ? undefined : 'Couldn’t save passwords, so nothing was changed.')))
+ipcMain.handle('passwords-reveal', fromSettings((c, id) => readPassword(c.profile, id)))
+ipcMain.handle('passwords-copy', fromSettings(async (c, id) => {
+  const { password, error } = await readPassword(c.profile, id)
+  if (password !== undefined) clipboard.writeText(password)
+  return error ? { error } : { copied: password !== undefined }
+}))
+
+// From src/page.js, in web pages. The site is the sending frame's, as
+// Chromium knows it, never what the message says.
+const fromPage = (message, read) => (event, value) => {
+  const frame = event.senderFrame
+  if (!frame || frame.isDestroyed() || frame !== event.sender.mainFrame) return
+  const site = passwords.siteOf(frame.origin)
+  const checked = site ? read(value) : null
+  if (!checked) return
+  for (const controls of openWindows) controls.pageMessage(event.sender, frame, site, message, checked)
+}
+// Whether what is typed into a login may be sent to be saved. Always answered,
+// as the page waits for it.
+ipcMain.on('login-saves', (event) => {
+  event.returnValue = [...openWindows].some((controls) => controls.hasTab(event.sender) && controls.savesPasswords())
+})
+ipcMain.on('login-submitted', fromPage('submitted', (value) => (passwords.isText(value?.username) && passwords.isText(value?.password) && value.password ? { username: value.username, password: value.password, old: passwords.isText(value.old) ? value.old : '' } : null)))
+ipcMain.on('login-name', fromPage('name', (value) => (passwords.isText(value?.username) ? { username: value.username } : null)))
+ipcMain.on('login-abandoned', fromPage('abandoned', () => true))
+ipcMain.on('login-done', fromPage('done', () => true))
+ipcMain.on('login-field', fromPage('field', (value) => (value && ['request', 'x', 'top', 'y', 'width'].every((key) => Number.isFinite(value[key])) ? value : null)))
+ipcMain.on('login-field-left', fromPage('left', () => true))
+ipcMain.on('logins-pick', fromPopup('logins', (c, id, generation) => c.pickLogin(id, generation)))
 ipcMain.handle('default-browser-make', fromSettings((c) => settingsState(c.profile, makeDefaultBrowser())))
 ipcMain.on('settings-record', fromSettings((c, on, keys) => c.setRecording(on === true, keys)))
 ipcMain.on('settings-close', fromSettings((c) => c.closePopup()))

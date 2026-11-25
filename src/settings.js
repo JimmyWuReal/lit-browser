@@ -15,7 +15,7 @@ const quickSearch = require('./quicksearch')
 // person or their accounts goes in a profile's, how Lit itself works (tabs,
 // shortcuts) in a shared one. The profile ones come first.
 // A section can also name a `list` the popup draws after its settings, from
-// state main sends with them (sitePermissions, quickSearchSites, profiles, defaultBrowser).
+// state main sends with them (sitePermissions, passwords, quickSearchSites, profiles, defaultBrowser).
 // Each setting: { key, label, description?, group?, type, default, ...type
 // fields }. Settings next to each other with the same `group` get it as a
 // heading.
@@ -85,6 +85,30 @@ const SECTIONS = [
         type: 'choice',
         options: [{ value: 'ask', label: 'Ask each time' }, { value: 'downloads', label: 'To Downloads' }],
         default: 'ask',
+      },
+    ],
+  },
+  {
+    id: 'passwords',
+    title: 'Passwords',
+    scope: 'profile',
+    // Also lists every saved login and the sites never asked about (see
+    // src/passwords.js), after the settings.
+    list: 'passwords',
+    settings: [
+      {
+        key: 'savePasswords',
+        label: 'Offer to save passwords',
+        description: 'Asks after you sign in to a site, or change its password. Never in a private window.',
+        type: 'toggle',
+        default: true,
+      },
+      {
+        key: 'fillPasswords',
+        label: 'Suggest saved passwords',
+        description: 'Lists a site’s saved logins when you click its login fields. Nothing is filled until you pick one.',
+        type: 'toggle',
+        default: true,
       },
     ],
   },
