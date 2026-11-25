@@ -53,6 +53,7 @@ const BOOKMARKS_HEIGHT = 34
 const PRELOAD = path.join(__dirname, 'preload.js')
 // What runs in web pages.
 const PAGE_PRELOAD = path.join(__dirname, 'page.js')
+const PASSKEYS_PRELOAD = path.join(__dirname, 'passkeys.js')
 // Keep in sync with .menu padding and .row height in suggestions.html.
 const SUGGESTION_ROW = 38
 const SUGGESTIONS_PAD = 5
@@ -458,7 +459,8 @@ app.on('login', (event, contents, details, authInfo, callback) => {
 })
 
 // What every session browsing pages needs: Lit's permission prompts, Do
-// Not Track, and downloads followed into the Downloads list.
+// Not Track, downloads followed into the Downloads list, and what runs in
+// its pages.
 function setUpSession(ses, profile, store) {
   ses.setPermissionRequestHandler((...args) => onPermissionRequest(store, ...args))
   ses.setPermissionCheckHandler((...args) => onPermissionCheck(store, ...args))
@@ -466,6 +468,7 @@ function setUpSession(ses, profile, store) {
   ses.on('will-download', (_event, item) => trackDownload(item, ses, profile))
   ses.webRequest.onBeforeRedirect({ urls: ['<all_urls>'], types: ['mainFrame'] }, (details) => onAppRedirect(store, details))
   ses.registerPreloadScript({ type: 'frame', filePath: PAGE_PRELOAD })
+  ses.registerPreloadScript({ type: 'frame', filePath: PASSKEYS_PRELOAD })
   applyDoNotTrack(ses, profile)
 }
 
@@ -3304,6 +3307,9 @@ app.whenReady().then(async () => {
   if (swept !== profileList) setProfileList(swept)
   for (const profile of profileList.profiles) openProfile(profile)
   currentProfile = profiles.find((profile) => profile.id === profileList.last)
+  // Before any page's process starts, as each gets it from here, and some are
+  // shared between tabs and profiles (src/passkeys.js).
+  if (!shared().securityKeys) app.commandLine.appendSwitch('disable-blink-features', 'WebAuth')
   adblock = createAdblock(path.join(root, 'adblock.bin'))
   // A saved engine is in use before any tab loads; first-time lists
   // download in the background.
