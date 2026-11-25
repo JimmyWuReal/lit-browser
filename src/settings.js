@@ -198,6 +198,13 @@ const SECTIONS = [
         default: false,
       },
       {
+        key: 'tabAudio',
+        label: 'Show sound on tabs',
+        description: 'A speaker on tabs that are playing sound or muted; click it to mute or unmute the tab.',
+        type: 'toggle',
+        default: true,
+      },
+      {
         key: 'closeWindowWithLastTab',
         label: 'Close window with its last tab',
         description: 'Otherwise closing the last tab leaves a new one.',
@@ -242,6 +249,7 @@ const SECTIONS = [
       shortcut('closeTab', 'Close Tab', 'CmdOrCtrl+W'),
       shortcut('closeWindow', 'Close Window', 'Shift+CmdOrCtrl+W'),
       shortcut('duplicateTab', 'Duplicate Tab', ''),
+      shortcut('muteTab', 'Mute or Unmute Tab', ''),
       shortcut('closeOtherTabs', 'Close Other Tabs', 'Alt+CmdOrCtrl+W'),
       shortcut('closeTabsToRight', 'Close Tabs to the Right', ''),
       shortcut('bookmarkPage', 'Bookmark This Page', 'CmdOrCtrl+D'),

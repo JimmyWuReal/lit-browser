@@ -124,13 +124,14 @@ function pageMenu(params, context = {}) {
 
 // The menu for a right-click on a tab, the `index`th of `count`.
 // `started` is false for a tab still showing the search box. `keys`
-// ({ reload, duplicateTab, closeTab, closeOtherTabs, closeTabsToRight })
+// ({ reload, duplicateTab, muteTab, closeTab, closeOtherTabs, closeTabsToRight })
 // are the current accelerators, shown next to their items.
-function tabMenu({ index, count, started, keys = {} }) {
+function tabMenu({ index, count, started, muted = false, keys = {} }) {
   return joinGroups([
     [
       { label: 'Reload', command: 'reload', enabled: Boolean(started), accelerator: keys.reload },
       { label: 'Duplicate', command: 'duplicate', accelerator: keys.duplicateTab },
+      { label: muted ? 'Unmute Tab' : 'Mute Tab', command: 'mute', accelerator: keys.muteTab },
     ],
     [
       { label: 'Close Tab', command: 'close', accelerator: keys.closeTab },

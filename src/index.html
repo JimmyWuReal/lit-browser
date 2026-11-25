@@ -140,6 +140,22 @@
     .tab.is-active .tab-close,
     .tab:hover .tab-close,
     .tab-close:focus-visible { opacity: 1; }
+    /* The speaker of a tab that plays sound or is muted, left of its close
+       button. Its waves and its cross trade places as it is muted. */
+    .tab-audio {
+      position: absolute;
+      top: 4px;
+      right: 26px;
+      width: 20px;
+      height: 20px;
+      border-radius: 6px;
+      animation: profile-in 200ms var(--settle);
+    }
+    .tab-audio[hidden] { display: none; }
+    .tab.has-audio .tab-select { padding-right: 50px; }
+    .tab-audio path { transition: opacity 180ms ease-out, transform 240ms var(--settle); transform-origin: 18px 12px; }
+    .tab-audio:not(.is-muted) .cross,
+    .tab-audio.is-muted .wave { opacity: 0; transform: scale(.5); }
     .new-tab,
     .open-downloads,
     .open-profile,
@@ -200,10 +216,18 @@
 
     /* Narrow tabs keep just the icon; the active one keeps its close button. */
     @container (max-width: 72px) {
-      .tab-select { justify-content: center; padding: 0; }
+      .tab-select,
+      .tab.has-audio .tab-select { justify-content: center; padding: 0; }
       .tab-title { display: none; }
       .tab:not(.is-active) .tab-close { display: none; }
       .tab.is-active .tab-icon { display: none; }
+      /* The speaker takes the icon's place, only to look at, so clicking the
+         tab still switches to it. On the active tab it sits by the close button. */
+      .tab.has-audio .tab-icon { display: none; }
+      .tab-audio { left: 50%; right: auto; margin-left: -10px; }
+      .tab:not(.is-active) .tab-audio { pointer-events: none; }
+      .tab.is-active .tab-audio { margin-left: -20px; }
+      .tab.is-active.has-audio .tab-close { margin-left: 10px; }
       .tab.is-active .tab-close { left: 50%; right: auto; transform: translateX(-50%); }
       .tab.is-active .tab-close:active { transform: translateX(-50%) scale(.94); }
     }
@@ -706,6 +730,14 @@
         <span class="tab-icon"></span>
         <span class="tab-title"></span>
       </button>
+      <button class="icon-button tab-audio" type="button" title="Mute Tab" hidden>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z"></path>
+          <path class="wave" d="M16 9a5 5 0 0 1 0 6"></path><path class="wave" d="M19.4 18.4a9 9 0 0 0 0-12.8"></path>
+          <path class="cross" d="m22 9-6 6"></path><path class="cross" d="m16 9 6 6"></path>
+        </svg>
+      </button>
       <button class="icon-button tab-close" type="button" aria-label="Close tab" title="Close Tab" data-shortcut="shortcuts.closeTab">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"
           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
@@ -772,6 +804,7 @@
     function createTab(id) {
       const root = tabTemplate.content.firstElementChild.cloneNode(true)
       const select = root.querySelector('.tab-select')
+      const audio = root.querySelector('.tab-audio')
       const close = root.querySelector('.tab-close')
       select.addEventListener('click', () => window.lit.activateTab(id))
       close.addEventListener('click', () => window.lit.closeTab(id))
@@ -781,7 +814,14 @@
       // toolbar's own text menu from showing too.
       root.addEventListener('contextmenu', (event) => { event.preventDefault(); window.lit.showTabMenu(id) })
       labelShortcut(close)
-      const elements = { root, select, close, icon: root.querySelector('.tab-icon'), title: root.querySelector('.tab-title'), iconKey: null }
+      // Like the rest of the strip, a mouse click leaves focus with the page;
+      // Enter and Space keep it here.
+      audio.addEventListener('mousedown', (event) => event.preventDefault())
+      audio.addEventListener('click', (event) => {
+        window.lit.toggleMute(id)
+        if (event.detail) window.lit.focusPage(state.activeId)
+      })
+      const elements = { root, select, audio, close, icon: root.querySelector('.tab-icon'), title: root.querySelector('.tab-title'), iconKey: null }
       tabElements.set(id, elements)
       return elements
     }
@@ -805,6 +845,24 @@
       }
     }
 
+    // The tab's speaker, named with its command's shortcut on the active
+    // tab, which is the one the shortcut mutes.
+    function drawAudio({ root, audio }, tab, isActive) {
+      const muted = tab.audio === 'muted'
+      // A focused speaker that goes away leaves focus on its tab.
+      if (!tab.audio && document.activeElement === audio) root.querySelector('.tab-select').focus()
+      audio.hidden = !tab.audio
+      root.classList.toggle('has-audio', Boolean(tab.audio))
+      // Keeps its icon as it was while silent.
+      if (!tab.audio) return
+      audio.classList.toggle('is-muted', muted)
+      const name = muted ? 'Unmute Tab' : 'Mute Tab'
+      const shortcut = isActive && shortcutLabels['shortcuts.muteTab']
+      audio.title = shortcut ? `${name} (${shortcut})` : name
+      audio.setAttribute('aria-label', muted ? 'Unmute tab' : 'Mute tab')
+      audio.tabIndex = isActive ? 0 : -1
+    }
+
     function render(next) {
       const switched = next.activeId !== state.activeId
       state = next
@@ -826,8 +884,9 @@
         elements.title.textContent = label
         elements.select.title = label
         // Narrow tabs hide their title text, so name the tab directly.
-        elements.select.setAttribute('aria-label', label)
+        elements.select.setAttribute('aria-label', tab.audio ? `${label}, ${tab.audio === 'muted' ? 'muted' : 'playing sound'}` : label)
         drawIcon(elements, tab)
+        drawAudio(elements, tab, isActive)
       })
       placeThumb()
       if (refocusTabs) { refocusTabs = false; tabElements.get(state.activeId)?.select.focus() }

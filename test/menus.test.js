@@ -107,13 +107,14 @@ test("Lit's own fields get only editing items, and nothing elsewhere", () => {
 
 test('tab menu enables what fits the tab', () => {
   const only = tabMenu({ index: 0, count: 1, started: false })
-  assert.deepEqual(labels(only), ['Reload', 'Duplicate', '—', 'Close Tab', 'Close Other Tabs', 'Close Tabs to the Right'])
+  assert.deepEqual(labels(only), ['Reload', 'Duplicate', 'Mute Tab', '—', 'Close Tab', 'Close Other Tabs', 'Close Tabs to the Right'])
   assert.deepEqual(only.filter((item) => item.enabled === false).map((item) => item.label), ['Reload', 'Close Other Tabs', 'Close Tabs to the Right'])
   const middle = tabMenu({ index: 1, count: 3, started: true })
   assert.ok(middle.every((item) => item.enabled !== false))
   assert.equal(tabMenu({ index: 2, count: 3, started: true }).at(-1).enabled, false)
-  const keys = { reload: 'R', duplicateTab: 'D', closeTab: 'W', closeOtherTabs: 'O', closeTabsToRight: 'T' }
-  assert.deepEqual(tabMenu({ index: 0, count: 1, started: true, keys }).map((item) => item.accelerator), ['R', 'D', undefined, 'W', 'O', 'T'])
+  assert.equal(tabMenu({ index: 0, count: 1, started: true, muted: true })[2].label, 'Unmute Tab')
+  const keys = { reload: 'R', duplicateTab: 'D', muteTab: 'M', closeTab: 'W', closeOtherTabs: 'O', closeTabsToRight: 'T' }
+  assert.deepEqual(tabMenu({ index: 0, count: 1, started: true, keys }).map((item) => item.accelerator), ['R', 'D', 'M', undefined, 'W', 'O', 'T'])
 })
 
 test('a private window offers no Add to Dictionary or Inspect Element', () => {
