@@ -39,7 +39,8 @@ test('without a username, only the login with the replaced password is updated',
   // It could be another account.
   assert.equal(change(one, 'two', 'other').action, 'save')
   assert.equal(change(put(one, 'al', 'one'), 'two').action, 'save')
-  // Even with one saved without a username.
+  // One saved without a username is not replaced on a guess.
+  assert.equal(change(put(one, '', 'x'), 'two', 'other'), null)
   assert.equal(change(put(one, '', 'x'), 'two').username, 'jo')
   assert.deepEqual(offer(one, '', 'two'), { action: 'save', username: '' })
   assert.equal(offer(one, '', 'one'), null)

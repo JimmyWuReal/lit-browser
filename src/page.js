@@ -51,9 +51,21 @@ function nameOf(fields, password, visible) {
 function start({ ipcRenderer }) {
   const visible = (field) => field.isConnected && field.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) && field.getClientRects().length > 0
   const isField = (target) => target instanceof HTMLInputElement && !target.disabled && !target.readOnly
-  // What a field goes with: its form, else everything in its document (or
-  // shadow tree).
-  const fieldsWith = (element) => [...(element.form?.elements ?? element.getRootNode().querySelectorAll('input'))].filter((each) => each instanceof HTMLInputElement)
+  // What a field or button goes with: its form, else what is nearest around it
+  // with a password, else everything in its document (or shadow tree). Other
+  // forms' fields are left out, unless all there is is one form (its button is
+  // outside it).
+  const inputs = (list) => [...list].filter((each) => each instanceof HTMLInputElement)
+  function fieldsWith(element) {
+    const form = element.form ?? element.closest('form')
+    if (form) return inputs(form.elements)
+    let around = element.parentNode
+    while (around?.parentNode && !inputs(around.querySelectorAll('input[type=password]')).some(visible)) around = around.parentNode
+    const near = inputs((around ?? element.getRootNode()).querySelectorAll('input'))
+    const forms = new Set(near.map((each) => each.form))
+    const only = [...forms][0]
+    return forms.size === 1 && only && !(element instanceof HTMLInputElement) ? inputs(only.elements) : near.filter((each) => !each.form)
+  }
   // Every input in the page, in open shadow trees too.
   const inputsIn = (root) => [...root.querySelectorAll('*')].flatMap((each) => [...(each instanceof HTMLInputElement ? [each] : []), ...(each.shadowRoot ? inputsIn(each.shadowRoot) : [])])
   const passwords = (fields) => fields.filter((field) => field.type === 'password' && visible(field))
@@ -124,7 +136,7 @@ function start({ ipcRenderer }) {
     if (event.isTrusted && event.composedPath()[0] instanceof HTMLInputElement) abandon()
   }, true)
   addEventListener('submit', (event) => {
-    if (event.isTrusted && event.target instanceof HTMLFormElement) submitted([...event.target.elements].filter((each) => each instanceof HTMLInputElement))
+    if (event.isTrusted && event.target instanceof HTMLFormElement) submitted(inputs(event.target.elements))
   }, true)
   // Pages without a form, or that sign in without submitting theirs. A form
   // Chromium refuses to submit (a field left empty) signs no one in.
@@ -144,10 +156,9 @@ function start({ ipcRenderer }) {
     if (!button) return
     if (button.type === 'reset' || button.formMethod === 'dialog' || button.form?.method === 'dialog') return abandon()
     if (!signsIn([button.textContent, button.value, button.getAttribute('aria-label'), button.title].join(' '))) return abandon()
-    const form = button.closest('form')
     if (button.type === 'submit') {
       if (allowed(button)) submitted(fieldsWith(button))
-    } else submitted(form ? [...form.elements].filter((each) => each instanceof HTMLInputElement) : fieldsWith(button), true)
+    } else submitted(fieldsWith(button), true)
   }, true)
 
   // A field saved logins go in, when there is one for `target`:

@@ -37,7 +37,10 @@ function offerFor(store, { site, username, password, old = '' }, decrypt) {
   if (!site || !password || store.never.includes(site)) return null
   const saved = forSite(store, site)
   const replaced = !username && old ? saved.filter((each) => decrypt(each.secret) === old) : []
-  const login = replaced.length ? (replaced.length === 1 ? replaced[0] : null) : saved.find((each) => each.username === username)
+  const named = saved.find((each) => each.username === username)
+  // Saving would replace the one kept without a username, maybe another account's.
+  if (!username && old && named && replaced.length !== 1) return null
+  const login = !username && old ? replaced.length === 1 && replaced[0] : named
   if (!login && !username && saved.some((each) => decrypt(each.secret) === password)) return null
   if (!login) return { action: 'save', username }
   return decrypt(login.secret) === password ? null : { action: 'update', id: login.id, secret: login.secret, username: login.username }
