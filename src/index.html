@@ -840,7 +840,7 @@
       // The same tabs in another order, so one was moved.
       const reordered = next.tabs.length === state.tabs.length && state.tabs.every(({ id }) => ids.has(id)) &&
         state.tabs.some(({ id }, index) => id !== next.tabs[index].id)
-      const lefts = reordered && new Map([...tabElements].map(([id, { root }]) => [id, root.offsetLeft]))
+      const lefts = reordered && new Map([...tabElements].map(([id, { root }]) => [id, root.getBoundingClientRect().left]))
       const focused = tabList.contains(document.activeElement) ? document.activeElement : null
       state = next
 
@@ -867,6 +867,7 @@
         drawIcon(elements, tab)
       })
       placeThumb()
+      fadeTabs()
       if (reordered) {
         glideTabs(lefts)
         // A tab put elsewhere in the page loses focus.
@@ -1196,12 +1197,14 @@
     tabList.addEventListener('scroll', fadeTabs)
     new ResizeObserver(fadeTabs).observe(tabList)
 
-    // Tabs glide from where they were (`lefts`, by id), along with the thumb.
+    // Tabs glide from where they were on screen (`lefts`, by id), along with
+    // the thumb; one still gliding carries on from where it had got to.
     function glideTabs(lefts) {
-      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
-      for (const [id, { root }] of tabElements) {
-        const from = lefts.get(id) - root.offsetLeft
-        if (from) root.animate([{ transform: `translateX(${from}px)` }, { transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.22, 1, .36, 1)' })
+      for (const [id, elements] of tabElements) {
+        elements.glide?.cancel()
+        const from = lefts.get(id) - elements.root.getBoundingClientRect().left
+        if (!from || matchMedia('(prefers-reduced-motion: reduce)').matches) continue
+        elements.glide = elements.root.animate([{ transform: `translateX(${from}px)` }, { transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.22, 1, .36, 1)' })
       }
     }
 
@@ -1264,7 +1267,7 @@
         // Focus moves to whichever tab takes its place once the list updates.
         refocusTabs = true
         window.lit.closeTab(focusedId, false)
-      } else if (event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      } else if (event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
         event.preventDefault()
         if (event.key === 'ArrowLeft' ? index > 0 : index < ids.length - 1) {
           window.lit.moveTab(focusedId, event.key === 'ArrowLeft' ? ids[index - 1] : ids[index + 2] ?? null)
