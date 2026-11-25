@@ -430,6 +430,13 @@ function takeBack(profile, visit) {
 // How soon after loading a page that loads another by itself, untouched,
 // counts as redirecting rather than as a page someone read.
 const REDIRECT_AFTER = 5000
+// The isolated world Lit's own code runs in on pages; 999 is Electron's.
+const LIT_WORLD = 1000
+// Run on a page to end its full screen. A page told it may enter has not
+// done so yet, and can't leave before it has.
+const EXIT_FULL_SCREEN = `document.fullscreenElement
+  ? document.exitFullscreen()
+  : document.addEventListener('fullscreenchange', () => document.exitFullscreen(), { once: true })`
 
 // A page's address without its #fragment, to tell a jump within a page
 // from a new page.
@@ -816,6 +823,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // The tab whose page took the window full screen with it, if one did: the
   // window leaves with that page. One you made full screen yourself stays.
   let fullScreenFor = null
+  // Whether the window is full screen, from its own events: by the time a
+  // page's is announced, Electron has already asked the window to change.
+  let windowFullScreen = false
 
   // Everything the toolbar draws. Sent whenever any of it changes.
   function sync() {
@@ -877,8 +887,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (!tab?.fullScreen) return
     if (fullScreenFor === tab) win.setFullScreen(false)
     leftFullScreen(tab)
-    // Through the frame, as the page's own executeJavaScript waits for loading.
-    if (!tab.page.isDestroyed()) tab.page.mainFrame.executeJavaScript('document.exitFullscreen()').catch(() => {})
+    if (tab.page.isDestroyed()) return
+    // In a world of Lit's own, as a page can replace the method in its own.
+    // That would wait for a page still loading, whose own world doesn't.
+    const left = tab.page.isLoadingMainFrame()
+      ? tab.page.mainFrame.executeJavaScript(EXIT_FULL_SCREEN)
+      : tab.page.executeJavaScriptInIsolatedWorld(LIT_WORLD, [{ code: EXIT_FULL_SCREEN }])
+    left.catch(() => {})
   }
 
   function focusAddress() {
@@ -986,13 +1001,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     })
     // The page asked to be full screen (a video's button), or stopped.
     // Electron makes the window full screen with it; the toolbar hides.
-    // One that was only granted it after its tab was left gives it back.
+    // One granted it only after its tab was left gives it back, as does one
+    // with a question in the toolbar.
     page.on('enter-html-full-screen', () => {
       tab.fullScreen = true
-      // Sent before the window changes.
-      if (!win.isFullScreen()) fullScreenFor = tab
-      if (tab.id === activeId) sync()
-      else leaveFullScreen(tab)
+      if (!windowFullScreen) fullScreenFor = tab
+      sync()
+      if (tab.id !== activeId || tab.prompts.length) leaveFullScreen(tab)
     })
     page.on('leave-html-full-screen', () => leftFullScreen(tab))
     // Escape in the page closes its find field too, as in Safari and
@@ -1944,8 +1959,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // launch; a private window changes none of that.
   const changed = () => { if (!isPrivate) sessionChanged() }
   for (const change of ['move', 'resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(change, changed)
+  win.on('enter-full-screen', () => { windowFullScreen = true })
   // Leaving by the green button or the menu takes the page out too.
-  win.on('leave-full-screen', () => leaveFullScreen(active()))
+  win.on('leave-full-screen', () => { windowFullScreen = false; leaveFullScreen(active()) })
   win.on('focus', () => {
     openWindows.delete(controls)
     openWindows.add(controls)
