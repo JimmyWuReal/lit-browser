@@ -43,6 +43,7 @@ test('addressParts leaves out what says little', () => {
 
 test('addressParts keeps everything when full', () => {
   assert.deepEqual(addressParts('https://www.example.com/', true), { before: 'https://', host: 'www.example.com', after: '/' })
+  assert.deepEqual(addressParts('https://example.com/?#', true), { before: 'https://', host: 'example.com', after: '/?#' })
   assert.deepEqual(addressParts('http://example.com/a?b#c', true), { before: 'http://', host: 'example.com', after: '/a?b#c' })
 })
 

@@ -893,6 +893,8 @@
       const loading = Boolean(tab?.loading)
       reload.classList.toggle('is-on', loading)
       reload.dataset.name = loading ? 'Stop' : 'Reload'
+      // Reload's shortcut reloads a loading page too, so Stop has none.
+      reload.dataset.shortcut = loading ? '' : 'shortcuts.reload'
       reload.setAttribute('aria-label', reload.dataset.name)
       labelShortcut(reload)
     }
@@ -1431,11 +1433,15 @@
     // Focusing the field selects its address. A click would then put the
     // caret where it landed, which the drawn address may not match, so the
     // click that focused it selects again, unless it dragged a selection.
+    // Clicking back into the window focuses the field just before its press.
+    let focusedAt = -Infinity
     let clickSelects = false
-    address.addEventListener('focus', () => { clickSelects = true; address.select() })
+    address.addEventListener('focus', () => { focusedAt = performance.now(); address.select() })
+    address.addEventListener('pointerdown', () => {
+      clickSelects = document.activeElement !== address || performance.now() - focusedAt < 100
+    })
     address.addEventListener('click', () => {
       if (clickSelects && address.selectionStart === address.selectionEnd) address.select()
-      clickSelects = false
     })
 
     // Searches as you type; Enter and ⇧Enter step through the matches.
@@ -1479,7 +1485,6 @@
       }
       address.focus()
       address.select()
-      clickSelects = false
     })
     window.lit.onFocusFind(() => { findInput.focus(); findInput.select() })
   </script>

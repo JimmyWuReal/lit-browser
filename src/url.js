@@ -31,9 +31,11 @@ function searchUrl(text, engine = 'google') {
 // a web one, or one with a user name, which could pass for the host.
 function addressParts(url, full = false) {
   if (!URL.canParse(url)) return null
-  const { protocol, username, password, host, pathname, search, hash } = new URL(url)
+  const { href, protocol, username, password, host } = new URL(url)
   if (!/^https?:$/.test(protocol) || username || password) return null
-  const after = pathname + search + hash
+  // From the path on, cut from the address itself: a URL's own parts lose a
+  // bare ? or #.
+  const after = href.slice(href.indexOf('/', `${protocol}//`.length))
   if (full) return { before: `${protocol}//`, host, after }
   return {
     before: protocol === 'https:' ? '' : 'http://',
