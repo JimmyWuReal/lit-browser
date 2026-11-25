@@ -35,6 +35,12 @@
             "CFBundleTypeRole": "Viewer",
             "LSHandlerRank": "Alternate",
             "LSItemContentTypes": ["public.html", "public.xhtml"]
+          },
+          {
+            "CFBundleTypeName": "PDF document",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["com.adobe.pdf"]
           }
         ]
       }

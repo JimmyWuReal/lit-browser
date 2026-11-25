@@ -32,6 +32,8 @@ Back, forward and reload buttons sit before the address bar once a tab has a pag
 
 Zoom is per site, as in Chrome: zooming a page zooms every tab on that site, and Lit remembers it for next time (in `zoom.json` in the app's data folder). A page that is not at the default zoom, or whose site has a zoom of its own, shows its zoom at the right of the address bar; click it, or press ⌘0, to go back to the default zoom set in Settings.
 
+PDFs open in Chromium's PDF viewer, with its own toolbar to go through the pages, zoom, rotate, draw on, download and print them. ⌘F finds in them and ⌘P prints them, as on other pages. In a PDF, ⌘+ and ⌘- zoom the PDF itself, through the viewer's steps, and ⌘0 fits it to the window's width again; its site's zoom is left alone, and the viewer's toolbar shows the zoom instead of the address bar. A PDF the site sends as an attachment downloads instead. Lit is in Finder's Open With for PDFs (see [Default browser](#default-browser)).
+
 ⌘F opens a find field at the end of the address row. It highlights matches as you type and shows the count; Enter and ⇧Enter (or ⌘G and ⇧⌘G) move between them, and Escape closes it. Each tab keeps its own search, and reopening brings back the tab's last one.
 
 When a page goes full screen, as a video does, it fills the whole screen and the toolbar hides until it is done. Switching tabs, ⌘L, ⌘F, a site asking for permission or a sign-in, or taking the window out of full screen ends it. A window that was already full screen stays so; a page's full screen is not brought back when its window reopens.
@@ -166,7 +168,7 @@ That covers an address that can't be found or reached, being offline, a site tha
 
 ## Default browser
 
-Settings › Default Browser makes Lit the Mac's default browser (macOS asks you to confirm), so links clicked in other apps open in Lit. HTML files keep the app they open with; Lit is in Finder’s Open With for them. It needs the installed app (`npm run app`); run from source, it is unavailable. Web links and HTML files from other apps open in a new tab of the window used last, or in a new window, as Settings says; in the profile used last, and never in a private window.
+Settings › Default Browser makes Lit the Mac's default browser (macOS asks you to confirm), so links clicked in other apps open in Lit. HTML and PDF files keep the app they open with; Lit is in Finder’s Open With for them. It needs the installed app (`npm run app`); run from source, it is unavailable. Web links, HTML and PDF files from other apps open in a new tab of the window used last, or in a new window, as Settings says; in the profile used last, and never in a private window.
 
 ## Right-click menus
 
