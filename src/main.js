@@ -993,6 +993,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tab.pendingUrl = url
       // What an earlier navigation, now cancelled, left behind.
       appRedirects.delete(page)
+      // Read now: a frame can be gone by the time its navigation redirects.
+      tab.startedByFrame = Boolean(initiator?.parent)
       tab.startedByPage = Boolean(initiator)
     })
     // A redirect to another app. Electron would ask for the page the link was
@@ -1002,12 +1004,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // refused, as its other requests are, and one with no known site, as from
     // a service worker.
     page.on('will-redirect', (event) => {
-      const { url, isMainFrame, initiator } = event
+      const { url, isMainFrame } = event
       if (!permissions.opensApp(url)) return
       event.preventDefault()
       const redirect = appRedirects.get(page)
+      if (!isMainFrame || tab.startedByFrame || redirect?.to !== url) return
       appRedirects.delete(page)
-      if (!isMainFrame || initiator?.parent || redirect?.to !== url) return
       answerRequest(permissionStore, page, redirect.site, permissions.kindsOf('openExternal', [], url), (allowed) => {
         if (allowed) shell.openExternal(url).catch(() => {})
       })
