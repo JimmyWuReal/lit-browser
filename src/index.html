@@ -520,6 +520,58 @@
     .prompt-button.is-primary:hover { background: #fff; }
     .prompt .icon-button { width: 26px; height: 26px; flex: 0 0 auto; border-radius: 7px; }
 
+    /* A server or proxy asking for a username and password: a row in the
+       prompt's place. Its height matches SIGN_IN_HEIGHT in main.js, and
+       SIGN_IN_NOTE more with a note. */
+    .sign-in { display: none; height: 88px; padding: 0 12px 8px; }
+    .sign-in.is-open { display: block; }
+    .sign-in.has-note { height: 106px; }
+    .home .sign-in { display: none; }
+    .sign-in-box {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 9px;
+      padding: 0 8px 0 12px;
+      border-radius: 10px;
+      background: #141414;
+      box-shadow: inset 0 0 0 1px var(--line);
+      animation: prompt-in 240ms var(--settle);
+    }
+    .private .sign-in-box { background: #15111f; }
+    .sign-in-about { display: flex; align-items: flex-start; gap: 10px; }
+    .sign-in-about > svg { flex: 0 0 auto; margin-top: 1px; color: var(--dim); }
+    .sign-in-about > div { flex: 1; min-width: 0; }
+    .sign-in .prompt-text { flex-direction: row; justify-content: flex-start; font-size: 12.5px; line-height: 16px; }
+    .sign-in .prompt-text strong { align-self: auto; }
+    .sign-in .prompt-text span { margin-left: .3em; }
+    .sign-in-note { height: 16px; margin-top: 2px; overflow: hidden; color: #f0b866; font-size: 12px; line-height: 16px; letter-spacing: -.01em; white-space: nowrap; text-overflow: ellipsis; }
+    .sign-in-note:empty { display: none; }
+    .sign-in-fields { display: flex; align-items: center; gap: 8px; }
+    .sign-in-fields input {
+      flex: 1;
+      min-width: 0;
+      max-width: 260px;
+      height: 30px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 7px;
+      outline: 0;
+      color: #ededed;
+      background: transparent;
+      box-shadow: inset 0 0 0 1px var(--line);
+      font: inherit;
+      font-size: 13px;
+      letter-spacing: -.01em;
+      transition: box-shadow 200ms ease;
+    }
+    .sign-in-fields input::placeholder { color: var(--dim); }
+    .sign-in-fields input:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .sign-in-fields input:focus { box-shadow: inset 0 0 0 1px var(--line-live); }
+    .sign-in-fields .prompt-button { height: 30px; }
+    .sign-in-fields .prompt-button:first-of-type { margin-left: auto; }
+
     /* The page shown in place of one that failed or crashed, as the kit's
        empty state: the rest of the window, under the rows above. */
     .error { display: none; }
@@ -710,6 +762,28 @@
       </button>
     </div>
   </div>
+
+  <!-- What is typed is sent to main once and never kept. -->
+  <form class="sign-in" id="sign-in" role="region" aria-label="Sign in" autocomplete="off">
+    <div class="sign-in-box">
+      <div class="sign-in-about">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"></path><path d="m21 2-9.6 9.6"></path><circle cx="7.5" cy="15.5" r="5.5"></circle>
+        </svg>
+        <div aria-live="polite">
+          <div class="prompt-text" id="sign-in-text"></div>
+          <div class="sign-in-note" id="sign-in-note"></div>
+        </div>
+      </div>
+      <div class="sign-in-fields">
+        <input id="sign-in-username" type="text" placeholder="Username" aria-label="Username" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <input id="sign-in-password" type="password" placeholder="Password" aria-label="Password" autocomplete="off">
+        <button class="prompt-button" id="sign-in-cancel" type="button">Cancel</button>
+        <button class="prompt-button is-primary" id="sign-in-submit" type="submit">Sign in</button>
+      </div>
+    </div>
+  </form>
 
   <!-- The active tab's error page (see errors.js). -->
   <main class="error" id="error" tabindex="-1" aria-labelledby="error-title" aria-describedby="error-detail">
@@ -914,6 +988,7 @@
       drawStar()
       drawFind(tab?.find, switched)
       drawPrompt(tab)
+      drawSignIn(tab)
       drawError(tab)
     }
 
@@ -930,7 +1005,8 @@
 
     function drawStar() {
       const url = currentUrl()
-      const can = /^(https?|file):/i.test(url)
+      // A page asking to sign in is not there yet.
+      const can = /^(https?|file):/i.test(url) && !activeTab().signIn?.main
       const on = can && bookmarks.items.some((item) => item.url === url || item.items?.some((each) => each.url === url))
       addressForm.classList.toggle('has-star', can)
       star.tabIndex = can ? 0 : -1
@@ -1138,6 +1214,83 @@
     document.getElementById('prompt-allow').addEventListener('click', answerPrompt('allow'))
     document.getElementById('prompt-block').addEventListener('click', answerPrompt('block'))
     document.getElementById('prompt-dismiss').addEventListener('click', answerPrompt(null))
+
+    // The active tab's sign-in prompt. Another prompt empties the fields and
+    // takes focus off them, so nothing typed for one is sent to the next.
+    // Answered as the permission prompt is: for the one the click began on.
+    const signInForm = document.getElementById('sign-in')
+    const signInText = document.getElementById('sign-in-text')
+    const signInNote = document.getElementById('sign-in-note')
+    const username = document.getElementById('sign-in-username')
+    const password = document.getElementById('sign-in-password')
+    let shownSignIn = null
+    let signInTab = null
+    let focusSignIn = null
+    function drawSignIn(tab) {
+      const prompt = tab?.started ? tab.signIn : null
+      if (prompt && (signInForm.title !== `${prompt.name} ${prompt.asks}` || signInNote.textContent !== prompt.note)) {
+        const site = document.createElement('strong')
+        const name = document.createElement('bdi')
+        name.dir = 'ltr'
+        name.textContent = prompt.name
+        site.append(name)
+        const asks = document.createElement('span')
+        asks.textContent = prompt.asks
+        signInText.replaceChildren(site, ' ', asks)
+        signInNote.textContent = prompt.note
+        signInForm.title = `${prompt.name} ${prompt.asks}`
+        signInForm.setAttribute('aria-label', `Sign in to ${prompt.name}`)
+      }
+      const id = prompt?.id ?? null
+      if (id !== shownSignIn) {
+        const focused = signInForm.contains(document.activeElement)
+        const sameTab = tab?.id === signInTab
+        shownSignIn = id
+        signInTab = prompt ? tab.id : null
+        username.value = ''
+        password.value = ''
+        if (focused) document.activeElement.blur()
+        signInForm.classList.toggle('is-open', Boolean(prompt))
+        signInForm.classList.toggle('has-note', Boolean(prompt?.note))
+        // The page comes back, unless it was another tab's.
+        if (!prompt && focused && sameTab && document.hasFocus()) window.lit.focusPage(tab.id)
+        if (prompt) {
+          const box = signInForm.firstElementChild
+          box.style.animation = 'none'
+          box.getBoundingClientRect()
+          box.style.animation = ''
+        }
+      }
+      if (prompt && focusSignIn === id) username.focus()
+      focusSignIn = null
+    }
+    window.lit.onFocusSignIn((id) => {
+      if (id === shownSignIn) username.focus()
+      else focusSignIn = id
+    })
+    let signInPressed = null
+    signInForm.addEventListener('pointerdown', () => { signInPressed = shownSignIn })
+    const answerSignIn = (credentials) => (event) => {
+      event.preventDefault()
+      const started = event.detail === 0 ? shownSignIn : signInPressed
+      signInPressed = null
+      if (shownSignIn === null || started !== shownSignIn) return
+      // Enter in the username goes on to the password. Two empty fields are
+      // sent only from the button itself, not by an Enter meant for something
+      // else as the prompt appeared.
+      const byEnter = event.detail === 0 && document.activeElement !== event.currentTarget
+      if (credentials && byEnter && !password.value && document.activeElement === username) return password.focus()
+      if (credentials && byEnter && !username.value && !password.value) return
+      window.lit.answerSignIn(signInTab, shownSignIn, credentials ? { username: username.value, password: password.value } : null)
+    }
+    // Enter in a field clicks the button too.
+    document.getElementById('sign-in-submit').addEventListener('click', answerSignIn(true))
+    document.getElementById('sign-in-cancel').addEventListener('click', answerSignIn(false))
+    signInForm.addEventListener('submit', (event) => event.preventDefault())
+    signInForm.addEventListener('keydown', (event) => {
+      if (event.isComposing || event.keyCode === 229) return
+      if (event.key === 'Escape' && !event.repeat) { event.preventDefault(); answerSignIn(false)(new CustomEvent('cancel', { detail: 0 })) }
+    })
 
     // The active tab's error page, in place of a page that failed. Main
     // gives it focus before it is drawn, so that waits for it; a page that
