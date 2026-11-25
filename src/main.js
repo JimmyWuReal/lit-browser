@@ -1759,26 +1759,36 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     windows: share.sources && share.sources.windows,
     screens: share.sources && share.sources.screens,
   }
-  // Shares what was picked; what has since gone is refused. A tab is picked as
-  // the page the picker showed (`page`): one that moved on meanwhile isn't it.
+  // Shares what was picked. A tab is picked as the page the picker showed
+  // (`page`): one that moved on meanwhile isn't it. A window or screen is looked
+  // for again, as they may have gone while the picker was open; by id, since a
+  // window's title can change all the time. What has gone is taken off the
+  // picker, to choose again. A later choice replaces one still being looked for.
   // A frame that asked and has gone can't be given anything; all Electron says
   // of it is its address, so any with that one that has gone refuses it.
-  function chooseShare(kind, id, audio, page) {
+  async function chooseShare(kind, id, audio, page) {
     if (!share) return
-    const { tab, site, callback, sources, audio: wantsAudio, frames } = share
-    const now = new Set(ownFrames(tab.page).map((frame) => frame.frameToken))
-    if (!frames.every((token) => now.has(token))) return closePopup()
+    const asked = share
+    const { tab, site, callback, audio: wantsAudio, frames } = asked
+    const choice = asked.choice = {}
     let streams = null
     if (kind === 'tabs') {
       const picked = shareTabs().find((each) => each.id === id)
       if (picked && !shareRows().some((row) => row.id === id && row.page === page)) return shareTabsChanged()
       const frame = picked?.page.mainFrame
       if (frame && !frame.isDestroyed()) streams = shareStore.tabStreams(frame, wantsAudio && audio === true)
-    } else {
-      const source = (kind === 'windows' || kind === 'screens') && sources?.[kind].find((each) => each.id === id)
+    } else if (kind === 'windows' || kind === 'screens') {
+      const now = await desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 0, height: 0 } }).catch(() => [])
+      if (share !== asked || asked.choice !== choice) return
+      const source = asked.sources?.[kind].find((each) => each.id === id)
+      if (source && !now.some((each) => each.id === id)) {
+        asked.sources = shareStore.stillThere(asked.sources, now)
+        return popups.share?.webContents.send('share-changed', shareState())
+      }
       if (source) streams = shareStore.sourceStreams(source)
     }
-    if (!streams) return closePopup()
+    const own = new Set(ownFrames(tab.page).map((frame) => frame.frameToken))
+    if (!streams || !frames.every((token) => own.has(token))) return closePopup()
     share = null
     closePopup()
     grantShare(tab.page, site, callback, streams)

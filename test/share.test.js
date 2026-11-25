@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { sourceRows, tabStreams, sourceStreams } = require('../src/share')
+const { sourceRows, stillThere, tabStreams, sourceStreams } = require('../src/share')
 
 const image = (url) => ({ isEmpty: () => !url, toDataURL: () => url })
 
@@ -20,6 +20,11 @@ test('sources are split into windows and screens, with their pictures', () => {
 
 test('windows without a title are left out', () => {
   assert.deepEqual(sourceRows([{ id: 'window:2:0', name: ' ', thumbnail: image('data:b') }]), { windows: [], screens: [] })
+})
+
+test('what has gone since it was listed is left out', () => {
+  const rows = { windows: [{ id: 'window:2:0' }, { id: 'window:3:0' }], screens: [{ id: 'screen:1:0' }] }
+  assert.deepEqual(stillThere(rows, [{ id: 'window:3:0' }, { id: 'screen:9:0' }]), { windows: [{ id: 'window:3:0' }], screens: [] })
 })
 
 test('a tab is shared with its sound only when asked, and still heard here', () => {

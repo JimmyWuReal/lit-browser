@@ -19,9 +19,16 @@ function sourceRows(sources) {
   return rows
 }
 
+// Those of `rows` that are among `sources`, listed again since.
+function stillThere(rows, sources) {
+  const ids = new Set(sources.map(({ id }) => id))
+  const there = ({ id }) => ids.has(id)
+  return { windows: rows.windows.filter(there), screens: rows.screens.filter(there) }
+}
+
 // What Electron is told to capture. Only a tab has sound (Electron can't
 // capture the system's on macOS), which keeps playing here too.
 const tabStreams = (frame, audio) => (audio ? { video: frame, audio: frame, enableLocalEcho: true } : { video: frame })
 const sourceStreams = ({ id, name }) => ({ video: { id, name } })
 
-module.exports = { sourceRows, tabStreams, sourceStreams }
+module.exports = { sourceRows, stillThere, tabStreams, sourceStreams }
