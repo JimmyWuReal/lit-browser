@@ -1746,7 +1746,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (!submitted || !find(tab.id) || !profile.settings.savePasswords || isPrivate) return
     const offer = passwords.offerFor(profile.passwords, submitted, decrypt)
     if (!offer) return
-    tab.offer = { ...offer, id: nextPromptId++, site: submitted.site, password: submitted.password, at: Date.now() }
+    tab.offer = { id: nextPromptId++, site: submitted.site, action: offer.action, username: offer.username, login: offer.id, secret: offer.secret, submitted, at: Date.now() }
     sync()
   }
   // 'allow' saves it, 'block' never asks for the site again, null is not now.
@@ -1754,10 +1754,17 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const { offer } = tab
     tab.offer = null
     sync()
+    // Saved, changed or removed meanwhile (in another tab or Settings): what
+    // was asked no longer holds, so ask again if there is still reason to.
+    const now = passwords.offerFor(profile.passwords, offer.submitted, decrypt)
+    if (choice && (now?.action !== offer.action || now.id !== offer.login || now.secret !== offer.secret)) {
+      tab.submitted = offer.submitted
+      return offerLogin(tab)
+    }
     let saved = true
     if (choice === 'allow') {
-      const secret = encrypt(offer.password)
-      saved = secret !== null && setPasswords(profile, passwords.put(profile.passwords, { ...offer, secret }))
+      const secret = encrypt(offer.submitted.password)
+      saved = secret !== null && setPasswords(profile, passwords.put(profile.passwords, { site: offer.site, username: offer.username, secret }))
     } else if (choice === 'block' && offer.action === 'save') saved = setPasswords(profile, passwords.neverFor(profile.passwords, offer.site))
     if (saved || win.isDestroyed()) return
     dialog.showMessageBox(win, {
@@ -1780,7 +1787,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // Whether the Escape being handled closed the list, so it only does that.
   let loginsClosed = false
 
-  function showLogins(tab, frame, site, { request, x, y, width, needsPassword }) {
+  function showLogins(tab, frame, site, { request, x, top: fieldTop, y, width, needsPassword }) {
     const items = profile.settings.fillPasswords ? passwords.forSite(profile.passwords, site).map(({ id, username }) => ({ id, username })) : []
     if (!items.length || tab.id !== activeId || tab.error || popupOpen || !win.isFocused()) return hideLogins()
     if (!loginsView) {
@@ -1799,7 +1806,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const bounds = win.getContentBounds()
     const listWidth = Math.min(Math.max(Math.round(width * tab.zoom), LOGINS_WIDTH), bounds.width)
     const height = LOGINS_HEADER + Math.min(items.length, LOGINS_ROWS) * SUGGESTION_ROW + SUGGESTIONS_PAD * 2
-    const top = Math.max(pageTop, Math.min(pageTop + Math.round(y * tab.zoom) + 4, bounds.height - 1))
+    // Above the field when only there it fits; else below, moved up to fit.
+    const below = pageTop + Math.round(y * tab.zoom) + 4
+    const above = pageTop + Math.round(fieldTop * tab.zoom) - 4 - height
+    const top = below + height > bounds.height && above >= pageTop ? above : Math.max(pageTop, Math.min(below, bounds.height - height))
     loginsView.setBounds({
       x: Math.max(0, Math.min(Math.round(x * tab.zoom), bounds.width - listWidth)),
       y: top,
@@ -2968,7 +2978,7 @@ ipcMain.on('login-submitted', fromPage('submitted', (value) => (passwords.isText
 ipcMain.on('login-name', fromPage('name', (value) => (passwords.isText(value?.username) ? { username: value.username } : null)))
 ipcMain.on('login-abandoned', fromPage('abandoned', () => true))
 ipcMain.on('login-done', fromPage('done', () => true))
-ipcMain.on('login-field', fromPage('field', (value) => (value && ['request', 'x', 'y', 'width'].every((key) => Number.isFinite(value[key])) ? value : null)))
+ipcMain.on('login-field', fromPage('field', (value) => (value && ['request', 'x', 'top', 'y', 'width'].every((key) => Number.isFinite(value[key])) ? value : null)))
 ipcMain.on('login-field-left', fromPage('left', () => true))
 ipcMain.on('logins-pick', fromPopup('logins', (c, id, generation) => c.pickLogin(id, generation)))
 ipcMain.handle('default-browser-make', fromSettings((c) => settingsState(c.profile, makeDefaultBrowser())))

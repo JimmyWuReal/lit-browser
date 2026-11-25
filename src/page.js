@@ -27,6 +27,9 @@ function passwordOf(fields) {
 // Whether a form changes or makes a password rather than signing in.
 const isChange = (fields) => fields.filter((field) => field.value).length > 1 || fields.some(isNew)
 
+// Whether a button's words say it does something other than sign in.
+const leaves = (text) => /\b(cancel|close|dismiss|back|forgot|reset|clear|show|hide|generate|not now|later)\b|取消|關閉|关闭|返回/i.test(text)
+
 // The username field among a form's fields, in order: the one marked so, else
 // the last name-like one before the password. `visible` says which can be seen;
 // a hidden one counts only when marked (a second step repeats the name there).
@@ -46,6 +49,12 @@ function start({ ipcRenderer }) {
   const fieldsWith = (element) => [...(element.form?.elements ?? element.getRootNode().querySelectorAll('input'))].filter((each) => each instanceof HTMLInputElement)
   const passwords = (fields) => fields.filter((field) => field.type === 'password' && visible(field))
 
+  // The name field of a form without a password: the first step of two.
+  function nameAlone(fields) {
+    const emails = fields.filter((field) => field.type === 'email' && visible(field))
+    return nameOf(fields, null, visible) || (emails.length === 1 ? emails[0] : null)
+  }
+
   // Someone signed in with these fields, as far as can be told. Main asks to
   // save it once the sign-in seems to have worked: another page comes, or, in
   // a page that stays, its password field goes away for good.
@@ -55,9 +64,8 @@ function start({ ipcRenderer }) {
   function submitted(fields, later = false) {
     const password = passwordOf(passwords(fields))
     if (!password) {
-      // The first step of two, whose name the second may not repeat.
-      const emails = fields.filter((field) => field.type === 'email' && visible(field))
-      const name = nameOf(fields, null, visible) || (emails.length === 1 ? emails[0] : null)
+      // The second step may not repeat it.
+      const name = nameAlone(fields)
       if (name?.value) ipcRenderer.send('login-name', { username: name.value.trim() })
       return
     }
@@ -72,7 +80,8 @@ function start({ ipcRenderer }) {
     let gone = 0
     let left = 60
     watch = setInterval(() => {
-      gone = visible(password) ? 0 : gone + 1
+      // Another password field in its place is the form, drawn again.
+      gone = visible(password) || passwords([...document.querySelectorAll('input')]).length ? 0 : gone + 1
       if (gone < 3 && --left > 0) return
       clearInterval(watch)
       if (gone >= 3) ipcRenderer.send('login-done')
@@ -102,7 +111,8 @@ function start({ ipcRenderer }) {
     if (!event.isTrusted) return
     if (event.composedPath().some((each) => each instanceof Element && each.matches('a[href]'))) return abandon()
     const button = event.composedPath().find((each) => each instanceof Element && each.matches('button, input[type=submit], input[type=button], [role=button]'))
-    if (!button || button.type === 'reset') return
+    if (!button || button.type === 'reset' || button.formMethod === 'dialog' || button.form?.method === 'dialog') return
+    if (leaves([button.textContent, button.value, button.getAttribute('aria-label'), button.title].join(' '))) return
     const form = button.closest('form')
     if (button.type === 'submit') {
       if (allowed(button)) submitted(fieldsWith(button))
@@ -117,9 +127,9 @@ function start({ ipcRenderer }) {
     const password = target.type === 'password' ? target : passwords(fields).find((field) => !isNew(field)) || null
     // A form that only makes a new password is for signing up.
     if (!password && fields.some((field) => field.type === 'password' && isNew(field))) return null
-    const name = nameOf(fields, password, visible)
+    const name = password ? nameOf(fields, password, visible) : nameAlone(fields)
     const usable = name && isField(name) && visible(name) ? name : null
-    if (target === password || (target === usable && (password || isName(target)))) return { name: usable, password }
+    if (target === password || target === usable) return { name: usable, password }
     return null
   }
 
@@ -134,8 +144,8 @@ function start({ ipcRenderer }) {
     if (!login) return dismiss()
     asked = login
     anchor = target
-    const { left, bottom, width } = target.getBoundingClientRect()
-    ipcRenderer.send('login-field', { request: ++request, x: left, y: bottom, width, needsPassword: Boolean(login.password) })
+    const { left, top, bottom, width } = target.getBoundingClientRect()
+    ipcRenderer.send('login-field', { request: ++request, x: left, top, y: bottom, width, needsPassword: Boolean(login.password) })
   }
   function dismiss() {
     if (!anchor) return
@@ -173,4 +183,4 @@ function start({ ipcRenderer }) {
 
 if (typeof window !== 'undefined') {
   if (/^https?:$/.test(location.protocol)) start(require('electron'))
-} else module.exports = { passwordOf, isChange, nameOf }
+} else module.exports = { passwordOf, isChange, leaves, nameOf }
