@@ -1436,12 +1436,14 @@
     const strip = document.getElementById('strip')
     let draggedTab = null
     // The tab it would land before at `x`, null for last, or undefined if it
-    // would stay where it is.
+    // would stay where it is. By where the tabs are laid out, as some may
+    // still be gliding there.
     function tabDropAt(x) {
       const ids = state.tabs.map((tab) => tab.id)
+      const along = x - tabList.getBoundingClientRect().left + tabList.scrollLeft
       const at = ids.findIndex((id) => {
-        const box = tabElements.get(id).root.getBoundingClientRect()
-        return x < box.left + box.width / 2
+        const { offsetLeft, offsetWidth } = tabElements.get(id).root
+        return along < offsetLeft + offsetWidth / 2
       })
       const to = at === -1 ? ids.length : at
       const from = ids.indexOf(draggedTab)
