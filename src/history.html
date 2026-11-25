@@ -191,9 +191,11 @@
       transition: color 200ms ease;
     }
     .page small {
-      /* A long title leaves the site enough room to be read. */
-      flex: 1 0 auto;
-      max-width: 40%;
+      /* The room the title leaves, and 40% of the row if it would leave
+         less, so far as the site needs it. */
+      flex: 1 0 40%;
+      min-width: 0;
+      max-width: max-content;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;

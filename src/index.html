@@ -808,9 +808,14 @@
         event.dataTransfer.setData('application/x-lit-tab', String(id))
         root.classList.add('is-dragged')
       })
-      // The press took focus from the page (or the search box), so it goes
-      // back, as after a click on a tab.
-      root.addEventListener('dragend', () => { endTabDrag(); window.lit.activateTab(state.activeId) })
+      // The press of a drag takes focus, so it goes back to the toolbar's
+      // control that had it, or else the page (or its search box).
+      root.addEventListener('pointerdown', () => { pressedFrom = document.hasFocus() && performance.now() - focusedAt > 100 ? document.activeElement : null })
+      root.addEventListener('dragend', () => {
+        endTabDrag()
+        if (pressedFrom?.isConnected && pressedFrom !== document.body) pressedFrom.focus({ preventScroll: true })
+        else window.lit.activateTab(state.activeId)
+      })
       labelShortcut(close)
       const elements = { root, select, close, icon: root.querySelector('.tab-icon'), title: root.querySelector('.tab-title'), iconKey: null }
       tabElements.set(id, elements)
@@ -1229,6 +1234,11 @@
         root.classList.toggle('drop-after', before === null && id === last)
       }
     }
+    // What had focus in the toolbar as a tab was pressed, or null if the page
+    // did. Pressing the toolbar then focuses its window just before.
+    let pressedFrom = null
+    let focusedAt = -Infinity
+    window.addEventListener('focus', () => { focusedAt = performance.now() })
     function endTabDrag() {
       tabElements.get(draggedTab)?.root.classList.remove('is-dragged')
       draggedTab = null
