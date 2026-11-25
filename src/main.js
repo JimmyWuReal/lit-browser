@@ -906,7 +906,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [] }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), opened: Boolean(webContents), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [] }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -1815,7 +1815,18 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
         case 'back': tab.page.navigationHistory.goBack(); break
         case 'forward': tab.page.navigationHistory.goForward(); break
         case 'reload': tab.page.reload(); break
-        case 'stop': tab.page.stop()
+        case 'stop':
+          tab.page.stop()
+          // Its first page never came, so there is nothing to show or reload:
+          // back to the search box. Except a tab a page opened, which its
+          // opener may have written into.
+          if (!tab.url && !tab.opened) {
+            tab.started = false
+            tab.loading = false
+            delete tab.pendingUrl
+            show(tab, focus)
+            return sync()
+          }
       }
       if (focus) tab.page.focus()
     },

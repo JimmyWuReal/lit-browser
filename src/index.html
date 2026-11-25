@@ -91,15 +91,8 @@
     }
     .tab:not(.is-active):hover .tab-select { color: #e6e6e6; background: rgba(255, 255, 255, .05); }
     .tab.is-active .tab-select { color: #ededed; }
-    /* A long title fades out at the tab's end, or at its close button while
-       that shows. */
-    .tab-title {
-      flex: 1;
-      min-width: 0;
-      overflow: hidden;
-      white-space: nowrap;
-      mask-image: linear-gradient(to left, transparent, #000 18px);
-    }
+    .tab-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    /* The title makes room for the close button only while that shows. */
     .tab.is-active .tab-select,
     .tab:hover .tab-select,
     .tab:has(.tab-close:focus-visible) .tab-select { padding-right: 28px; }
@@ -905,6 +898,12 @@
       const loading = activeTab()?.loading
       // A double click's second click would stop the reload it started.
       if (loading && event.detail > 1) return
+      // What was sent isn't coming, so the field goes back to the page it is
+      // on; on none yet, main goes back to the search box, keeping it.
+      if (loading && !editing && currentUrl()) {
+        address.value = currentUrl()
+        drawAddress()
+      }
       window.lit.navigatePage(state.activeId, loading ? 'stop' : 'reload', event.detail > 0)
     })
 
