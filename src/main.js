@@ -56,6 +56,8 @@ const windowsByPopup = new WeakMap()
 const openWindows = new Set()
 let nextTabId = 1
 let nextPromptId = 1
+// Names each page a tab loads, so the sharing picker can tell one from the next.
+let nextPageId = 1
 // Names a window for Reopen Closed Tab; a reopened window keeps its key,
 // so tabs closed from it earlier still find their way back to it.
 let nextWindowKey = 1
@@ -333,11 +335,15 @@ const ownFrames = (contents) => contents.mainFrame.framesInSubtree.filter((frame
 
 // What grantShare is granting, for onDisplayMedia, which Electron calls from
 // within `callback(true)`.
-// getUserMedia with chromeMediaSource makes the same request, but then captures
-// whatever the page names, without onDisplayMedia. Electron tells the two apart
-// to no one before it is granted, so a page that does that is killed here, at
-// once (SIGKILL, unlike forcefullyCrashRenderer, which first writes a crash
-// report): the capture is only starting, and has no page left to reach.
+// getUserMedia with chromeMediaSource makes the very same request, but then
+// captures whatever the page names, without onDisplayMedia. It can't be refused
+// beforehand: Electron's handler gets identical details for both, and only
+// picks the way after the answer (MediaAccessAllowed in its
+// web_contents_permission_helper.cc, as of 45). So a page that does that is
+// killed here, before this event ends: the capture is only starting, and no
+// frame can reach a process that is gone. SIGKILL, as forcefullyCrashRenderer
+// first writes a crash report. Site isolation keeps a process to one site, so
+// at most that same site's other tabs go with it.
 let granting = null
 function grantShare(contents, callback, streams) {
   const processes = new Set(ownFrames(contents).map((frame) => frame.osProcessId))
@@ -1132,6 +1138,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       const history = page.navigationHistory
       tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
       tab.favicon = null
+      tab.pageId = nextPageId++
       tab.find = findState.reset(tab.find)
       // A new page has not asked for anything yet; the old page's requests go.
       dropPrompts(tab)
@@ -1599,7 +1606,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // never across profiles, or in and out of private windows), but for the one
   // asking, which would show itself.
   const shareTabs = () => [...openWindows].filter((c) => c.session === ses).flatMap((c) => c.shareableTabs()).filter((tab) => tab !== share?.tab)
-  const shareRows = () => shareTabs().map(({ id, title, url, favicon }) => ({ id, url, name: title || url, icon: favicon }))
+  const shareRows = () => shareTabs().map(({ id, pageId, title, url, favicon }) => ({ id, page: `${pageId} ${url}`, name: title || url, icon: favicon }))
   // A tab changed somewhere, which the picker follows.
   function shareTabsChanged() {
     if (!share) return
@@ -1617,10 +1624,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     screens: share.sources && share.sources.screens,
   }
   // Shares what was picked; what has since gone is refused. A tab is picked as
-  // the page the picker showed (`url`): one that moved on meanwhile isn't it.
+  // the page the picker showed (`page`): one that moved on meanwhile isn't it.
   // A frame that asked and has gone can't be given anything, so once one of
   // the page's own has, it is refused too.
-  function chooseShare(kind, id, audio, url) {
+  function chooseShare(kind, id, audio, page) {
     if (!share) return
     const { tab, callback, sources, audio: wantsAudio, frames } = share
     const now = new Set(ownFrames(tab.page).map((frame) => frame.frameToken))
@@ -1628,7 +1635,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     let streams = null
     if (kind === 'tabs') {
       const picked = shareTabs().find((each) => each.id === id)
-      if (picked && picked.url !== url) return shareTabsChanged()
+      if (picked && !shareRows().some((row) => row.id === id && row.page === page)) return shareTabsChanged()
       const frame = picked?.page.mainFrame
       if (frame && !frame.isDestroyed()) streams = shareStore.tabStreams(frame, wantsAudio && audio === true)
     } else {
@@ -2246,6 +2253,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       sendShortcuts()
       sendQuickSearch()
       sendBookmarks()
+      // Sharing turned off refuses what is being asked.
+      if (share && !profile.settings.screenSharing) closePopup()
       popups.settings?.webContents.send('settings-changed', settingsState(profile))
       controls.historyChanged()
     },
@@ -2669,7 +2678,7 @@ ipcMain.on('downloads-clear', fromDownloads((c) => {
 ipcMain.on('downloads-close', fromDownloads((c) => c.closePopup()))
 
 ipcMain.handle('share-get', fromPopup('share', (c) => c.shareState()))
-ipcMain.on('share-choose', fromPopup('share', (c, kind, id, audio, url) => c.chooseShare(kind, id, audio, url)))
+ipcMain.on('share-choose', fromPopup('share', (c, kind, id, audio, page) => c.chooseShare(kind, id, audio, page)))
 ipcMain.on('share-allow', fromPopup('share', openScreenPermission))
 ipcMain.on('share-close', fromPopup('share', (c) => c.closePopup()))
 

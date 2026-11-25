@@ -281,7 +281,7 @@
     }
 
     function submit() {
-      if (chosen !== null) share.choose(kind, chosen.id, !$('audio-row').hidden && $('audio').checked, chosen.url)
+      if (chosen !== null) share.choose(kind, chosen.id, !$('audio-row').hidden && $('audio').checked, chosen.page)
     }
 
     for (const input of kinds) input.addEventListener('change', () => show(input.value))
@@ -309,7 +309,7 @@
       // It is the list already there, so it doesn't enter again.
       if (listed) document.querySelector('.options')?.style.setProperty('animation', 'none')
       $('choices').scrollTop = scroll
-      const index = before ? (state[kind] || []).findIndex((row) => row.id === before.id && row.url === before.url) : -1
+      const index = before ? (state[kind] || []).findIndex((row) => row.id === before.id && row.page === before.page) : -1
       chosen = index < 0 ? null : state[kind][index]
       const input = document.querySelectorAll('[name="option"]')[index]
       if (input) input.checked = true
