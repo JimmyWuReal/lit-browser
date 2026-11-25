@@ -38,7 +38,7 @@ function infoOf(kind) {
 const kindsIn = (saved) => [...Object.keys(KINDS).filter((kind) => Object.hasOwn(saved, kind)), ...Object.keys(saved).filter(isApp).sort()]
 
 // Schemes Chromium handles itself; a link to any other opens another app.
-const OWN_SCHEMES = ['http:', 'https:', 'file:', 'about:', 'data:', 'blob:', 'javascript:', 'chrome:', 'devtools:', 'view-source:']
+const OWN_SCHEMES = ['http:', 'https:', 'file:', 'about:', 'data:', 'blob:', 'filesystem:', 'javascript:', 'chrome:', 'chrome-extension:', 'devtools:', 'view-source:']
 function opensApp(url) {
   try {
     return !OWN_SCHEMES.includes(new URL(url).protocol)

@@ -40,7 +40,7 @@ test('opening another app is a kind per scheme', () => {
 
 test('opensApp leaves out the schemes Chromium handles itself', () => {
   for (const url of ['mailto:a@b.com', 'zoommtg://join', 'ssh://host']) assert.equal(opensApp(url), true)
-  for (const url of ['https://a.com', 'HTTP://a.com', 'about:blank', 'blob:https://a.com/1', 'data:,hi', '', 'not a url']) assert.equal(opensApp(url), false)
+  for (const url of ['https://a.com', 'HTTP://a.com', 'about:blank', 'blob:https://a.com/1', 'filesystem:https://a.com/temporary/x', 'data:,hi', '', 'not a url']) assert.equal(opensApp(url), false)
 })
 
 test('escapeAppURL escapes as Electron does, and keeps existing escapes', () => {
