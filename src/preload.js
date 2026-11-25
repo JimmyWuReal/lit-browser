@@ -11,11 +11,20 @@ contextBridge.exposeInMainWorld('lit', {
   // `focus: false` keeps keyboard focus in the toolbar.
   closeTab: (id, focus = true) => ipcRenderer.send('close-tab', id, focus),
   activateTab: (id, focus = true) => ipcRenderer.send('activate-tab', id, focus),
-  // { activeId, tabs: [{ id, title, url, favicon, loading, started, find, zoom, prompt }] },
+  // { activeId, tabs: [{ id, title, url, favicon, loading, started, find, zoom, prompt, error }] },
   // `zoom` being '125%', or '' at the default zoom, and `prompt` the tab's
-  // permission request, { id, site, kinds, does }, or undefined.
+  // permission request, { id, site, kinds, does }, or undefined. `error` is
+  // what to show instead of a page that failed, { title, detail, code,
+  // action, canGoBack }, or null.
   onTabs: (callback) => on('tabs', callback),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
+  // The error page's buttons, for the tab it is on.
+  reload: (tabId) => ipcRenderer.send('reload', tabId),
+  goBack: (tabId) => ipcRenderer.send('go-back', tabId),
+  // Main shows an error page and gives it focus; focusPage hands it to the
+  // page once there is one again.
+  onFocusError: (callback) => ipcRenderer.on('focus-error', () => callback()),
+  focusPage: (tabId) => ipcRenderer.send('focus-page', tabId),
   openSettings: () => ipcRenderer.send('open-settings'),
   // The profile button: { name, color, shown }, not shown while there is only
   // one profile. Its menu opens at { x, y }, in the window.

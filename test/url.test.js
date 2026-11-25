@@ -17,6 +17,11 @@ test('searches everything else', () => {
   assert.equal(toUrl('lit browser'), 'https://www.google.com/search?q=lit%20browser')
 })
 
+test('searches what only looks like an address', () => {
+  assert.equal(toUrl('http://'), 'https://www.google.com/search?q=http%3A%2F%2F')
+  assert.equal(toUrl('example.com:99999'), 'https://www.google.com/search?q=example.com%3A99999')
+})
+
 test('searches with the chosen engine, falling back to Google', () => {
   assert.equal(toUrl('lit browser', 'duckduckgo'), 'https://duckduckgo.com/?q=lit%20browser')
   assert.equal(toUrl('lit browser', 'bing'), 'https://www.bing.com/search?q=lit%20browser')
