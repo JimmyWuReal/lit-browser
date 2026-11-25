@@ -8,7 +8,7 @@
 // A private window (⇧⌘N) browses in an in-memory session of its own and
 // keeps nothing once it closes (see privateSession), except the bookmarks
 // someone adds in it. Every window belongs to one profile (see openProfile).
-const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, screen, session, shell, webContents: allContents } = require('electron')
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, screen, session, shell } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { toUrl, searchUrl, engineOf } = require('./url')
@@ -274,26 +274,15 @@ function siteFor(contents, asking, embedding) {
   return embedding && permissions.originOf(embedding) !== site ? null : site
 }
 
-// Pages being redirected to another app: WebContents id -> { to, site },
-// `site` being the one that redirected. Electron's request names the page
-// the link was on instead, which would let a site allowed to open an app
-// vouch for every address it links to. Filled from the network request
-// itself, so navigations that overlap are never mixed up.
-const appRedirects = new Map()
-function noteAppRedirect({ webContentsId, url, redirectURL }) {
-  if (permissions.opensApp(redirectURL)) appRedirects.set(webContentsId, { to: redirectURL, site: permissions.originOf(url) })
-}
-
-// The redirect, if any, that a request to open `url` came from, and the page
-// redirected: the one asking, or a new tab it opened.
-function takeAppRedirect(asking, url) {
-  for (const [id, { to, site }] of appRedirects) {
-    const contents = allContents.fromId(id)
-    if (!url || to !== url || contents?.session !== asking.session) continue
-    appRedirects.delete(id)
-    return { site, contents }
-  }
-  return null
+// Pages being redirected to another app, as permissions.noteRedirect keeps
+// them, until they stop loading. Filled from the network request itself, so
+// the site that redirected is never mixed up with the page the link was on.
+let appRedirects = []
+// Pages other pages opened -> the page that did.
+const openers = new WeakMap()
+function noteAppRedirect({ webContents: page, url, redirectURL }) {
+  if (!page || !permissions.opensApp(redirectURL)) return
+  appRedirects = permissions.noteRedirect(appRedirects, { page, opener: openers.get(page), to: redirectURL, site: permissions.originOf(url) })
 }
 
 // Requests for a kind Lit asks about are answered from the saved choices,
@@ -308,8 +297,10 @@ function takeAppRedirect(asking, url) {
 function onPermissionRequest(store, contents, permission, callback, details) {
   const kinds = permissions.kindsOf(permission, details.mediaTypes, details.externalURL)
   if (!kinds) return callback(true)
-  const redirect = takeAppRedirect(contents, details.externalURL)
-  if (redirect) contents = redirect.contents
+  // A redirect to another app is asked on the page redirected, which can be
+  // a new tab, rather than the one Electron names.
+  const redirect = details.externalURL ? permissions.redirectFor(appRedirects, contents, details.externalURL) : null
+  if (redirect) contents = redirect.page
   const site = redirect ? redirect.site : siteFor(contents, details.securityOrigin ?? details.requestingUrl)
   if (!site || !kinds.length) return callback(false)
   if (!details.isMainFrame && !details.securityOrigin) return callback(false)
@@ -951,12 +942,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // it is known who redirected (appRedirects), so it is never taken for a
     // link on the page. A frame's is refused, as its other requests are.
     page.on('will-redirect', (event) => {
-      if (permissions.opensApp(event.url) && (!event.isMainFrame || appRedirects.get(page.id)?.to !== event.url)) event.preventDefault()
+      if (permissions.opensApp(event.url) && (!event.isMainFrame || !appRedirects.some((each) => each.page === page && each.to === event.url))) event.preventDefault()
     })
-    page.on('did-stop-loading', () => appRedirects.delete(page.id))
-    // Taken now: a destroyed page has no id.
-    const pageId = page.id
-    page.on('destroyed', () => appRedirects.delete(pageId))
+    const forgetRedirects = () => { appRedirects = appRedirects.filter((each) => each.page !== page) }
+    page.on('did-stop-loading', forgetRedirects)
+    page.on('destroyed', forgetRedirects)
     // A click, key press, touch or scroll on the page since its last page
     // committed, for `committed`: a page moving on with none is redirecting.
     page.on('input-event', (_event, input) => {
@@ -1056,6 +1046,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       action: 'allow',
       outlivesOpener: true,
       createWindow: (options) => {
+        openers.set(options.webContents, page)
         const toApp = permissions.opensApp(url)
         const opened = addTab({
           webContents: options.webContents,
