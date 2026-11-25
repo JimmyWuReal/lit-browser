@@ -4,7 +4,10 @@
 // Downloads popups are each one more view, transparent and over
 // everything, shown only while open. Find in page lives in the toolbar; each tab keeps its own
 // search (src/find.js). A site asking for the camera, location and the like,
-// or to open another app, gets a prompt in the toolbar, below the address row (src/permissions.js).
+// or to open another app, gets a prompt in the toolbar, below the address
+// row (src/permissions.js).
+// The toolbar also draws the page shown in place of one that failed to load
+// or crashed (src/errors.js), while that tab's view is hidden.
 // A private window (⇧⌘N) browses in an in-memory session of its own and
 // keeps nothing once it closes (see privateSession), except the bookmarks
 // someone adds in it. Every window belongs to one profile (see openProfile).
@@ -22,6 +25,7 @@ const shortcuts = require('./shortcuts')
 const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
 const permissions = require('./permissions')
+const errors = require('./errors')
 const profileStore = require('./profiles')
 const findState = require('./find')
 const { pageMenu, tabMenu, bookmarkMenu } = require('./menus')
@@ -450,6 +454,11 @@ function takeBack(profile, visit) {
 // counts as redirecting rather than as a page someone read.
 const REDIRECT_AFTER = 5000
 
+// Chromium's code for a load that was stopped, not one that failed.
+const ERR_ABORTED = -3
+// The isolated world Lit asks a page in, apart from the page's own scripts.
+const CHECK_WORLD = 1001
+
 // A page's address without its #fragment, to tell a jump within a page
 // from a new page.
 const withoutHash = (url) => url.split('#')[0]
@@ -843,16 +852,21 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     win.setTitle(isPrivate ? `${named} (Private)` : named)
     win.webContents.send('tabs', {
       activeId,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts }) => ({
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, page, prompts, error }) => ({
         id, title, url, favicon, loading, started,
         // The tab's oldest unanswered permission request; the rest wait.
         prompt: prompts[0] && { id: prompts[0].id, site: permissions.label(prompts[0].site), kinds: asking(prompts[0]), does: permissions.describe(asking(prompts[0])) },
         // The address bar shows the zoom, to reset it, when it is not the
         // default or the site has its own (which can match a later default).
-        zoom: started && (!zoom.same(factor, profile.settings.defaultZoom) || ownZoom(page.isDestroyed() ? '' : page.getURL()))
+        zoom: started && !error && (!zoom.same(factor, profile.settings.defaultZoom) || ownZoom(page.isDestroyed() ? '' : page.getURL()))
           ? zoom.percent(factor)
           : '',
         find: find && { text: find.text, active: find.active, matches: find.matches },
+        error: error && {
+          ...errors.describe(error, url),
+          action: error.kind === 'crash' ? 'Reload' : 'Try again',
+          canGoBack: !page.isDestroyed() && page.navigationHistory.canGoBack(),
+        },
       })),
     })
     // A private window is no part of the saved session.
@@ -884,14 +898,50 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // A blank tab shows the toolbar's centered search box; a tab that has
-  // loaded something shows its page.
+  // loaded something shows its page, or the toolbar's error page if it failed.
   // `focus` is false when the toolbar keeps focus, as when arrow keys
   // move along the tabs.
   function show(tab, focus = true) {
-    for (const other of tabs) other.view.setVisible(other === tab && tab.started)
+    for (const other of tabs) other.view.setVisible(other === tab && tab.started && !tab.error)
     if (!focus || popupOpen) return
-    if (tab.started) tab.page.focus()
+    if (tab.error) {
+      win.webContents.focus()
+      win.webContents.send('focus-error')
+    } else if (tab.started) tab.page.focus()
     else focusAddress()
+  }
+
+  // A page failed: the toolbar shows why in its place (`error` as in
+  // src/errors.js), until another page commits. Its find and requests go,
+  // and it has no visit to take back or title.
+  // Focus follows the page, but is never taken from the toolbar, where
+  // someone may be typing, nor does it bring a window behind to the front.
+  function fail(tab, error) {
+    if (win.isDestroyed() || !find(tab.id)) return
+    settle(tab)
+    tab.visit = null
+    tab.error = error
+    tab.find = null
+    tab.restoring = false
+    tab.startedByPage = false
+    dropPrompts(tab)
+    if (tab.id === activeId) show(tab, win.isFocused() && !win.webContents.isFocused())
+    sync()
+  }
+
+  // Reload, for a page as it is or one that failed.
+  function reload(tab) {
+    if (!tab?.started || tab.page.isDestroyed()) return
+    if (tab.error) retry(tab)
+    else tab.page.reload()
+  }
+
+  // Loads the failed address again. Chromium reloads nothing when that would
+  // send a form again, so its address is opened without the form instead.
+  function retry(tab) {
+    const url = tab.url || tab.page.getURL() || tab.pendingUrl
+    if (tab.page.getURL() === url) tab.page.reload()
+    if (!tab.page.isLoading()) tab.page.loadURL(url).catch(() => {})
   }
 
   function activate(id, focus = true) {
@@ -921,7 +971,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [] }
+    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, prompts: [], error: null }
     tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
@@ -930,7 +980,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     layout()
 
     page.on('did-start-loading', () => { tab.loading = true; tab.started = true; refresh(tab) })
-    page.on('did-stop-loading', () => { tab.loading = false; settle(tab); sync() })
+    page.on('did-stop-loading', () => { tab.loading = false; settle(tab); sync(); checkResponse(tab) })
     // The address being opened, before it commits: a tab duplicated or
     // closed before its first page commits gets it.
     // Whether the page started it (a link, a script) or Lit did (the
@@ -964,7 +1014,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     })
     // Each new page opens at its site's zoom. A new page has no title yet; a restored one keeps its entry's title,
     // as Chromium does not announce a title it already had.
-    page.on('did-navigate', (_event, url) => {
+    page.on('did-navigate', (_event, url, status) => {
       const history = page.navigationHistory
       tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
       tab.favicon = null
@@ -972,9 +1022,30 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       // A new page has not asked for anything yet; the old page's requests go.
       dropPrompts(tab)
       setZoom(tab, zoomOf(url))
+      // For checkResponse; a new object for each page.
+      tab.response = { status }
       committed(tab, url, false)
+      if (tab.error) {
+        tab.error = null
+        if (tab.id === activeId) show(tab, false)
+      }
       sync()
     })
+    // A page that couldn't load, whose address and place in the back/forward
+    // list are now the tab's. This event is only for those: a page that
+    // breaks off halfway, or a load stopped or turned into a download, keeps
+    // what the tab shows.
+    page.on('did-fail-provisional-load', (_event, code, name, url, isMainFrame) => {
+      if (!isMainFrame || code === ERR_ABORTED) return
+      tab.url = url
+      tab.title = ''
+      tab.favicon = null
+      tab.response = null
+      fail(tab, { kind: 'load', name })
+    })
+    // Within a page that failed (#section), it is still the failed one. Back
+    // from a page that couldn't load or crashed is never one of these, even
+    // to the same page: Chromium loads that again.
     page.on('did-navigate-in-page', (_event, url, isMainFrame) => {
       if (!isMainFrame) return
       committed(tab, url, true)
@@ -1017,8 +1088,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
         if (tab.id === activeId) findAgain(next.queued)
       }
     })
-    // A crashed page's requests went with it.
-    page.on('render-process-gone', () => dropPrompts(tab))
+    // A page's process can also end in good order, which is no crash, nor is
+    // the end of one that only holds a failed page's empty document.
+    page.on('render-process-gone', (_event, { reason, exitCode }) => {
+      if (reason !== 'clean-exit' && !tab.error) fail(tab, { kind: 'crash', reason, exitCode })
+    })
     // Every tab leaves through here: after closeTab's request, or when a
     // page closes itself (window.close() on a popup it opened).
     page.on('destroyed', () => removeTab(tab))
@@ -1082,6 +1156,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       // When neither commits, the next page is a visit again.
       const restored = () => { tab.restoring = false }
       page.navigationHistory.restore(history).catch(() => {
+        // Restored, though its page couldn't load; the error page says so.
+        if (tab.error) return
         if (retry && !page.isDestroyed()) page.loadURL(retry).catch(restored)
         else restored()
       })
@@ -1206,9 +1282,24 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     return { key, tabs: histories, activeIndex, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen(), profile: profile.id }
   }
 
+  // A site can answer with an HTTP error and an empty page, which would show
+  // as a blank one. The page is asked once it has loaded: what Chromium makes
+  // of no bytes (HTML, plain text, JSON and the like) has nothing in it to
+  // see, and anything else from the site is left alone. The site answered,
+  // so History has it like its other error pages.
+  async function checkResponse(tab) {
+    const { response } = tab
+    if (!(response?.status >= 400) || tab.error || tab.page.isDestroyed()) return
+    const empty = await tab.page.executeJavaScriptInIsolatedWorld(CHECK_WORLD, [{
+      code: `document.documentElement?.outerHTML === '<html><head></head><body></body></html>'`,
+    }]).catch(() => false)
+    // Another page may have come meanwhile.
+    if (empty === true && tab.response === response && !tab.error) fail(tab, { kind: 'http', status: response.status })
+  }
+
   // A tab's first load turns it from the search box into its page.
   function refresh(tab) {
-    if (tab.id === activeId && !tab.view.getVisible()) show(tab)
+    if (tab.id === activeId && !tab.error && !tab.view.getVisible()) show(tab)
     sync()
   }
 
@@ -1354,7 +1445,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // `forward`'s direction (⇧⌘G on a closed field searches backward).
   function openFind(forward = true) {
     const tab = active()
-    if (!tab?.started || tab.page.isDestroyed()) return
+    if (!tab?.started || tab.error || tab.page.isDestroyed()) return
     closePopup()
     if (!tab.find) {
       tab.find = findState.open(null, tab.lastFindText)
@@ -1501,7 +1592,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, keys }), (command) => {
       if (!find(id)) return
       switch (command) {
-        case 'reload': return tab.page.isDestroyed() ? undefined : tab.page.reload()
+        case 'reload': return reload(tab)
         case 'duplicate': return duplicateTab(id)
         case 'close': return closeTab(id)
         case 'closeOthers': return closeOtherTabs(id)
@@ -1848,11 +1939,17 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     focusAddress,
     step: (delta) => activate(step(ids(), activeId, delta)),
     byNumber: (number) => activate(byNumber(ids(), number)),
-    // The active page, for reload, back, forward and its developer tools.
+    // The active page, for back, forward and its developer tools.
     page: () => (active()?.started && !active().page.isDestroyed() ? active().page : null),
+    // Whether it failed, so there is nothing of it to print.
+    failed: () => Boolean(active()?.error),
+    reload: () => reload(active()),
+    // The page came back while its error page had focus.
+    focusPage: () => { const tab = active(); if (tab?.started && !tab.error && !popupOpen && !tab.page.isDestroyed()) tab.page.focus() },
     // Zoom acts on the active tab's page, once it has an address.
-    zoomBy: (direction) => { const tab = active(); if (tab?.started) zoomBy(tab, direction) },
-    resetZoom: () => { const tab = active(); if (tab?.started) resetZoom(tab) },
+    // No zoom while an error shows in its place.
+    zoomBy: (direction) => { const tab = active(); if (tab?.started && !tab.error) zoomBy(tab, direction) },
+    resetZoom: () => { const tab = active(); if (tab?.started && !tab.error) resetZoom(tab) },
     // Every tab's zoom again, or only those on `site`.
     applyZoom(site) {
       for (const tab of tabs) {
@@ -2101,7 +2198,7 @@ function buildMenu() {
         { label: 'Close Other Tabs', accelerator: key('closeOtherTabs'), click: inFocused((c) => { c.closePopup(); c.closeOtherTabs() }) },
         { label: 'Close Tabs to the Right', accelerator: key('closeTabsToRight'), click: inFocused((c) => { c.closePopup(); c.closeTabsToRight() }) },
         { type: 'separator' },
-        { label: 'Print…', accelerator: key('print'), click: inFocused((c) => { const page = c.page(); if (page) { c.closePopup(); print(page) } }) },
+        { label: 'Print…', accelerator: key('print'), click: inFocused((c) => { const page = c.page(); if (page && !c.failed()) { c.closePopup(); print(page) } }) },
       ],
     },
     {
@@ -2133,7 +2230,7 @@ function buildMenu() {
     {
       label: 'View',
       submenu: [
-        { label: 'Reload', accelerator: key('reload'), click: pageAction((page) => page.reload()) },
+        { label: 'Reload', accelerator: key('reload'), click: inFocused((c) => c.reload()) },
         { type: 'separator' },
         { label: 'Back', accelerator: key('back'), click: pageAction((page) => page.navigationHistory.goBack()) },
         { label: 'Forward', accelerator: key('forward'), click: pageAction((page) => page.navigationHistory.goForward()) },
@@ -2224,6 +2321,10 @@ ipcMain.on('bookmark-menu', fromBookmarks((c, id, at) => (id === null || isId(id
 ipcMain.on('bookmark-list', fromBookmarks((c, what, at) => {
   if (isPoint(at)) c.listBookmarks({ at: { x: at.x, y: at.y }, ...(Array.isArray(what) ? { ids: what } : { folderId: what }) })
 }))
+// The error page's, for the tab it was on.
+ipcMain.on('reload', fromToolbar((c, tabId) => c.isActive(tabId) && c.failed() && c.reload()))
+ipcMain.on('go-back', fromToolbar((c, tabId) => c.isActive(tabId) && c.failed() && c.page()?.navigationHistory.goBack()))
+ipcMain.on('focus-page', fromToolbar((c, tabId) => c.isActive(tabId) && c.focusPage()))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
 // A prompt's answer: 'allow', 'block', or null to dismiss it, for the
 // kinds the row showed.
