@@ -49,7 +49,7 @@
       overflow: auto hidden;
       scrollbar-width: none;
       scroll-padding-inline: 28px;
-      mask-image: linear-gradient(to right, transparent, #000 var(--fade-left, 0px), #000 calc(100% - var(--fade-right, 0px)), transparent);
+      mask-image: linear-gradient(to right, transparent, #000 var(--fade-start, 0px), #000 calc(100% - var(--fade-end, 0px)), transparent);
     }
 
     /* One thumb slides to the active tab instead of each tab fading its own fill. */
@@ -65,7 +65,7 @@
       pointer-events: none;
     }
     .tabs.is-ready .tab-thumb {
-      transition: transform 320ms var(--settle), width 320ms var(--settle);
+      transition: transform 320ms var(--settle), width 320ms var(--settle), height 320ms var(--settle);
     }
 
     .tab {
@@ -260,6 +260,43 @@
       .tab.is-active .tab-close { left: 50%; right: auto; transform: translateX(-50%); }
       .tab.is-active .tab-close:active { transform: translateX(-50%) scale(.94); }
     }
+
+    /* Vertical tabs: the tabs leave the strip for a sidebar down the
+       window's left, under it, and the rows under the strip move right of
+       it. Its width matches SIDEBAR_WIDTH in main.js. The strip keeps the
+       window buttons, New Tab and the buttons at its end. With the sidebar
+       hidden, no tabs show (.no-tabs). */
+    body { --side: 0px; }
+    body.vertical { --side: 220px; padding-left: var(--side); }
+    .vertical .strip { margin-left: calc(-1 * var(--side)); }
+    .no-tabs .tabs { display: none; }
+    .vertical .tabs {
+      position: fixed;
+      top: 38px;
+      bottom: 0;
+      left: 0;
+      width: var(--side);
+      flex-direction: column;
+      /* Level with the address field; framed, the page's card keeps its
+         own inset from the tabs, unframed they keep it themselves. */
+      padding: 2px calc(var(--edge) - 6px) var(--edge) var(--edge);
+      overflow: hidden auto;
+      scroll-padding-inline: 0;
+      scroll-padding-block: 28px;
+      mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-start, 0px), #000 calc(100% - var(--fade-end, 0px)), transparent);
+      -webkit-app-region: no-drag;
+    }
+    .vertical .tab-thumb {
+      bottom: auto;
+      height: var(--thumb-height, 0);
+      transform: translate(var(--thumb-x, 0), var(--thumb-y, 0));
+    }
+    .vertical .tab { width: auto; height: 32px; flex: 0 0 auto; min-width: 0; }
+    .vertical .tab-close, .vertical .tab-audio { top: 6px; }
+    /* Where a dragged tab would land: a line in the gap above or below. */
+    .vertical .tab::before, .vertical .tab::after { left: 6px; right: 6px; width: auto; height: 2px; }
+    .vertical .tab::before { top: -2px; bottom: auto; }
+    .vertical .tab::after { top: auto; bottom: -2px; }
 
     /* The address row. With the strip, it matches BAR_HEIGHT in main.js. */
     .bar {
@@ -486,7 +523,7 @@
        doesn't fit is listed by the button at its end. */
     .bookmarks { display: none; height: 34px; align-items: center; gap: 2px; padding: 0 var(--edge) 6px; }
     .bookmarks.is-open { display: flex; }
-    .home .bookmarks { position: absolute; top: 38px; left: 0; right: 0; z-index: 1; }
+    .home .bookmarks { position: absolute; top: 38px; left: var(--side); right: 0; z-index: 1; }
     .bookmark-list { position: relative; flex: 1; min-width: 0; height: 28px; display: flex; gap: 2px; overflow: hidden; }
     .bookmark {
       position: relative;
@@ -1055,9 +1092,18 @@
       // The same tabs in another order, so one was moved.
       const reordered = next.tabs.length === state.tabs.length && state.tabs.every(({ id }) => ids.has(id)) &&
         state.tabs.some(({ id }, index) => id !== next.tabs[index].id)
-      const lefts = reordered && new Map([...tabElements].map(([id, { root }]) => [id, tabLeft(root)]))
+      const places = reordered && new Map([...tabElements].map(([id, { root }]) => [id, tabPlace(root)]))
       const focused = tabList.contains(document.activeElement) ? document.activeElement : null
       state = next
+      // Across the top, in the sidebar, or hidden (the Tabs settings).
+      const tabsAt = next.tabsAt ?? 'top'
+      const relaid = tabsAt !== shownTabsAt
+      shownTabsAt = tabsAt
+      document.body.classList.toggle('vertical', tabsAt === 'side')
+      document.body.classList.toggle('no-tabs', tabsAt === 'none')
+      tabList.setAttribute('aria-orientation', tabsAt === 'side' ? 'vertical' : 'horizontal')
+      // Hiding the sidebar takes focus from a tab in it; the page gets it.
+      if (tabsAt === 'none' && focused) window.lit.focusActive()
 
       for (const [id, elements] of tabElements) {
         if (ids.has(id)) continue
@@ -1082,18 +1128,20 @@
         drawIcon(elements, tab)
         drawAudio(elements, tab, isActive)
       })
-      placeThumb()
+      // A new layout puts the thumb straight in place, rather than gliding
+      // it across from where the tabs were.
+      placeThumb({ animate: !relaid })
       fadeTabs()
-      if (reordered) {
+      if (reordered && !relaid) {
         for (const { glide } of tabElements.values()) glide?.cancel()
         // A tab put elsewhere in the page loses focus. The focused tab is the
         // one moved, by keys or a drag, so it stays in view.
         if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true })
         focused?.closest('.tab')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-        glideTabs(lefts)
+        glideTabs(places)
       }
       if (refocusTabs) { refocusTabs = false; tabElements.get(state.activeId)?.select.focus() }
-      if (switched) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      if (switched || relaid) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 
       const tab = activeTab()
       document.body.classList.toggle('home', !tab?.started)
@@ -1563,14 +1611,21 @@
     }
 
     // Moves the thumb under the active tab. Window resizes jump, so the
-    // thumb does not trail behind the tabs.
+    // thumb does not trail behind the tabs. Across the top it fills the
+    // strip's height and follows the tab's left and width; in the sidebar it
+    // also follows its top and height.
+    let shownTabsAt = 'top'
+    const vertical = () => shownTabsAt === 'side'
     function placeThumb({ animate = true } = {}) {
       const elements = tabElements.get(state.activeId)
       thumb.style.opacity = elements ? '1' : '0'
       if (!elements) return
       if (!animate) tabList.classList.remove('is-ready')
-      thumb.style.setProperty('--thumb-x', `${elements.root.offsetLeft}px`)
-      thumb.style.setProperty('--thumb-width', `${elements.root.offsetWidth}px`)
+      const { offsetLeft, offsetTop, offsetWidth, offsetHeight } = elements.root
+      thumb.style.setProperty('--thumb-x', `${offsetLeft}px`)
+      thumb.style.setProperty('--thumb-width', `${offsetWidth}px`)
+      thumb.style.setProperty('--thumb-y', `${offsetTop}px`)
+      thumb.style.setProperty('--thumb-height', `${offsetHeight}px`)
       // The thumb lands in place first, and only glides after that.
       if (!tabList.classList.contains('is-ready')) {
         thumb.getBoundingClientRect()
@@ -1579,23 +1634,26 @@
     }
     window.addEventListener('resize', () => placeThumb({ animate: false }))
 
-    // Fades the ends of the strip that have more tabs past them.
+    // Fades the ends of the strip (or the sidebar) that have more tabs past them.
     function fadeTabs() {
-      const past = tabList.scrollWidth - tabList.clientWidth - tabList.scrollLeft
-      tabList.style.setProperty('--fade-left', `${Math.min(28, Math.max(0, tabList.scrollLeft))}px`)
-      tabList.style.setProperty('--fade-right', `${Math.min(28, Math.max(0, past))}px`)
+      const scrolled = vertical() ? tabList.scrollTop : tabList.scrollLeft
+      const past = vertical() ? tabList.scrollHeight - tabList.clientHeight - scrolled : tabList.scrollWidth - tabList.clientWidth - scrolled
+      tabList.style.setProperty('--fade-start', `${Math.min(28, Math.max(0, scrolled))}px`)
+      tabList.style.setProperty('--fade-end', `${Math.min(28, Math.max(0, past))}px`)
     }
     tabList.addEventListener('scroll', fadeTabs)
     new ResizeObserver(fadeTabs).observe(tabList)
 
-    // Where a tab is along the strip's length, wherever its glide has got to.
-    const tabLeft = (root) => root.getBoundingClientRect().left + tabList.scrollLeft
-    // Tabs glide from where they were (`lefts`, by id), along with the thumb.
-    function glideTabs(lefts) {
+    // Where a tab is along the strip's (or sidebar's) length, wherever its
+    // glide has got to.
+    const tabPlace = (root) => (vertical() ? root.getBoundingClientRect().top + tabList.scrollTop : root.getBoundingClientRect().left + tabList.scrollLeft)
+    // Tabs glide from where they were (`places`, by id), along with the thumb.
+    function glideTabs(places) {
+      const axis = vertical() ? 'Y' : 'X'
       for (const [id, elements] of tabElements) {
-        const from = lefts.get(id) - tabLeft(elements.root)
+        const from = places.get(id) - tabPlace(elements.root)
         if (!from || matchMedia('(prefers-reduced-motion: reduce)').matches) continue
-        elements.glide = elements.root.animate([{ transform: `translateX(${from}px)` }, { transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.22, 1, .36, 1)' })
+        elements.glide = elements.root.animate([{ transform: `translate${axis}(${from}px)` }, { transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.22, 1, .36, 1)' })
       }
     }
 
@@ -1603,15 +1661,16 @@
     // scrolls a strip with more past it.
     const strip = document.getElementById('strip')
     let draggedTab = null
-    // The tab it would land before at `x`, null for last, or undefined if it
-    // would stay where it is. By where the tabs are laid out, as some may
-    // still be gliding there.
-    function tabDropAt(x) {
+    // The tab it would land before at the pointer, null for last, or
+    // undefined if it would stay where it is. By where the tabs are laid out,
+    // as some may still be gliding there.
+    function tabDropAt({ clientX, clientY }) {
       const ids = state.tabs.map((tab) => tab.id)
-      const along = x - tabList.getBoundingClientRect().left + tabList.scrollLeft
+      const box = tabList.getBoundingClientRect()
+      const along = vertical() ? clientY - box.top + tabList.scrollTop : clientX - box.left + tabList.scrollLeft
       const at = ids.findIndex((id) => {
-        const { offsetLeft, offsetWidth } = tabElements.get(id).root
-        return along < offsetLeft + offsetWidth / 2
+        const { offsetLeft, offsetWidth, offsetTop, offsetHeight } = tabElements.get(id).root
+        return vertical() ? along < offsetTop + offsetHeight / 2 : along < offsetLeft + offsetWidth / 2
       })
       const to = at === -1 ? ids.length : at
       const from = ids.indexOf(draggedTab)
@@ -1638,20 +1697,21 @@
       if (draggedTab === null) return
       event.preventDefault()
       event.dataTransfer.dropEffect = 'move'
-      markTabDrop(tabDropAt(event.clientX))
+      markTabDrop(tabDropAt(event))
     })
     strip.addEventListener('dragleave', (event) => { if (!strip.contains(event.relatedTarget)) markTabDrop(undefined) })
     strip.addEventListener('drop', (event) => {
       if (draggedTab === null) return
       event.preventDefault()
       // Read again, as the strip may have scrolled since.
-      const before = tabDropAt(event.clientX)
+      const before = tabDropAt(event)
       if (before !== undefined) window.lit.moveTab(draggedTab, before)
       endTabDrag()
     })
 
-    // Arrow keys move between tabs like other tab lists, and with ⇧ move the
-    // tab itself; Delete closes one.
+    // Arrow keys move between tabs like other tab lists (← and → across the
+    // top, ↑ and ↓ in the sidebar), and with ⇧ move the tab itself; Delete
+    // closes one.
     // All start from the focused tab, not the last state from the main
     // process, so held or quick keys never act on a stale tab.
     let refocusTabs = false
@@ -1663,15 +1723,16 @@
       const ids = state.tabs.map((tab) => tab.id)
       const focusedId = focusedTabId()
       const index = ids.indexOf(focusedId)
-      const target = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: ids.length - 1 }[event.key]
+      const [back, ahead] = vertical() ? ['ArrowUp', 'ArrowDown'] : ['ArrowLeft', 'ArrowRight']
+      const target = { [ahead]: index + 1, [back]: index - 1, Home: 0, End: ids.length - 1 }[event.key]
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault()
         // Focus moves to whichever tab takes its place once the list updates.
         refocusTabs = true
         window.lit.closeTab(focusedId, false)
-      } else if (event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      } else if (event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && (event.key === back || event.key === ahead)) {
         event.preventDefault()
-        window.lit.nudgeTab(focusedId, event.key === 'ArrowLeft' ? -1 : 1)
+        window.lit.nudgeTab(focusedId, event.key === back ? -1 : 1)
       } else if (target !== undefined) {
         event.preventDefault()
         const id = ids[(target + ids.length) % ids.length]

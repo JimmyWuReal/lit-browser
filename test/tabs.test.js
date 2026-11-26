@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen } = require('../src/tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -92,4 +92,18 @@ test('a window bigger than the limit keeps its active tab and its neighbors', ()
   const start = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 0 }]
   keepNewest(start, 2)
   assert.deepEqual(start, [{ tabs: [0, 1], activeIndex: 0 }])
+})
+
+test('tabsPlace puts tabs on top, in the sidebar, or nowhere while it is hidden', () => {
+  assert.equal(tabsPlace({ verticalTabs: false, tabSidebar: true }), 'top')
+  assert.equal(tabsPlace({ verticalTabs: false, tabSidebar: false }), 'top')
+  assert.equal(tabsPlace({ verticalTabs: true, tabSidebar: true }), 'side')
+  assert.equal(tabsPlace({ verticalTabs: true, tabSidebar: false }), 'none')
+})
+
+test('sidebarToggle hides a shown sidebar, else shows it, turning vertical tabs on last', () => {
+  assert.deepEqual(sidebarToggle({ verticalTabs: true, tabSidebar: true }), [['tabSidebar', false]])
+  assert.deepEqual(sidebarToggle({ verticalTabs: true, tabSidebar: false }), [['tabSidebar', true]])
+  assert.deepEqual(sidebarToggle({ verticalTabs: false, tabSidebar: true }), [['verticalTabs', true]])
+  assert.deepEqual(sidebarToggle({ verticalTabs: false, tabSidebar: false }), [['tabSidebar', true], ['verticalTabs', true]])
 })

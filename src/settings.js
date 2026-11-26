@@ -265,6 +265,20 @@ const SECTIONS = [
         default: true,
       },
       {
+        key: 'verticalTabs',
+        label: 'Vertical tabs',
+        description: 'Tabs in a sidebar down the left of the window, with their full titles, instead of across the top.',
+        type: 'toggle',
+        default: false,
+      },
+      {
+        key: 'tabSidebar',
+        label: 'Show tab sidebar',
+        description: 'With vertical tabs. Hide it to give pages the whole width; the tab shortcuts still work.',
+        type: 'toggle',
+        default: true,
+      },
+      {
         key: 'closeWindowWithLastTab',
         label: 'Close window with its last tab',
         description: 'Otherwise closing the last tab leaves a new one.',
@@ -313,6 +327,7 @@ const SECTIONS = [
         shortcut('closeTabsToRight', 'Close Tabs to the Right', ''),
         shortcut('nextTab', 'Show Next Tab', 'Ctrl+Tab'),
         shortcut('previousTab', 'Show Previous Tab', 'Ctrl+Shift+Tab'),
+        shortcut('tabSidebar', 'Show Tab Sidebar', 'Shift+CmdOrCtrl+L'),
       ]),
       ...group('Page', [
         shortcut('openLocation', 'Open Location', 'CmdOrCtrl+L'),

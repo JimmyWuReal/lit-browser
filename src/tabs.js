@@ -80,4 +80,21 @@ const onScreen = (bounds, areas) => areas.some((area) =>
   bounds.x < area.x + area.width && bounds.x + bounds.width > area.x &&
   bounds.y < area.y + area.height && bounds.y + bounds.height > area.y)
 
-module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen }
+// Where a window's tabs show, from the Tabs settings: across the top
+// ('top'), in the sidebar down its left ('side'), or nowhere ('none'), while
+// vertical tabs have their sidebar hidden.
+const tabsPlace = ({ verticalTabs, tabSidebar }) => (!verticalTabs ? 'top' : tabSidebar ? 'side' : 'none')
+
+// The settings Show Tab Sidebar changes, in order, as [key, value]: it hides
+// a sidebar on show, and otherwise shows it, turning on vertical tabs if
+// they are off. The sidebar is shown before vertical tabs turn on, so tabs
+// never pass through being hidden.
+function sidebarToggle(values) {
+  if (tabsPlace(values) === 'side') return [['tabSidebar', false]]
+  return [
+    ...(values.tabSidebar ? [] : [['tabSidebar', true]]),
+    ...(values.verticalTabs ? [] : [['verticalTabs', true]]),
+  ]
+}
+
+module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle }
