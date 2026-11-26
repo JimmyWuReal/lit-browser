@@ -31,6 +31,7 @@ const zoom = require('./zoom')
 const pdf = require('./pdf')
 const permissions = require('./permissions')
 const passwords = require('./passwords')
+const cookieStore = require('./cookies')
 const shareStore = require('./share')
 const signIn = require('./signin')
 const errors = require('./errors')
@@ -3349,6 +3350,63 @@ ipcMain.handle('passwords-copy', fromSettings(async (c, id) => {
   if (password !== undefined) clipboard.writeText(password)
   return error ? { error } : { copied: password !== undefined }
 }))
+
+// Cookies: the profile's, by domain (src/cookies.js), and removing one
+// cookie, a domain's, or (null, after asking) every one. Each answers with
+// { domains, error? }; removing all answers null if not confirmed. Always
+// the profile's own, even from a private window, whose cookies go with it.
+async function cookiesState(profile, error) {
+  try {
+    return { domains: cookieStore.list(await profile.session.cookies.get({})), ...(error && { error }) }
+  } catch {
+    return { domains: [], error: 'Couldn’t read cookies.' }
+  }
+}
+// Removals run one at a time, so one never puts back what another took.
+let cookieWork = Promise.resolve()
+const oneAtATime = (run) => {
+  const done = cookieWork.then(run)
+  cookieWork = done.catch(() => {})
+  return done
+}
+async function removeCookies(win, profile, target) {
+  const ses = profile.session
+  if (target === null) {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: ['Remove All', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: profiles.length > 1 ? `Remove every cookie in “${profile.name}”?` : 'Remove every cookie?',
+      detail: 'You’ll be signed out of most sites, and they forget your preferences. This can’t be undone.',
+    })
+    if (response !== 0) return null
+  } else if (!cookieStore.isTarget(target)) {
+    return cookiesState(profile)
+  }
+  return oneAtATime(async () => {
+    try {
+      if (target === null) {
+        await ses.clearStorageData({ storages: ['cookies'] })
+      } else {
+        const before = await ses.cookies.get({})
+        const named = cookieStore.pick(before, target)
+        await Promise.allSettled(named.map((cookie) => ses.cookies.remove(cookieStore.urlOf(cookie), cookie.name)))
+        // Removing takes others of the same name too; they go back as they were.
+        const lost = cookieStore.lost(before, named, await ses.cookies.get({}))
+        await Promise.allSettled(lost.map((cookie) => ses.cookies.set(cookieStore.detailsOf(cookie))))
+      }
+      // What is still there was not removed, such as a cookie set again.
+      const left = await ses.cookies.get({})
+      const missed = target === null ? left.length : cookieStore.pick(left, target).length
+      return cookiesState(profile, missed ? 'Some cookies couldn’t be removed, or a site set them again.' : undefined)
+    } catch {
+      return cookiesState(profile, 'Couldn’t remove cookies.')
+    }
+  })
+}
+ipcMain.handle('cookies-get', fromSettings((c) => cookiesState(c.profile)))
+ipcMain.handle('cookies-remove', fromSettings((c, target) => removeCookies(c.win, c.profile, target ?? null)))
 
 // From src/page.js, in web pages. The site is the sending frame's, as
 // Chromium knows it, never what the message says.

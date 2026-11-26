@@ -15,7 +15,8 @@ const quickSearch = require('./quicksearch')
 // person or their accounts goes in a profile's, how Lit itself works (tabs,
 // shortcuts) in a shared one. The profile ones come first.
 // A section can also name a `list` the popup draws after its settings, from
-// state main sends with them (sitePermissions, passwords, quickSearchSites, profiles, defaultBrowser),
+// state main sends with them (sitePermissions, passwords, quickSearchSites, profiles, defaultBrowser)
+// or, for cookies, asked for on their own,
 // with `listWords`, the words that find it in Settings' search.
 // Each setting: { key, label, description?, group?, type, default, ...type
 // fields }. Settings next to each other with the same `group` get it as a
@@ -166,6 +167,16 @@ const SECTIONS = [
         default: false,
       },
     ],
+  },
+  {
+    id: 'cookies',
+    title: 'Cookies',
+    scope: 'profile',
+    // Only the profile's cookies by site (src/cookies.js), to look at and
+    // remove. Main sends them on their own, not with the settings.
+    list: 'cookies',
+    listWords: 'Cookies site data sign-ins remove delete clear',
+    settings: [],
   },
   {
     id: 'defaultBrowser',
