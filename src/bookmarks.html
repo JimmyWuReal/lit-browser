@@ -427,7 +427,11 @@
         if (!menuOpen()) return setMenuOpen(true)
         const options = [...folderMenu.children]
         const at = options.indexOf(document.activeElement)
+        if (at === -1) return folderMenu.querySelector('[aria-selected="true"]')?.focus()
         options[(at + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length].focus()
+      } else if (event.key === 'Tab' && menuOpen()) {
+        // Tabbing out of the menu, even back to its field, closes it.
+        setMenuOpen(false)
       } else if ((event.key === 'Home' || event.key === 'End') && menuOpen()) {
         event.preventDefault()
         event.stopPropagation()
