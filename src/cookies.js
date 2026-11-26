@@ -49,8 +49,38 @@ function pick(cookies, target) {
     (target.name === undefined || (cookie.name === target.name && (cookie.path || '/') === target.path)))
 }
 
-// The address Electron's cookies.remove takes for a cookie: one it would be
-// sent to, so https for a secure one.
-const urlOf = (cookie) => `${cookie.secure ? 'https' : 'http'}://${domainOf(cookie)}${cookie.path || '/'}`
+// The address Electron's cookies.remove and cookies.set take for a cookie:
+// one it is sent to. Always https, which every cookie is sent to, and from
+// which Chromium lets a cookie be set even beside a secure one of its name.
+const urlOf = (cookie) => `https://${domainOf(cookie)}${cookie.path || '/'}`
 
-module.exports = { VALUE_LIMIT, domainOf, list, isTarget, pick, urlOf }
+// Chromium's identity for a cookie: its domain as stored (a domain cookie
+// keeps its dot), path and name.
+const keyOf = (cookie) => `${cookie.domain}\n${cookie.path || '/'}\n${cookie.name}`
+
+// Electron removes every cookie of that name sent to the address, so
+// removing `sid` at /app also takes `sid` at /, and a subdomain's takes its
+// parent domain's. These are the cookies in `before` that went but were not
+// `named`, to put back.
+function lost(before, named, after) {
+  const keep = new Set([...named, ...after].map(keyOf))
+  return before.filter((cookie) => !keep.has(keyOf(cookie)))
+}
+
+// What cookies.set takes to put `cookie` back as it was.
+function detailsOf(cookie) {
+  return {
+    url: urlOf(cookie),
+    name: cookie.name,
+    value: cookie.value,
+    path: cookie.path || '/',
+    // Without a domain, a cookie is the host's own again.
+    ...(!cookie.hostOnly && { domain: cookie.domain }),
+    secure: Boolean(cookie.secure),
+    httpOnly: Boolean(cookie.httpOnly),
+    ...(cookie.sameSite && { sameSite: cookie.sameSite }),
+    ...(!cookie.session && Number.isFinite(cookie.expirationDate) && { expirationDate: cookie.expirationDate }),
+  }
+}
+
+module.exports = { VALUE_LIMIT, domainOf, list, isTarget, pick, urlOf, lost, detailsOf }

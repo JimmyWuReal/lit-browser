@@ -3378,8 +3378,12 @@ async function removeCookies(win, profile, target) {
       await ses.clearStorageData({ storages: ['cookies'] })
     } else {
       if (!cookieStore.isTarget(target)) return cookiesState(profile)
-      const named = cookieStore.pick(await ses.cookies.get({}), target)
+      const before = await ses.cookies.get({})
+      const named = cookieStore.pick(before, target)
       await Promise.allSettled(named.map((cookie) => ses.cookies.remove(cookieStore.urlOf(cookie), cookie.name)))
+      // Removing takes others of the same name too; they go back as they were.
+      const lost = cookieStore.lost(before, named, await ses.cookies.get({}))
+      await Promise.allSettled(lost.map((cookie) => ses.cookies.set(cookieStore.detailsOf(cookie))))
     }
     // What is still there was not removed, such as a cookie set again.
     const left = await ses.cookies.get({})

@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { VALUE_LIMIT, domainOf, list, isTarget, pick, urlOf } = require('../src/cookies')
+const { VALUE_LIMIT, domainOf, list, isTarget, pick, urlOf, lost, detailsOf } = require('../src/cookies')
 
 const cookie = (fields) => ({ path: '/', secure: false, httpOnly: false, session: true, ...fields })
 
@@ -58,5 +58,23 @@ test('pick names nothing for anything but a domain or a cookie', () => {
 
 test('urlOf is an address the cookie is sent to', () => {
   assert.equal(urlOf({ domain: '.a.com', path: '/app', secure: true }), 'https://a.com/app')
-  assert.equal(urlOf({ domain: 'a.com', secure: false }), 'http://a.com/')
+  assert.equal(urlOf({ domain: 'a.com', secure: false }), 'https://a.com/')
+})
+
+test('lost finds cookies a removal took but did not name', () => {
+  const root = cookie({ domain: 'a.com', name: 'sid' })
+  const app = cookie({ domain: 'a.com', name: 'sid', path: '/app' })
+  const parent = cookie({ domain: '.a.com', name: 'sid' })
+  const other = cookie({ domain: 'b.com', name: 'x' })
+  // Removing sid at /app took both others named sid; b.com's stayed.
+  assert.deepEqual(lost([root, app, parent, other], [app], [other]), [root, parent])
+  assert.deepEqual(lost([root, app], [app], [root]), [])
+})
+
+test('detailsOf puts a cookie back as it was', () => {
+  assert.deepEqual(detailsOf({ domain: '.a.com', hostOnly: false, name: 'sid', value: 'v', path: '/', secure: true, httpOnly: true, sameSite: 'lax', session: false, expirationDate: 1800000000 }),
+    { url: 'https://a.com/', name: 'sid', value: 'v', path: '/', domain: '.a.com', secure: true, httpOnly: true, sameSite: 'lax', expirationDate: 1800000000 })
+  // A host's own cookie, kept until Lit quits.
+  assert.deepEqual(detailsOf({ domain: 'a.com', hostOnly: true, name: 'n', value: '', path: '/app', secure: false, httpOnly: false, sameSite: 'unspecified', session: true }),
+    { url: 'https://a.com/app', name: 'n', value: '', path: '/app', secure: false, httpOnly: false, sameSite: 'unspecified' })
 })
