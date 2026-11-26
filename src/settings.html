@@ -370,6 +370,38 @@
     .secret { display: block; padding: 4px 14px 10px; overflow-wrap: anywhere; font: 400 12px/1.5 'DM Mono', ui-monospace, monospace; color: #ededed; user-select: text; }
     .secret:empty { display: none; }
 
+    /* Cookies: a filter, then one box per domain that opens to its cookies. */
+    .cookie-list { display: flex; flex-direction: column; gap: 14px; }
+    .cookie-list .control-text { flex: none; }
+    .cookie-tools { display: flex; align-items: center; gap: 8px; }
+    .cookie-tools .text { flex: 1; min-width: 0; }
+    .cookie-tools .text input { width: 100%; height: 32px; }
+    .cookie-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 14px; }
+    .cookie-domain {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      user-select: text;
+    }
+    .cookie-count { padding-right: 4px; font-size: 11.5px; color: var(--sub); white-space: nowrap; }
+    .cookie { display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 8px 8px 4px 14px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08); }
+    .cookie-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+    .cookie-name { overflow-wrap: anywhere; font: 400 12px/1.4 'DM Mono', ui-monospace, monospace; color: #ededed; user-select: text; }
+    .cookie-value {
+      overflow: hidden;
+      font: 400 11.5px/1.4 'DM Mono', ui-monospace, monospace;
+      color: var(--sub);
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      user-select: text;
+    }
+    .cookie-meta { font-size: 11px; color: var(--dim); }
+
     /* Profiles: one box each, its name and, below it, its color. */
     .profiles-list { display: flex; flex-direction: column; gap: 14px; }
     .profiles-list .control-text { flex: none; }
@@ -866,7 +898,7 @@
     lists.profiles = () => {
       const element = el('div', 'profiles-list')
       const text = el('div', 'control-text')
-      text.append(el('span', '', 'Each profile has its own sign-ins, history, bookmarks, saved passwords, site permissions and settings for General, Downloads, Passwords and Privacy. Everything else is shared.'))
+      text.append(el('span', '', 'Each profile has its own sign-ins, history, bookmarks, saved passwords, site permissions, cookies and settings for General, Downloads, Passwords, Privacy and Cookies. Everything else is shared.'))
       const error = el('span', 'error')
       error.setAttribute('role', 'alert')
       text.append(error)
@@ -1080,6 +1112,121 @@
           if (key !== shown) { shown = key; build() }
         },
       }
+    }
+
+    // The profile's cookies by domain, asked for as the list is drawn and as
+    // Settings reopens, not sent with the settings. Each domain opens to show
+    // its cookies; a domain's or one cookie can be removed, or every one,
+    // which main asks about first. The filter narrows domains by name.
+    lists.cookies = () => {
+      const element = el('div', 'cookie-list')
+      const text = el('div', 'control-text')
+      text.append(el('strong', '', 'Sites with cookies'))
+      text.append(el('span', '', 'What sites saved in this profile, such as sign-ins and preferences. Removing a site’s cookies signs you out of it. Private windows keep their own, which go when they close.'))
+      const error = el('span', 'error')
+      error.setAttribute('role', 'alert')
+      text.append(error)
+      const tools = el('div', 'cookie-tools')
+      const field = el('label', 'text')
+      const filter = el('input')
+      filter.type = 'text'
+      filter.spellcheck = false
+      filter.placeholder = 'Filter sites'
+      filter.setAttribute('aria-label', 'Filter sites with cookies')
+      field.append(filter)
+      const removeAll = el('button', 'outline-button', 'Remove all')
+      removeAll.type = 'button'
+      removeAll.setAttribute('aria-label', 'Remove every cookie')
+      tools.append(field, removeAll)
+      const body = el('div', 'sites')
+      element.append(text, tools, body)
+
+      // null until main answers.
+      let domains = null
+      const open = new Set()
+      // Only the latest answer is drawn.
+      let asked = 0
+      const answer = (ask) => {
+        const id = ++asked
+        return ask.then((next) => {
+          if (id !== asked || !next) return
+          domains = next.domains
+          error.textContent = next.error || ''
+          build()
+        })
+      }
+      const refresh = () => answer(settings.cookies())
+
+      function iconButton(label, run) {
+        const button = el('button', 'icon-button')
+        button.type = 'button'
+        button.title = 'Remove'
+        button.setAttribute('aria-label', label)
+        button.dataset.focus = label
+        button.append(document.getElementById('remove-icon').content.cloneNode(true))
+        button.addEventListener('click', run)
+        return button
+      }
+      const until = (expires) => expires === null
+        ? 'Until Lit quits'
+        : `Until ${new Date(expires).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`
+      function cookieLine(domain, { name, value, path, expires }) {
+        const line = el('div', 'cookie')
+        const words = el('div', 'cookie-text')
+        words.append(el('span', 'cookie-name', name || '(no name)'))
+        if (value) words.append(el('span', 'cookie-value', value))
+        words.append(el('span', 'cookie-meta', path === '/' ? until(expires) : `${path} · ${until(expires)}`))
+        line.append(words, iconButton(`Remove cookie ${name} on ${domain}${path === '/' ? '' : path}`, () => answer(settings.removeCookies({ domain, name, path }))))
+        return line
+      }
+      function domainBox({ domain, cookies }) {
+        const box = el('div', 'site')
+        const head = el('div', 'cookie-head')
+        const name = el('span', 'cookie-domain', domain)
+        name.title = domain
+        const shown = open.has(domain)
+        const toggle = el('button', 'outline-button', shown ? 'Hide' : 'Show')
+        toggle.type = 'button'
+        toggle.setAttribute('aria-expanded', String(shown))
+        toggle.setAttribute('aria-label', `${shown ? 'Hide' : 'Show'} cookies for ${domain}`)
+        toggle.dataset.focus = `toggle ${domain}`
+        toggle.addEventListener('click', () => {
+          if (open.has(domain)) open.delete(domain)
+          else open.add(domain)
+          build()
+        })
+        head.append(name, el('span', 'cookie-count', cookies.length === 1 ? '1 cookie' : `${cookies.length} cookies`), toggle,
+          iconButton(`Remove cookies for ${domain}`, () => answer(settings.removeCookies({ domain }))))
+        box.append(head)
+        if (shown) box.append(...cookies.map((cookie) => cookieLine(domain, cookie)))
+        return box
+      }
+      // Rebuilt on every change; focus goes back to the same button if it is
+      // still there, or to the panel if it went with a removed row.
+      function build() {
+        const focused = body.contains(document.activeElement) ? document.activeElement.dataset.focus : undefined
+        removeAll.hidden = !domains?.length
+        const query = filter.value.trim().toLowerCase()
+        const matching = (domains || []).filter((item) => item.domain.includes(query))
+        if (!domains) body.replaceChildren()
+        else if (!domains.length) body.replaceChildren(el('p', 'sites-empty', 'No cookies.'))
+        else if (!matching.length) body.replaceChildren(el('p', 'sites-empty', 'No sites match.'))
+        else body.replaceChildren(...matching.map(domainBox))
+        if (focused === undefined) return
+        const again = [...body.querySelectorAll('button')].find((button) => button.dataset.focus === focused)
+        if (again) again.focus()
+        else document.getElementById('panel').focus()
+      }
+      filter.addEventListener('input', build)
+      removeAll.addEventListener('click', () => {
+        const hadFocus = document.activeElement === removeAll
+        answer(settings.removeCookies(null)).then(() => {
+          // Hidden once nothing is left, it loses focus; the panel keeps it.
+          if (hadFocus && removeAll.hidden) document.getElementById('panel').focus()
+        })
+      })
+      refresh()
+      return { key: 'cookies', error, element, refresh, draw() {} }
     }
 
     // Whether Lit is the default browser, and the button that asks macOS to
@@ -1301,7 +1448,11 @@
       state = next
       if (!sectionId) build(next.section)
       else if (search.value || (next.section && next.section !== sectionId)) showSection(next.section || sectionId)
-      else redraw()
+      else {
+        // Lists not sent with the settings ask again for what changed.
+        for (const item of rows) item.refresh?.()
+        redraw()
+      }
       document.body.classList.remove('is-open')
       document.body.getBoundingClientRect()
       document.body.classList.add('is-open')
