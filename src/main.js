@@ -1,8 +1,8 @@
 // Lit's main process. Each window has a toolbar on top (src/index.html,
 // the window's own page) and one Chromium WebContentsView per tab below it.
 // Only the active tab's view is visible. The Settings, History and
-// Downloads popups are each one more view, transparent and over
-// everything, shown only while open. Find in page lives in the toolbar; each tab keeps its own
+// Downloads popups and the command palette (src/commands.js) are each one
+// more view, transparent and over everything, shown only while open. Find in page lives in the toolbar; each tab keeps its own
 // search (src/find.js). A site asking for the camera, location and the like,
 // or to open another app, gets a prompt in the toolbar, below the address
 // row (src/permissions.js), and so does the offer to save a password just
@@ -37,6 +37,7 @@ const errors = require('./errors')
 const profileStore = require('./profiles')
 const findState = require('./find')
 const { pageMenu, tabMenu, navigationMenu, bookmarkMenu } = require('./menus')
+const commandStore = require('./commands')
 const { createAdblock } = require('./adblock')
 
 // Keep in sync with .strip and .bar heights in index.html.
@@ -857,7 +858,30 @@ const popupState = (name, c) => ({
   history: () => historyState(c.profile),
   downloads: () => downloadsState(c.session),
   share: () => c.shareState(),
+  palette: () => ({ commands: paletteSearch(c, '') }),
 })[name]()
+
+// The command palette's commands in window `c` (see src/commands.js):
+// built afresh each time, so they follow the menu, tabs and settings.
+const paletteCommands = (c) => commandStore.allCommands({
+  menu: commandStore.menuCommands(Menu.getApplicationMenu()?.items ?? [], { skip: 'commandPalette' }),
+  tabs: commandStore.tabCommands(c.otherTabs()),
+  settings: commandStore.settingCommands(settingsStore.SECTIONS, c.profile.settings),
+})
+const paletteSearch = (c, text) => commandStore.match(paletteCommands(c), text).map(commandStore.shown)
+
+// Runs the palette's command `id` once the palette has closed, so a
+// command that opens a popup, or closes one, finds none open. A menu item
+// runs as if picked from the menu with this window in front.
+function runCommand(c, id) {
+  const command = paletteCommands(c).find((each) => each.id === id)
+  c.closePopup()
+  if (!command) return
+  if (command.item) return command.item.click(undefined, c.win, c.win.webContents)
+  if (command.tabId) return c.activate(command.tabId)
+  const error = changeSetting(c.profile, command.key, command.value)
+  if (error) dialog.showMessageBox({ type: 'warning', message: error }).catch(() => {})
+}
 
 // What the Settings popup draws in a window of `profile`: the values, plus
 // each shortcut as ⌘ symbols, and every profile.
@@ -2447,8 +2471,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // The Settings, History, Downloads, Bookmarks and screen sharing popups
-  // (src/settings.html, src/history.html, src/downloads.html,
-  // src/bookmarks.html, src/share.html): each is made on first use, then hidden and shown; one is open at a time.
+  // and the command palette (src/settings.html, src/history.html,
+  // src/downloads.html, src/bookmarks.html, src/share.html,
+  // src/palette.html): each is made on first use, then hidden and shown; one is open at a time.
   // While a shortcut is being recorded in Settings, key presses go to it
   // instead of the menu, so ⌘T records ⌘T rather than opening a tab.
   function popupView(name) {
@@ -2793,6 +2818,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       addTab({ history, index: reopenIndex(index, tabs.length) })
     },
     activate,
+    // Every tab but the active one, for the command palette.
+    otherTabs: () => tabs.filter((tab) => tab.id !== activeId).map((tab) => ({ id: tab.id, title: tab.title, url: urlOf(tab) })),
     navigate,
     focusAddress,
     step: (delta) => activate(step(ids(), activeId, delta)),
@@ -3044,8 +3071,8 @@ const inFocused = (action) => (_item, win) => {
   if (controls) action(controls)
 }
 
-// Settings and History open in the focused window, or a new one, and the
-// same command closes them again.
+// Settings, History and the command palette open in the focused window, or
+// a new one, and the same command closes them again.
 const togglePopup = (name) => (_item, win) => {
   let c = controlsOf(win) || createWindow()
   // A private window has no history: its profile's normal window used last
@@ -3157,6 +3184,9 @@ function buildMenu() {
     {
       label: 'View',
       submenu: [
+        // Lists every other command here, so it is left out of its own list.
+        { id: 'commandPalette', label: 'Command Palette…', accelerator: key('commandPalette'), click: togglePopup('palette') },
+        { type: 'separator' },
         { label: 'Reload', accelerator: key('reload'), click: inFocused((c) => c.reload()) },
         { type: 'separator' },
         { label: 'Back', accelerator: key('back'), click: pageAction((page) => page.navigationHistory.goBack()) },
@@ -3394,6 +3424,14 @@ const fromShare = (handler) => fromPopup('share', (c, shareId, ...args) => { if 
 ipcMain.on('share-choose', fromShare((c, kind, id, audio, page) => c.chooseShare(kind, id, audio, page)))
 ipcMain.on('share-allow', fromShare(openScreenPermission))
 ipcMain.on('share-close', fromShare((c) => c.closePopup()))
+
+const fromPalette = (handler) => fromPopup('palette', handler)
+ipcMain.handle('palette-get', fromPalette((c) => popupState('palette', c)))
+ipcMain.handle('palette-search', fromPalette((c, text) => (typeof text === 'string' && text.length <= 200 ? paletteSearch(c, text) : [])))
+// Only from the palette still open: an Enter waiting on a search can arrive
+// after it closed, or another popup took its place.
+ipcMain.on('palette-run', fromPalette((c, id) => c.popupOpen() === 'palette' && typeof id === 'string' && runCommand(c, id)))
+ipcMain.on('palette-close', fromPalette((c) => c.popupOpen() === 'palette' && c.closePopup()))
 
 // Other apps opening links, and HTML and PDF files. Registered before Lit is ready,
 // as macOS sends the link that launched it early.
