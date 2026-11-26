@@ -461,8 +461,12 @@
       if (menuOpen()) match.focus()
       else drawFolders(folders[options.indexOf(match)].id)
     }
-    // The menu is fixed where the trigger was; the panel scrolling moves that.
+    // The menu is fixed where the trigger was; the panel scrolling moves that,
+    // and the window resizing can, as can the panel settling from its opening
+    // scale, so it follows.
     form.addEventListener('scroll', () => setMenuOpen(false))
+    addEventListener('resize', () => { if (menuOpen()) placeMenu() })
+    form.addEventListener('animationend', () => { if (menuOpen()) placeMenu() })
 
     const close = () => api.close()
     form.addEventListener('submit', async (event) => {
