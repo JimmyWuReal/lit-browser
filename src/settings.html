@@ -75,6 +75,10 @@
       position: relative;
       z-index: 1;
       height: 32px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: none;
       padding: 0 10px;
       border: 0;
       border-radius: 8px;
@@ -88,6 +92,8 @@
       cursor: pointer;
       transition: color 260ms ease;
     }
+    /* The section's icon takes the label's color. */
+    .nav button svg { flex: 0 0 auto; }
     /* Results come from every section, so none is the open one. */
     .nav.is-searching .nav-thumb { opacity: 0; }
     .nav button:not(.is-active):hover { color: #e6e6e6; }
@@ -1426,10 +1432,32 @@
       if (navButtons.size) placeThumb(nav, navThumb, navButtons.get(sectionId), true)
     }
 
+    // Each section's icon (Lucide's), drawn before its title.
+    const SECTION_ICONS = {
+      general: '<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+      downloads: '<path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+      passwords: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
+      privacy: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+      cookies: '<path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5"/><path d="M8.5 8.5v.01"/><path d="M16 15.5v.01"/><path d="M12 12v.01"/><path d="M11 17v.01"/><path d="M7 14v.01"/>',
+      defaultBrowser: '<circle cx="12" cy="12" r="10"/><path d="m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z"/>',
+      quickSearch: '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+      securityKeys: '<circle cx="10" cy="7" r="1"/><circle cx="4" cy="20" r="1"/><path d="M4.7 19.3 19 5"/><path d="m21 3-3 1 2 2Z"/><path d="M9.26 7.68 5 12l2 5"/><path d="m10 14 5 2 3.5-3.5"/><path d="m18 12 1-1 1 1-1 1Z"/>',
+      tabs: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>',
+      profiles: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+      shortcuts: '<path d="M10 8h.01"/><path d="M12 12h.01"/><path d="M14 8h.01"/><path d="M16 12h.01"/><path d="M18 8h.01"/><path d="M6 8h.01"/><path d="M7 16h10"/><path d="M8 12h.01"/><rect x="2" y="4" width="20" height="16" rx="2"/>',
+    }
+    function sectionIcon(id) {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      for (const [name, value] of Object.entries({ width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(name, value)
+      svg.innerHTML = SECTION_ICONS[id] ?? ''
+      return svg
+    }
+
     function build(id) {
       const ids = state.sections.map((section) => section.id)
       const buttons = state.sections.map((section) => {
         const button = el('button', '', section.title)
+        button.prepend(sectionIcon(section.id))
         button.type = 'button'
         button.addEventListener('click', () => showSection(section.id))
         navButtons.set(section.id, button)

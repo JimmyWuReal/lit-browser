@@ -54,6 +54,10 @@ const SIGN_IN_NOTE = 18
 // The bookmark bar's row, above the prompt; keep in sync with .bookmarks in
 // index.html.
 const BOOKMARKS_HEIGHT = 34
+// With Frame pages on, a page is a rounded card this far in from the
+// window's sides and bottom; keep in sync with .framed .error in index.html.
+const PAGE_INSET = 6
+const PAGE_RADIUS = 10
 const PRELOAD = path.join(__dirname, 'preload.js')
 // What runs in web pages.
 const PAGE_PRELOAD = path.join(__dirname, 'page.js')
@@ -1132,6 +1136,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // active tab has a prompt; at the very top, over the toolbar, while the
   // active page is full screen.
   let pageTop = BAR_HEIGHT
+  // Whether pages are framed as a card (the Frame pages setting), which a
+  // full screen page never is.
+  let framed = profile.settings.framePages
   // The tab whose page took the window full screen with it, if one did: the
   // window leaves with that page. One you made full screen yourself stays.
   let fullScreenFor = null
@@ -1158,13 +1165,15 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (win.isDestroyed()) return
     const current = active()
     const top = current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (showsBookmarks() ? BOOKMARKS_HEIGHT : 0) + promptHeight(current)
-    if (top !== pageTop) { pageTop = top; layout() }
+    const frame = current?.fullScreen !== 'on' && profile.settings.framePages
+    if (top !== pageTop || frame !== framed) { pageTop = top; framed = frame; layout() }
     const title = signInPage(current)?.url || current?.title || (current?.started ? current.url : '') || 'New Tab'
     const named = profiles.length > 1 ? `${title} — ${profile.name}` : title
     win.setTitle(isPrivate ? `${named} (Private)` : named)
     win.webContents.send('tabs', {
       activeId,
       navigationButtons: profile.settings.navigationButtons,
+      framed,
       tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, pdf: isPdf, page, prompts, signIns, offer, error, audible }) => ({
         id, title, url, favicon, loading, started,
         canGoBack: !page.isDestroyed() && page.navigationHistory.canGoBack(),
@@ -1212,7 +1221,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   function layout() {
     const { width, height } = win.getContentBounds()
-    for (const tab of tabs) tab.view.setBounds({ x: 0, y: pageTop, width, height: Math.max(height - pageTop, 0) })
+    const inset = framed ? PAGE_INSET : 0
+    for (const tab of tabs) {
+      tab.view.setBounds({ x: inset, y: pageTop, width: Math.max(width - 2 * inset, 0), height: Math.max(height - pageTop - inset, 0) })
+      tab.view.setBorderRadius(framed ? PAGE_RADIUS : 0)
+    }
     for (const view of Object.values(popups)) view.setBounds({ x: 0, y: 0, width, height })
   }
 
@@ -2051,7 +2064,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const above = pageTop + Math.round(fieldTop * tab.zoom) - 4 - height
     const top = below + height > bounds.height && above >= pageTop ? above : Math.max(pageTop, Math.min(below, bounds.height - height))
     loginsView.setBounds({
-      x: Math.max(0, Math.min(Math.round(x * tab.zoom), bounds.width - listWidth)),
+      // The page's own left edge, which a framed page has in from the window's.
+      x: Math.max(0, Math.min(tab.view.getBounds().x + Math.round(x * tab.zoom), bounds.width - listWidth)),
       y: top,
       width: listWidth,
       height: Math.max(1, Math.min(height, bounds.height - top)),

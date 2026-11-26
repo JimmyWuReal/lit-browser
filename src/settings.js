@@ -82,6 +82,13 @@ const SECTIONS = [
         default: true,
       },
       {
+        key: 'framePages',
+        label: 'Frame pages',
+        description: 'Pages sit inside the window with rounded corners. Otherwise they reach its edges.',
+        type: 'toggle',
+        default: true,
+      },
+      {
         key: 'fullAddress',
         label: 'Show full addresses',
         description: 'Otherwise https:// only shows while you edit the address.',

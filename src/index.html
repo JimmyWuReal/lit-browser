@@ -16,7 +16,11 @@
       --line-hover: rgba(255, 255, 255, .34);
       --line-live: rgba(255, 255, 255, .72);
       --settle: cubic-bezier(.22, 1, .36, 1);
+      /* How far the toolbar's rows keep from the window's sides: in line
+         with a framed page's card (PAGE_INSET in main.js), else roomier. */
+      --edge: 12px;
     }
+    .framed { --edge: 6px; }
     * { box-sizing: border-box; }
     ::selection { color: #fff; background: rgba(255, 255, 255, .24); }
     body { margin: 0; background: #090909; overflow: hidden; user-select: none; }
@@ -31,7 +35,7 @@
       display: flex;
       align-items: center;
       gap: 4px;
-      padding: 0 10px 0 80px;
+      padding: 0 var(--edge) 0 80px;
       -webkit-app-region: drag;
     }
     /* Tabs shrink to their icons, then scroll sideways (without a bar),
@@ -262,12 +266,12 @@
       height: 44px;
       display: flex;
       align-items: center;
-      padding: 0 12px 4px;
+      padding: 0 var(--edge) 4px;
     }
 
     /* Back, forward and reload, before the address; not on home, where
        there is no page to move from. */
-    .nav { display: flex; flex: 0 0 auto; gap: 2px; margin: 0 8px 0 -2px; }
+    .nav { display: flex; flex: 0 0 auto; gap: 2px; margin: 0 8px 0 calc(6px - var(--edge)); }
     .nav[hidden], .home .nav { display: none; }
     .nav .icon-button { width: 28px; height: 28px; border-radius: 8px; }
     /* Not `disabled`, so a button keeps focus as it runs out of pages. */
@@ -412,6 +416,10 @@
        centered search box (the kit's search field) filling the window. */
     /* Above the middle, where it looks centered and its suggestions fit. */
     .home .bar { height: calc(100vh - 38px); justify-content: center; padding: 0 16px 20vh; }
+    /* Framed, home is the card a page would be, with the search box in it. */
+    .home.framed .bar { height: calc(100vh - 38px - 6px); margin: 0 6px; border-radius: 10px; background: #111; }
+    .home.framed:has(.bookmarks.is-open) .bar { height: calc(100vh - 38px - 34px - 6px); margin-top: 34px; }
+    .private.home.framed .bar { background: #14111c; }
     .home .address { flex: 0 1 600px; }
     .home .address input { height: 52px; padding: 0 18px 0 46px; border-radius: 12px; font-size: 15px; }
     .home .address svg { left: 18px; width: 16px; height: 16px; }
@@ -476,7 +484,7 @@
     /* The bookmark bar: a row under the address row (over the home search
        box, at its top). Its height matches BOOKMARKS_HEIGHT in main.js. What
        doesn't fit is listed by the button at its end. */
-    .bookmarks { display: none; height: 34px; align-items: center; gap: 2px; padding: 0 10px 6px; }
+    .bookmarks { display: none; height: 34px; align-items: center; gap: 2px; padding: 0 var(--edge) 6px; }
     .bookmarks.is-open { display: flex; }
     .home .bookmarks { position: absolute; top: 38px; left: 0; right: 0; z-index: 1; }
     .bookmark-list { position: relative; flex: 1; min-width: 0; height: 28px; display: flex; gap: 2px; overflow: hidden; }
@@ -526,7 +534,7 @@
     /* A site's permission request: a row under the address row while the
        active tab asks. Its height matches PROMPT_HEIGHT in main.js, which
        moves the page down by it. */
-    .prompt { display: none; height: 44px; padding: 0 12px 8px; }
+    .prompt { display: none; height: 44px; padding: 0 var(--edge) 8px; }
     .prompt.is-open { display: block; }
     .prompt-box {
       height: 100%;
@@ -589,7 +597,7 @@
     /* A server or proxy asking for a username and password: a row in the
        prompt's place. Its height matches SIGN_IN_HEIGHT in main.js, and
        SIGN_IN_NOTE more with a note. */
-    .sign-in { display: none; height: 88px; padding: 0 12px 8px; }
+    .sign-in { display: none; height: 88px; padding: 0 var(--edge) 8px; }
     .sign-in.is-open { display: block; }
     .sign-in.has-note { height: 106px; }
     .home .sign-in { display: none; }
@@ -644,6 +652,9 @@
     .failed { display: flex; flex-direction: column; height: 100vh; }
     .failed > * { flex-shrink: 0; }
     .failed .error { flex: 1; min-height: 0; display: flex; overflow: auto; outline: 0; }
+    /* In the card a framed page would be: PAGE_INSET and PAGE_RADIUS in main.js. */
+    .framed.failed .error { margin: 0 6px 6px; border-radius: 10px; background: #111; }
+    .private.framed.failed .error { background: #14111c; }
     .error-box {
       display: flex;
       flex-direction: column;
@@ -1086,6 +1097,8 @@
 
       const tab = activeTab()
       document.body.classList.toggle('home', !tab?.started)
+      // Framed pages are a card in the window; the error page draws as one too.
+      document.body.classList.toggle('framed', Boolean(state.framed))
       // Switching tabs shows the new tab's address. Otherwise the field
       // follows the page's address when it changes, unless the user is
       // typing; so a sent address stays until the new page commits.
