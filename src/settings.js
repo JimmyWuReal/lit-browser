@@ -320,6 +320,7 @@ const SECTIONS = [
       ]),
       ...group('Lit', [
         shortcut('settings', 'Settings', 'CmdOrCtrl+,'),
+        shortcut('commandPalette', 'Command Palette', 'Shift+CmdOrCtrl+P'),
         shortcut('profiles', 'Manage Profiles', 'Shift+CmdOrCtrl+M'),
         shortcut('newProfile', 'New Profile', ''),
       ]),

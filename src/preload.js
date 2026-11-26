@@ -1,5 +1,5 @@
 // The only bridge between Lit's own pages (the toolbar, the address bar's
-// suggestions, and the Settings, History and Downloads popups) and the
+// suggestions, the command palette, and the Settings, History and Downloads popups) and the
 // main process. Web pages get src/page.js instead.
 const { contextBridge, ipcRenderer } = require('electron')
 
@@ -191,6 +191,17 @@ contextBridge.exposeInMainWorld('lit', {
     close: () => ipcRenderer.send('downloads-close'),
     onOpen: (callback) => on('downloads-open', callback),
     onChanged: (callback) => on('downloads-changed', callback),
+  },
+  // For the command palette only. Its state is { commands }, every command
+  // as `search` answers them for '': [{ id, label, group, keys?, detail?,
+  // state? }] (see src/commands.js), best match first. `run` closes the
+  // palette and runs one.
+  palette: {
+    get: () => ipcRenderer.invoke('palette-get'),
+    search: (text) => ipcRenderer.invoke('palette-search', text),
+    run: (id) => ipcRenderer.send('palette-run', id),
+    close: () => ipcRenderer.send('palette-close'),
+    onOpen: (callback) => on('palette-open', callback),
   },
   // For the screen sharing picker only. State is { id, site, audio, allowed,
   // tabs, windows, screens } (see shareState in main), or null once it is over.

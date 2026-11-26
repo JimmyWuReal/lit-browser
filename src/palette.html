@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'">
+  <title>Command Palette</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400&family=Inter:wght@400;500&display=swap">
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      --dim: #848484;
+      --sub: #8c8c8c;
+      --line: rgba(255, 255, 255, .18);
+      --line-hover: rgba(255, 255, 255, .34);
+      --line-live: rgba(255, 255, 255, .72);
+      --settle: cubic-bezier(.22, 1, .36, 1);
+    }
+    * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .36) transparent; }
+    ::selection { color: #fff; background: rgba(255, 255, 255, .24); }
+    /* The page is a transparent layer over the browser window; only the
+       backdrop and the panel draw anything. */
+    html, body { height: 100%; margin: 0; background: transparent; overflow: hidden; color: #ededed; }
+    body { user-select: none; }
+    input { font: inherit; color: inherit; }
+
+    /* The kit's popup, as in History, near the top of the window like the
+       address bar it stands in for. It replays its keyframes on each open. */
+    .backdrop {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 56px 16px 16px;
+      background: rgba(0, 0, 0, .35);
+    }
+    .is-open .backdrop { animation: popup-fade 160ms ease-out; }
+    .panel {
+      width: min(600px, 100%);
+      max-height: min(460px, 100%);
+      display: flex;
+      flex-direction: column;
+      border-radius: 14px;
+      background: #1c1c1c;
+      box-shadow: inset 0 0 0 1px var(--line), 0 24px 60px rgba(0, 0, 0, .45);
+      overflow: hidden;
+      transform-origin: top;
+    }
+    .is-open .panel { animation: popup-in 240ms var(--settle); }
+    @keyframes popup-fade { from { opacity: 0; } }
+    @keyframes popup-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+
+    /* The kit's search field, at a compact height. */
+    .search-field { position: relative; margin: 10px 10px 4px; }
+    .search-field input {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 40px;
+      padding: 0 14px 0 38px;
+      border: 0;
+      border-radius: 10px;
+      outline: 0;
+      color: #ededed;
+      background: transparent;
+      font-size: 13.5px;
+      letter-spacing: -.01em;
+      box-shadow: inset 0 0 0 1px var(--line);
+      transition: box-shadow 200ms ease;
+      user-select: text;
+    }
+    .search-field input::placeholder { color: var(--dim); }
+    .search-field input:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .search-field input:focus { box-shadow: inset 0 0 0 1px var(--line-live); }
+    .search-field input::-webkit-search-cancel-button { display: none; }
+    .search-icon { position: absolute; top: 50%; left: 14px; color: var(--dim); transform: translateY(-50%); pointer-events: none; transition: color 200ms ease; }
+    .search-field:focus-within .search-icon { color: #fff; }
+
+    /* Commands, as rows of the kit's select menu: the selected one (keys
+       or the pointer) is lit. */
+    .list { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 4px 5px 5px; list-style: none; }
+    .list[hidden] { display: none; }
+    .row {
+      height: 36px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 11px;
+      border-radius: 8px;
+      color: #bdbdbd;
+      font-size: 13px;
+      letter-spacing: -.01em;
+      cursor: default;
+      transition: background-color 140ms ease-out, color 140ms ease-out;
+    }
+    .row.is-selected { color: #fff; background: rgba(255, 255, 255, .07); }
+    .label { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .detail { flex: 1 1 0; min-width: 60px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--dim); font-size: 12px; }
+    .spacer { flex: 1 1 0; }
+    .group, .state { flex: 0 0 auto; color: var(--dim); font-size: 12px; }
+    .state { font: 400 11px/1 'DM Mono', ui-monospace, monospace; color: #bdbdbd; }
+    .state.is-off { color: var(--dim); }
+    .keys {
+      flex: 0 0 auto;
+      padding: 4px 6px;
+      border-radius: 5px;
+      color: #bdbdbd;
+      box-shadow: inset 0 0 0 1px var(--line);
+      font: 400 11px/1 'DM Mono', ui-monospace, monospace;
+    }
+
+    /* The kit's empty state, small. */
+    .empty-state { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 24px 32px; text-align: center; }
+    .empty-state strong { font-size: 13px; font-weight: 500; color: #fff; }
+    .empty-state p { max-width: 36ch; margin: 0; font-size: 12px; line-height: 1.7; color: var(--sub); }
+    .empty-state[hidden] { display: none; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="backdrop" id="backdrop">
+    <div class="panel" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="search-field">
+        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+        <input id="search" type="search" placeholder="Type a command" aria-label="Type a command" spellcheck="false" autocomplete="off"
+          role="combobox" aria-expanded="true" aria-controls="list" aria-autocomplete="list">
+      </div>
+      <ul class="list" id="list" role="listbox" aria-label="Commands"></ul>
+      <div class="empty-state" id="empty" hidden>
+        <strong>No commands match</strong>
+        <p>Try other words.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Draws the commands main finds for what is typed (src/commands.js),
+    // best first. ↑ and ↓ move the selection, Enter runs it, Escape or a
+    // click outside closes. Main matches and runs; this only draws.
+    const palette = window.lit.palette
+    const backdrop = document.getElementById('backdrop')
+    const search = document.getElementById('search')
+    const list = document.getElementById('list')
+    const empty = document.getElementById('empty')
+    let commands = []
+    let selected = 0
+    // Answers to older searches are dropped, so a slow one can't replace
+    // what was typed since. `latest` settles once the newest is drawn.
+    let asked = 0
+    let latest = Promise.resolve()
+    // One command per open, however many times Enter is pressed.
+    let ran = false
+    function run(command) {
+      if (ran || !command) return
+      ran = true
+      palette.run(command.id)
+    }
+
+    const el = (tag, className, text) => {
+      const node = document.createElement(tag)
+      if (className) node.className = className
+      if (text) node.textContent = text
+      return node
+    }
+
+    function draw(items) {
+      commands = items
+      selected = 0
+      list.replaceChildren(...items.map((command, index) => {
+        const row = el('li', 'row')
+        row.id = `command-${index}`
+        row.setAttribute('role', 'option')
+        row.append(el('span', 'label', command.label))
+        row.append(command.detail ? el('span', 'detail', command.detail) : el('span', 'spacer'))
+        if (command.state) row.append(el('span', `state${command.state === 'Off' ? ' is-off' : ''}`, command.state))
+        row.append(el('span', 'group', command.group))
+        if (command.keys) row.append(el('kbd', 'keys', command.keys))
+        row.setAttribute('aria-label', [command.label, command.detail, command.state && `currently ${command.state.toLowerCase()}`, command.group, command.keys].filter(Boolean).join(', '))
+        // mousemove, not mouseenter, so rows scrolling under a still
+        // pointer don't take the selection from the keys.
+        row.addEventListener('mousemove', () => { if (selected !== index) select(index) })
+        row.addEventListener('click', () => run(command))
+        return row
+      }))
+      list.hidden = !items.length
+      empty.hidden = Boolean(items.length)
+      list.scrollTop = 0
+      select(0)
+    }
+
+    function select(index) {
+      selected = index
+      for (const [i, row] of [...list.children].entries()) {
+        row.classList.toggle('is-selected', i === index)
+        row.setAttribute('aria-selected', String(i === index))
+      }
+      const row = list.children[index]
+      if (row) {
+        row.scrollIntoView({ block: 'nearest' })
+        search.setAttribute('aria-activedescendant', row.id)
+      } else search.removeAttribute('aria-activedescendant')
+    }
+
+    search.addEventListener('input', () => {
+      const ask = ++asked
+      latest = palette.search(search.value).then((items) => { if (ask === asked) draw(items) })
+    })
+
+    search.addEventListener('keydown', (event) => {
+      const count = commands.length
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        if (count) select((selected + (event.key === 'ArrowDown' ? 1 : -1) + count) % count)
+      } else if (event.key === 'Enter') {
+        event.preventDefault()
+        // Typed quickly, Enter runs the best match for all that was typed.
+        latest.then(() => run(commands[selected]))
+      } else if (event.key === 'Escape') {
+        event.preventDefault()
+        palette.close()
+      }
+    })
+    backdrop.addEventListener('mousedown', (event) => { if (event.target === backdrop) palette.close() })
+    // Keeps typing in the field: clicks on the panel never take focus.
+    document.querySelector('.panel').addEventListener('mousedown', (event) => { if (event.target !== search) event.preventDefault() })
+
+    // Each open starts empty, with every command, replays the keyframes
+    // and focuses the field.
+    function open(state) {
+      asked++
+      latest = Promise.resolve()
+      ran = false
+      search.value = ''
+      draw(state.commands)
+      document.body.classList.remove('is-open')
+      document.body.getBoundingClientRect()
+      document.body.classList.add('is-open')
+      search.focus()
+    }
+
+    palette.onOpen(open)
+    // The first open is sent before this page has loaded, so it asks.
+    palette.get().then(open)
+  </script>
+</body>
+</html>
