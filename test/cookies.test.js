@@ -90,9 +90,10 @@ test('lost finds cookies a removal took but did not name', () => {
 })
 
 test('detailsOf puts a cookie back as it was', () => {
-  assert.deepEqual(detailsOf({ domain: '.a.com', name: 'sid', value: 'v', path: '/', secure: true, httpOnly: true, sameSite: 'lax', session: false, expirationDate: 1800000000 }),
-    { url: 'https://a.com/', name: 'sid', value: 'v', path: '/', domain: '.a.com', secure: true, httpOnly: true, sameSite: 'lax', expirationDate: 1800000000 })
-  // A host's own cookie, kept until Lit quits.
+  assert.deepEqual(detailsOf({ domain: '.a.com', name: 'sid', value: 'v', path: '/', secure: true, httpOnly: true, sameSite: 'strict', session: false, expirationDate: 1800000000 }),
+    { url: 'https://a.com/', name: 'sid', value: 'v', path: '/', domain: '.a.com', secure: true, httpOnly: true, sameSite: 'strict', expirationDate: 1800000000 })
+  // A host's own cookie, kept until Lit quits; without SameSite, it is Lax as
+  // an old one was, not new enough for cross-site POSTs.
   assert.deepEqual(detailsOf({ domain: 'a.com', name: 'n', value: '', path: '/app', secure: false, httpOnly: false, sameSite: 'unspecified', session: true }),
-    { url: 'https://a.com/app', name: 'n', value: '', path: '/app', secure: false, httpOnly: false, sameSite: 'unspecified' })
+    { url: 'https://a.com/app', name: 'n', value: '', path: '/app', secure: false, httpOnly: false, sameSite: 'lax' })
 })

@@ -97,7 +97,10 @@ function detailsOf(cookie) {
     ...(!isHostOnly(cookie) && { domain: cookie.domain }),
     secure: Boolean(cookie.secure),
     httpOnly: Boolean(cookie.httpOnly),
-    ...(cookie.sameSite && { sameSite: cookie.sameSite }),
+    // Chromium treats an old cookie without SameSite as Lax, but sends a
+    // new one on cross-site POSTs for its first two minutes; set back, it
+    // would be new, so it is Lax outright.
+    sameSite: !cookie.sameSite || cookie.sameSite === 'unspecified' ? 'lax' : cookie.sameSite,
     ...(!cookie.session && Number.isFinite(cookie.expirationDate) && { expirationDate: cookie.expirationDate }),
   }
 }
