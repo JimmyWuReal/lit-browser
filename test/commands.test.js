@@ -39,6 +39,12 @@ test('menuCommands lists enabled, visible menu commands with their group and key
   assert.equal(commands[1].item, MENU[1].submenu[0])
 })
 
+test('menuCommands gives items with the same path ids of their own', () => {
+  const commands = menuCommands([{ label: 'Profiles', submenu: [{ label: 'Manage Profiles…', type: 'radio' }, { type: 'separator' }, { label: 'Manage Profiles…' }] }])
+  assert.deepEqual(commands.map((command) => command.id), ['menu:Profiles/Manage Profiles…', 'menu:Profiles/Manage Profiles…#2'])
+  assert.equal(commands[1].item.type, undefined)
+})
+
 test('menuCommands reads Electron menus, whose submenus are Menus', () => {
   const commands = menuCommands([{ label: 'File', submenu: { items: [{ label: 'New Tab' }] } }])
   assert.deepEqual(commands.map((command) => command.id), ['menu:File/New Tab'])

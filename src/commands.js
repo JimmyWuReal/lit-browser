@@ -19,7 +19,19 @@ const shortcuts = require('./shortcuts')
 // they act on whatever has focus, which is the palette while it is open,
 // though a menu with a role (Window) still has its own items listed. So is
 // the item with id `skip`, the palette's own.
-function menuCommands(items, { skip } = {}, path = []) {
+// Each id is the item's menu path ("menu:File/New Tab"); an item sharing
+// its path with one before it, such as a profile named like a command in
+// the Profiles menu, gets "#2", "#3" after it, so it never runs the other.
+function menuCommands(items, { skip } = {}) {
+  const seen = new Map()
+  return walk(items, skip, []).map((command) => {
+    const count = (seen.get(command.id) ?? 0) + 1
+    seen.set(command.id, count)
+    return count > 1 ? { ...command, id: `${command.id}#${count}` } : command
+  })
+}
+
+function walk(items, skip, path) {
   const commands = []
   for (const item of items) {
     if (item.type === 'separator' || item.visible === false || item.enabled === false) continue
@@ -27,7 +39,7 @@ function menuCommands(items, { skip } = {}, path = []) {
     const trail = [...path, item.label]
     const submenu = item.submenu?.items ?? item.submenu
     if (Array.isArray(submenu)) {
-      commands.push(...menuCommands(submenu, { skip }, trail))
+      commands.push(...walk(submenu, skip, trail))
       continue
     }
     if (item.role || !item.label || !path.length) continue

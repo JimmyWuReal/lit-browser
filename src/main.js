@@ -3428,8 +3428,10 @@ ipcMain.on('share-close', fromShare((c) => c.closePopup()))
 const fromPalette = (handler) => fromPopup('palette', handler)
 ipcMain.handle('palette-get', fromPalette((c) => popupState('palette', c)))
 ipcMain.handle('palette-search', fromPalette((c, text) => (typeof text === 'string' && text.length <= 200 ? paletteSearch(c, text) : [])))
-ipcMain.on('palette-run', fromPalette((c, id) => typeof id === 'string' && runCommand(c, id)))
-ipcMain.on('palette-close', fromPalette((c) => c.closePopup()))
+// Only from the palette still open: an Enter waiting on a search can arrive
+// after it closed, or another popup took its place.
+ipcMain.on('palette-run', fromPalette((c, id) => c.popupOpen() === 'palette' && typeof id === 'string' && runCommand(c, id)))
+ipcMain.on('palette-close', fromPalette((c) => c.popupOpen() === 'palette' && c.closePopup()))
 
 // Other apps opening links, and HTML and PDF files. Registered before Lit is ready,
 // as macOS sends the link that launched it early.
