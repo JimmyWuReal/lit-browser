@@ -451,13 +451,13 @@
         event.preventDefault()
         event.stopPropagation()
         folderMenu.children[event.key === 'Home' ? 0 : folderMenu.children.length - 1].focus()
-      } else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey
-        // Space opens the menu or picks, unless it is part of a name being typed.
-        && (event.key !== ' ' || event.timeStamp - typedAt <= TYPE_PAUSE)) {
+      } else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
         // Typing a folder's name goes to it, as in a native select: in the
-        // open menu it is focused, else it is chosen.
-        event.preventDefault()
-        typeAhead(event.key, event.timeStamp)
+        // open menu it is focused, else it is chosen. Space opens the menu or
+        // picks, unless it goes on with a name being typed.
+        const space = event.key === ' '
+        if (space && event.timeStamp - typedAt > TYPE_PAUSE) return
+        if (typeAhead(event.key, event.timeStamp, space) || !space) event.preventDefault()
       }
     }
     // What has been typed, cleared after a pause. One letter typed again
@@ -465,7 +465,10 @@
     const TYPE_PAUSE = 600
     let typed = ''
     let typedAt = -Infinity
-    function typeAhead(letter, time) {
+    // Whether a folder matched. Only `onlyIfFound`, what was typed is kept
+    // just when one did.
+    function typeAhead(letter, time, onlyIfFound = false) {
+      const was = [typed, typedAt]
       typed = time - typedAt > TYPE_PAUSE ? letter.toLowerCase() : typed + letter.toLowerCase()
       typedAt = time
       const options = [...folderMenu.children]
@@ -476,9 +479,13 @@
       const start = repeat || typed.length === 1 ? current + 1 : current
       const order = [...options.slice(start), ...options.slice(0, start)]
       const match = order.find((option) => option.textContent.trim().toLowerCase().startsWith(text))
-      if (!match) return
+      if (!match) {
+        if (onlyIfFound) [typed, typedAt] = was
+        return false
+      }
       if (menuOpen()) match.focus()
       else drawFolders(folders[options.indexOf(match)].id)
+      return true
     }
     // The menu is fixed where the trigger was; the panel scrolling moves that,
     // as can the window resizing and the panel settling from its opening
