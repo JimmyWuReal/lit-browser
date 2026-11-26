@@ -428,8 +428,39 @@
         const options = [...folderMenu.children]
         const at = options.indexOf(document.activeElement)
         options[(at + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length].focus()
+      } else if ((event.key === 'Home' || event.key === 'End') && menuOpen()) {
+        event.preventDefault()
+        event.stopPropagation()
+        folderMenu.children[event.key === 'Home' ? 0 : folderMenu.children.length - 1].focus()
+      } else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey
+        // Space opens the menu or picks, unless it is part of a name being typed.
+        && (event.key !== ' ' || event.timeStamp - typedAt <= TYPE_PAUSE)) {
+        // Typing a folder's name goes to it, as in a native select: in the
+        // open menu it is focused, else it is chosen.
+        event.preventDefault()
+        typeAhead(event.key, event.timeStamp)
       }
     })
+    // What has been typed, cleared after a pause. One letter typed again
+    // steps through the folders that start with it.
+    const TYPE_PAUSE = 600
+    let typed = ''
+    let typedAt = -Infinity
+    function typeAhead(letter, time) {
+      typed = time - typedAt > TYPE_PAUSE ? letter.toLowerCase() : typed + letter.toLowerCase()
+      typedAt = time
+      const options = [...folderMenu.children]
+      const current = Math.max(options.indexOf(menuOpen() ? document.activeElement : folderMenu.querySelector('[aria-selected="true"]')), 0)
+      const repeat = [...typed].every((each) => each === typed[0])
+      const text = repeat ? typed[0] : typed
+      // A new search starts after the current folder; a longer one may stay on it.
+      const start = repeat || typed.length === 1 ? current + 1 : current
+      const order = [...options.slice(start), ...options.slice(0, start)]
+      const match = order.find((option) => option.textContent.trim().toLowerCase().startsWith(text))
+      if (!match) return
+      if (menuOpen()) match.focus()
+      else drawFolders(folders[options.indexOf(match)].id)
+    }
     // The menu is fixed where the trigger was; the panel scrolling moves that.
     form.addEventListener('scroll', () => setMenuOpen(false))
 
