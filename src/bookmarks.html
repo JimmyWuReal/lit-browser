@@ -112,8 +112,9 @@
     .select-trigger:focus-visible { outline-offset: 2px; }
 
     /* The kit's select, for the folder. The menu stays mounted and eases
-       both ways; it is fixed to the window (placed by placeMenu) so the
-       panel's scrolling never cuts it off. */
+       both ways. It sits outside the form, fixed to the window (placed by
+       placeMenu), so neither the form's scrolling nor its opening scale
+       moves or cuts it off; it takes no clicks while it leaves. */
     .select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 9px 0 10px; text-align: left; cursor: pointer; }
     .select-trigger span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .select-trigger svg { flex: 0 0 auto; color: var(--dim); transition: transform 320ms var(--settle), color 200ms ease; }
@@ -137,9 +138,10 @@
       visibility: hidden;
       transform: translateY(-4px) scale(.98);
       transform-origin: var(--menu-origin, top);
+      pointer-events: none;
       transition: opacity 160ms ease-out, transform 240ms var(--settle), visibility 0s 240ms;
     }
-    .select.is-open .select-menu { opacity: 1; visibility: visible; transform: none; transition-delay: 0s; }
+    .select-menu.is-open { opacity: 1; visibility: visible; transform: none; pointer-events: auto; transition-delay: 0s; }
     .select-menu button {
       flex: 0 0 auto;
       height: 34px;
@@ -207,7 +209,6 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
           </button>
-          <div class="select-menu" id="folder-menu" role="listbox" aria-labelledby="folder-label"></div>
         </div>
       </div>
       <p class="error" id="error" role="alert"></p>
@@ -216,6 +217,7 @@
         <button class="button is-primary" type="submit">Done</button>
       </div>
     </form>
+    <div class="select-menu" id="folder-menu" role="listbox" aria-labelledby="folder-label"></div>
   </div>
 
   <template id="folder-template">
@@ -408,13 +410,19 @@
     function setMenuOpen(open) {
       if (open) placeMenu()
       folderSelect.classList.toggle('is-open', open)
+      folderMenu.classList.toggle('is-open', open)
       folder.setAttribute('aria-expanded', String(open))
       if (open) folderMenu.querySelector('[aria-selected="true"]')?.focus()
     }
     const menuOpen = () => folderSelect.classList.contains('is-open')
     folder.addEventListener('click', () => setMenuOpen(!menuOpen()))
-    folderSelect.addEventListener('focusout', (event) => { if (!folderSelect.contains(event.relatedTarget)) setMenuOpen(false) })
-    folderSelect.addEventListener('keydown', (event) => {
+    // The field and its menu are one control, though apart in the page.
+    const inSelect = (node) => folderSelect.contains(node) || folderMenu.contains(node)
+    for (const part of [folderSelect, folderMenu]) {
+      part.addEventListener('focusout', (event) => { if (!inSelect(event.relatedTarget)) setMenuOpen(false) })
+      part.addEventListener('keydown', selectKey)
+    }
+    function selectKey(event) {
       if (event.key === 'Escape' && menuOpen()) {
         // Closes the menu only, not the panel.
         event.preventDefault()
@@ -430,8 +438,10 @@
         if (at === -1) return folderMenu.querySelector('[aria-selected="true"]')?.focus()
         options[(at + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length].focus()
       } else if (event.key === 'Tab' && menuOpen()) {
-        // Tabbing out of the menu, even back to its field, closes it.
+        // Tabbing out of the menu closes it, and goes on from its field, as
+        // the menu is elsewhere in the page.
         setMenuOpen(false)
+        folder.focus()
       } else if ((event.key === 'Home' || event.key === 'End') && menuOpen()) {
         event.preventDefault()
         event.stopPropagation()
@@ -444,7 +454,7 @@
         event.preventDefault()
         typeAhead(event.key, event.timeStamp)
       }
-    })
+    }
     // What has been typed, cleared after a pause. One letter typed again
     // steps through the folders that start with it.
     const TYPE_PAUSE = 600
