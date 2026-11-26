@@ -1170,13 +1170,17 @@
       const until = (expires) => expires === null
         ? 'Until Lit quits'
         : `Until ${new Date(expires).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`
-      function cookieLine(domain, { name, value, path, expires }) {
+      // A domain cookie is also sent to the domain's subdomains, which tells
+      // it apart from the host's own of the same name.
+      function cookieLine(domain, { name, value, path, hostOnly, expires }) {
         const line = el('div', 'cookie')
         const words = el('div', 'cookie-text')
         words.append(el('span', 'cookie-name', name || '(no name)'))
         if (value) words.append(el('span', 'cookie-value', value))
-        words.append(el('span', 'cookie-meta', path === '/' ? until(expires) : `${path} · ${until(expires)}`))
-        line.append(words, iconButton(`Remove cookie ${name} on ${domain}${path === '/' ? '' : path}`, () => answer(settings.removeCookies({ domain, name, path }))))
+        const where = [path === '/' ? '' : path, hostOnly ? '' : 'Subdomains too'].filter(Boolean)
+        words.append(el('span', 'cookie-meta', [...where, until(expires)].join(' · ')))
+        line.append(words, iconButton(`Remove cookie ${name} on ${hostOnly ? '' : '.'}${domain}${path === '/' ? '' : path}`,
+          () => answer(settings.removeCookies({ domain, name, path, hostOnly }))))
         return line
       }
       function domainBox({ domain, cookies }) {

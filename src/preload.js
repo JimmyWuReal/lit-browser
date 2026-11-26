@@ -132,8 +132,8 @@ contextBridge.exposeInMainWorld('lit', {
     revealPassword: (id) => ipcRenderer.invoke('passwords-reveal', id),
     copyPassword: (id) => ipcRenderer.invoke('passwords-copy', id),
     // The profile's cookies, as { domains, error? } (see cookiesState in
-    // main). Removing takes { domain } for a domain's, { domain, name, path }
-    // for one, or null for all, which asks first and answers null if not.
+    // main). Removing takes { domain } for a domain's, { domain, name, path,
+    // hostOnly } for one, or null for all, which asks first and answers null if not.
     cookies: () => ipcRenderer.invoke('cookies-get'),
     removeCookies: (target) => ipcRenderer.invoke('cookies-remove', target),
     // Profiles. All but openProfile answer with the new state.
