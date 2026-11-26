@@ -217,6 +217,8 @@
     })
 
     search.addEventListener('keydown', (event) => {
+      // Keys that pick or cancel an input method's candidate are its own.
+      if (event.isComposing || event.keyCode === 229) return
       const count = commands.length
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
