@@ -462,9 +462,15 @@
       else drawFolders(folders[options.indexOf(match)].id)
     }
     // The menu is fixed where the trigger was; the panel scrolling moves that,
-    // and the window resizing can, as can the panel settling from its opening
-    // scale, so it follows.
-    form.addEventListener('scroll', () => setMenuOpen(false))
+    // as can the window resizing and the panel settling from its opening
+    // scale, so it follows. Scrolled out of the panel, the field closes it.
+    form.addEventListener('scroll', () => {
+      if (!menuOpen()) return
+      const field = folder.getBoundingClientRect()
+      const panel = form.getBoundingClientRect()
+      if (field.bottom <= panel.top || field.top >= panel.bottom) setMenuOpen(false)
+      else placeMenu()
+    })
     addEventListener('resize', () => { if (menuOpen()) placeMenu() })
     form.addEventListener('animationend', () => { if (menuOpen()) placeMenu() })
 
