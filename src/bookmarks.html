@@ -86,11 +86,14 @@
     .drop-mark.is-on { opacity: 1; }
     .empty { margin: 0; padding: 10px; color: var(--dim); font-size: 12.5px; }
 
+    /* The form and its folder menu, one dialog; it adds no box of its own. */
+    .form-dialog { display: contents; }
+    .form-dialog[hidden] { display: none; }
     .form { --width: min(320px, calc(100vw - 20px)); margin: 0; padding: 14px; }
     .form h1 { margin: 0 0 12px; font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
     .field { display: block; margin-bottom: 10px; color: var(--dim); font-size: 12px; }
     .field[hidden] { display: none; }
-    .field input, .field select {
+    .field input, .select-trigger {
       display: block;
       width: 100%;
       height: 32px;
@@ -107,11 +110,62 @@
       box-shadow: inset 0 0 0 1px var(--line);
       transition: box-shadow 200ms ease;
     }
-    .field select { appearance: none; text-overflow: ellipsis; }
-    .field input:hover, .field select:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
-    .field input:focus, .field select:focus { box-shadow: inset 0 0 0 1px var(--line-live); }
-    .select { position: relative; display: block; }
-    .select svg { position: absolute; right: 10px; top: 9px; color: var(--dim); pointer-events: none; }
+    .field input:hover, .select-trigger:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .field input:focus, .select.is-open .select-trigger { box-shadow: inset 0 0 0 1px var(--line-live); }
+    .select-trigger:focus-visible { outline-offset: 2px; }
+
+    /* The kit's select, for the folder. The menu stays mounted and eases
+       both ways. It sits outside the form, fixed to the window (placed by
+       placeMenu), so neither the form's scrolling nor its opening scale
+       moves or cuts it off; it takes no clicks while it leaves. */
+    .select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 9px 0 10px; text-align: left; cursor: pointer; }
+    .select-trigger span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .select-trigger svg { flex: 0 0 auto; color: var(--dim); transition: transform 320ms var(--settle), color 200ms ease; }
+    .select.is-open .select-trigger svg { transform: rotate(180deg); color: #fff; }
+    .select-menu {
+      position: fixed;
+      z-index: 5;
+      top: var(--menu-top, 0);
+      left: var(--menu-left, 0);
+      width: var(--menu-width, 0);
+      max-height: var(--menu-height, 220px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden auto;
+      scrollbar-width: none;
+      padding: 5px;
+      border-radius: 12px;
+      background: #1c1c1c;
+      box-shadow: inset 0 0 0 1px var(--line), 0 16px 40px rgba(0, 0, 0, .4);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-4px) scale(.98);
+      transform-origin: var(--menu-origin, top);
+      pointer-events: none;
+      transition: opacity 160ms ease-out, transform 240ms var(--settle), visibility 0s 240ms;
+    }
+    .select-menu.is-open { opacity: 1; visibility: visible; transform: none; pointer-events: auto; transition-delay: 0s; }
+    .select-menu button {
+      flex: 0 0 auto;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #a8a8a8;
+      font-size: 12.5px;
+      letter-spacing: -.01em;
+      text-align: left;
+      cursor: pointer;
+      transition: background-color 140ms ease-out, color 140ms ease-out;
+    }
+    .select-menu button span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .select-menu button svg { flex: 0 0 auto; }
+    .select-menu button:is(:hover, :focus-visible) { outline: 0; color: #fff; background: rgba(255, 255, 255, .07); }
+    .select-menu button[aria-selected='true'] { color: #fff; }
     .error { margin: 0 0 10px; color: #ff8f8f; font-size: 12px; }
     .error:empty { display: none; }
     .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
@@ -146,23 +200,29 @@
 <body>
   <div class="backdrop" id="backdrop">
     <div class="panel list" id="list" role="menu" tabindex="-1" hidden></div>
-    <form class="panel form" id="form" role="dialog" aria-modal="true" aria-labelledby="heading" hidden>
-      <h1 id="heading"></h1>
-      <label class="field">Name<input id="title" type="text" maxlength="1024" autocomplete="off" spellcheck="false"></label>
-      <label class="field" id="url-field">Address<input id="url" type="text" autocomplete="off" spellcheck="false"></label>
-      <label class="field" id="folder-field">Folder
-        <span class="select">
-          <select id="folder"></select>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
-        </span>
-      </label>
-      <p class="error" id="error" role="alert"></p>
-      <div class="actions">
-        <button class="button" id="remove" type="button">Delete</button>
-        <button class="button is-primary" type="submit">Done</button>
-      </div>
-    </form>
+    <div class="form-dialog" id="form-dialog" role="dialog" aria-modal="true" aria-labelledby="heading" hidden>
+      <form class="panel form" id="form">
+        <h1 id="heading"></h1>
+        <label class="field">Name<input id="title" type="text" maxlength="1024" autocomplete="off" spellcheck="false"></label>
+        <label class="field" id="url-field">Address<input id="url" type="text" autocomplete="off" spellcheck="false"></label>
+        <div class="field" id="folder-field"><span id="folder-label">Folder</span>
+          <div class="select" id="folder-select">
+            <button class="select-trigger" id="folder" type="button" aria-haspopup="listbox" aria-expanded="false"
+              aria-controls="folder-menu" aria-labelledby="folder-label folder-value">
+              <span id="folder-value"></span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+            </button>
+          </div>
+        </div>
+        <p class="error" id="error" role="alert"></p>
+        <div class="actions">
+          <button class="button" id="remove" type="button">Delete</button>
+          <button class="button is-primary" type="submit">Done</button>
+        </div>
+      </form>
+      <div class="select-menu" id="folder-menu" role="listbox" aria-labelledby="folder-label"></div>
+    </div>
   </div>
 
   <template id="folder-template">
@@ -170,6 +230,10 @@
       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
     </svg>
+  </template>
+  <template id="check-template">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg>
   </template>
   <template id="globe-template">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -282,8 +346,9 @@
       get('heading').textContent = state.heading
       title.value = state.values.title
       url.value = state.values.url ?? ''
-      folder.replaceChildren(new Option('Bookmark bar', ''), ...state.folders.map(({ id, title }) => new Option(title || 'Folder', id)))
-      folder.value = state.values.folderId ?? ''
+      folders = [{ id: '', title: 'Bookmark bar' }, ...state.folders.map(({ id, title }) => ({ id, title: title || 'Folder' }))]
+      setMenuOpen(false)
+      drawFolders(state.values.folderId ?? '')
       get('url-field').hidden = get('folder-field').hidden = state.folder
       get('remove').hidden = !state.id
       error.textContent = ''
@@ -294,7 +359,7 @@
       view = state
       const isList = state.kind === 'list'
       list.hidden = !isList
-      form.hidden = isList
+      get('form-dialog').hidden = isList
       const panel = isList ? list : form
       document.body.style.setProperty('--x', `${state.at.x}px`)
       document.body.style.setProperty('--y', `${state.at.y}px`)
@@ -309,11 +374,140 @@
       else { title.focus(); title.setSelectionRange(0, title.value.length, 'backward') }
     }
 
+    // The folder select: one of `folders` ({ id, title }, the bar's id
+    // being ''), chosen as `folderId`. Focus lives in the menu while it is
+    // open; losing it closes the menu, as Escape does.
+    const [folderSelect, folderMenu, folderValue] = ['folder-select', 'folder-menu', 'folder-value'].map(get)
+    let folders = []
+    let folderId = ''
+    function drawFolders(id) {
+      folderId = folders.some((each) => each.id === id) ? id : ''
+      folderValue.textContent = folders.find((each) => each.id === folderId)?.title ?? ''
+      folderMenu.replaceChildren(...folders.map((each) => {
+        const option = document.createElement('button')
+        option.type = 'button'
+        option.tabIndex = -1
+        option.setAttribute('role', 'option')
+        option.setAttribute('aria-selected', String(each.id === folderId))
+        const name = document.createElement('span')
+        name.textContent = each.title
+        option.append(name)
+        if (each.id === folderId) option.append(get('check-template').content.cloneNode(true))
+        option.addEventListener('click', () => { drawFolders(each.id); setMenuOpen(false); folder.focus() })
+        return option
+      }))
+    }
+    // Under the trigger, or over it when only there it has room.
+    function placeMenu() {
+      const box = folder.getBoundingClientRect()
+      const below = innerHeight - box.bottom - 16
+      const above = box.top - 16
+      const height = Math.min(folderMenu.scrollHeight, 220)
+      const under = below >= height || below >= above
+      const room = Math.max(Math.min(height, under ? below : above), 34)
+      const style = document.body.style
+      style.setProperty('--menu-left', `${box.left}px`)
+      style.setProperty('--menu-width', `${box.width}px`)
+      style.setProperty('--menu-height', `${room}px`)
+      style.setProperty('--menu-top', `${under ? box.bottom + 6 : box.top - 6 - room}px`)
+      style.setProperty('--menu-origin', under ? 'top' : 'bottom')
+    }
+    function setMenuOpen(open) {
+      if (open) placeMenu()
+      folderSelect.classList.toggle('is-open', open)
+      folderMenu.classList.toggle('is-open', open)
+      folder.setAttribute('aria-expanded', String(open))
+      if (open) folderMenu.querySelector('[aria-selected="true"]')?.focus()
+    }
+    const menuOpen = () => folderSelect.classList.contains('is-open')
+    folder.addEventListener('click', () => setMenuOpen(!menuOpen()))
+    // The field and its menu are one control, though apart in the page.
+    const inSelect = (node) => folderSelect.contains(node) || folderMenu.contains(node)
+    for (const part of [folderSelect, folderMenu]) {
+      part.addEventListener('focusout', (event) => { if (!inSelect(event.relatedTarget)) setMenuOpen(false) })
+      part.addEventListener('keydown', selectKey)
+    }
+    function selectKey(event) {
+      if (event.key === 'Escape' && menuOpen()) {
+        // Closes the menu only, not the panel.
+        event.preventDefault()
+        event.stopPropagation()
+        setMenuOpen(false)
+        folder.focus()
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        event.stopPropagation()
+        if (!menuOpen()) return setMenuOpen(true)
+        const options = [...folderMenu.children]
+        const at = options.indexOf(document.activeElement)
+        if (at === -1) return folderMenu.querySelector('[aria-selected="true"]')?.focus()
+        options[(at + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length].focus()
+      } else if (event.key === 'Tab' && menuOpen()) {
+        // Tabbing out of the menu closes it, and goes on from its field, as
+        // the menu is elsewhere in the page.
+        setMenuOpen(false)
+        folder.focus()
+      } else if ((event.key === 'Home' || event.key === 'End') && menuOpen()) {
+        event.preventDefault()
+        event.stopPropagation()
+        folderMenu.children[event.key === 'Home' ? 0 : folderMenu.children.length - 1].focus()
+      } else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        // Typing a folder's name goes to it, as in a native select: in the
+        // open menu it is focused, else it is chosen. Space opens the menu or
+        // picks, unless it goes on with a name being typed.
+        const space = event.key === ' '
+        if (space && event.timeStamp - typedAt > TYPE_PAUSE) return
+        if (typeAhead(event.key, event.timeStamp, space) || !space) event.preventDefault()
+      }
+    }
+    // What has been typed, cleared after a pause. One letter typed again
+    // steps through the folders that start with it.
+    const TYPE_PAUSE = 600
+    let typed = ''
+    let typedAt = -Infinity
+    // Whether a folder matched. Only `onlyIfFound`, what was typed is kept
+    // just when one did.
+    function typeAhead(letter, time, onlyIfFound = false) {
+      const was = [typed, typedAt]
+      typed = time - typedAt > TYPE_PAUSE ? letter.toLowerCase() : typed + letter.toLowerCase()
+      typedAt = time
+      const options = [...folderMenu.children]
+      const current = Math.max(options.indexOf(menuOpen() ? document.activeElement : folderMenu.querySelector('[aria-selected="true"]')), 0)
+      const repeat = [...typed].every((each) => each === typed[0])
+      const text = repeat ? typed[0] : typed
+      // A new search starts after the current folder; a longer one may stay on it.
+      const start = repeat || typed.length === 1 ? current + 1 : current
+      const order = [...options.slice(start), ...options.slice(0, start)]
+      const match = order.find((option) => option.textContent.trim().toLowerCase().startsWith(text))
+      if (!match) {
+        if (onlyIfFound) [typed, typedAt] = was
+        return false
+      }
+      if (menuOpen()) match.focus()
+      else drawFolders(folders[options.indexOf(match)].id)
+      return true
+    }
+    // The menu is fixed where the trigger was; the panel scrolling moves that,
+    // as can the window resizing and the panel settling from its opening
+    // scale, so it follows. Scrolled out of the panel, the field closes it.
+    form.addEventListener('scroll', () => {
+      if (!menuOpen()) return
+      const field = folder.getBoundingClientRect()
+      const panel = form.getBoundingClientRect()
+      if (field.top < panel.bottom && field.bottom > panel.top) return placeMenu()
+      // Focus leaves the hidden options for the field, where Tab goes on from.
+      const hadFocus = folderMenu.contains(document.activeElement)
+      setMenuOpen(false)
+      if (hadFocus) folder.focus({ preventScroll: true })
+    })
+    addEventListener('resize', () => { if (menuOpen()) placeMenu() })
+    form.addEventListener('animationend', () => { if (menuOpen()) placeMenu() })
+
     const close = () => api.close()
     form.addEventListener('submit', async (event) => {
       event.preventDefault()
       const saving = view
-      const { error: problem = '' } = await api.save({ title: title.value, url: url.value, folderId: folder.value })
+      const { error: problem = '' } = await api.save({ title: title.value, url: url.value, folderId })
       if (view === saving) error.textContent = problem
     })
     get('remove').addEventListener('click', () => api.remove())
