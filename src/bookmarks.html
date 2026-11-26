@@ -494,8 +494,11 @@
       if (!menuOpen()) return
       const field = folder.getBoundingClientRect()
       const panel = form.getBoundingClientRect()
-      if (field.bottom <= panel.top || field.top >= panel.bottom) setMenuOpen(false)
-      else placeMenu()
+      if (field.top < panel.bottom && field.bottom > panel.top) return placeMenu()
+      // Focus leaves the hidden options for the field, where Tab goes on from.
+      const hadFocus = folderMenu.contains(document.activeElement)
+      setMenuOpen(false)
+      if (hadFocus) folder.focus({ preventScroll: true })
     })
     addEventListener('resize', () => { if (menuOpen()) placeMenu() })
     form.addEventListener('animationend', () => { if (menuOpen()) placeMenu() })
