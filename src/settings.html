@@ -1172,12 +1172,12 @@
         : `Until ${new Date(expires).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`
       // A domain cookie is also sent to the domain's subdomains, which tells
       // it apart from the host's own of the same name.
-      function cookieLine(domain, { name, value, path, hostOnly, expires }) {
+      function cookieLine(domain, { name, value, path, hostOnly, copies, expires }) {
         const line = el('div', 'cookie')
         const words = el('div', 'cookie-text')
         words.append(el('span', 'cookie-name', name || '(no name)'))
         if (value) words.append(el('span', 'cookie-value', value))
-        const where = [path === '/' ? '' : path, hostOnly ? '' : 'Subdomains too'].filter(Boolean)
+        const where = [path === '/' ? '' : path, hostOnly ? '' : 'Subdomains too', copies > 1 ? `${copies} copies, one per site it is embedded in` : ''].filter(Boolean)
         words.append(el('span', 'cookie-meta', [...where, until(expires)].join(' · ')))
         line.append(words, iconButton(`Remove cookie ${name} on ${hostOnly ? '' : '.'}${domain}${path === '/' ? '' : path}`,
           () => answer(settings.removeCookies({ domain, name, path, hostOnly }))))

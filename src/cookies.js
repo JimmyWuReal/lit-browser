@@ -12,26 +12,41 @@ const domainOf = (cookie) => String(cookie.domain || '').replace(/^\./, '').toLo
 // keeps a domain cookie's domain with a dot.
 const isHostOnly = (cookie) => !String(cookie.domain || '').startsWith('.')
 
+// Chromium's identity for a cookie: its domain as stored (a domain cookie
+// keeps its dot), path and name. Copies kept apart for each site a frame is
+// embedded in (CHIPS) share one.
+const keyOf = (cookie) => `${cookie.domain}\n${cookie.path || '/'}\n${cookie.name}`
+
 // Sorts by labels from the right, so accounts.google.com follows google.com
 // instead of landing among the a's.
 const sortKey = (domain) => domain.split('.').reverse().join('.')
 
-// [{ domain, cookies: [{ name, value, path, hostOnly, expires, secure, httpOnly }] }]:
+// [{ domain, cookies: [{ name, value, path, hostOnly, copies, expires, secure, httpOnly }] }]:
 // `expires` is in ms since 1970, or null for one kept only until Lit quits.
 // A host's own cookies and its domain cookies share one domain, so one name
 // and path can be there twice, told apart by `hostOnly`.
+// A cookie a frame keeps apart for each site it is embedded in (CHIPS) is
+// there once per site, and Electron neither tells those copies apart nor
+// removes one alone, so they are one entry with its number of `copies`.
 function list(cookies) {
   const domains = new Map()
   for (const cookie of cookies) {
     const domain = domainOf(cookie)
     if (!domain) continue
-    if (!domains.has(domain)) domains.set(domain, [])
+    if (!domains.has(domain)) domains.set(domain, new Map())
+    const items = domains.get(domain)
+    const key = keyOf(cookie)
+    if (items.has(key)) {
+      items.get(key).copies += 1
+      continue
+    }
     const value = String(cookie.value ?? '')
-    domains.get(domain).push({
+    items.set(key, {
       name: String(cookie.name ?? ''),
       value: value.length > VALUE_LIMIT ? `${value.slice(0, VALUE_LIMIT)}…` : value,
       path: cookie.path || '/',
       hostOnly: isHostOnly(cookie),
+      copies: 1,
       expires: cookie.session || !Number.isFinite(cookie.expirationDate) ? null : Math.round(cookie.expirationDate * 1000),
       secure: Boolean(cookie.secure),
       httpOnly: Boolean(cookie.httpOnly),
@@ -39,7 +54,7 @@ function list(cookies) {
   }
   return [...domains]
     .sort(([a], [b]) => sortKey(a).localeCompare(sortKey(b)))
-    .map(([domain, items]) => ({ domain, cookies: items.sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path) || b.hostOnly - a.hostOnly) }))
+    .map(([domain, items]) => ({ domain, cookies: [...items.values()].sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path) || b.hostOnly - a.hostOnly) }))
 }
 
 // Whether `target` names something to remove: a domain's cookies
@@ -59,10 +74,6 @@ function pick(cookies, target) {
 // one it is sent to. Always https, which every cookie is sent to, and from
 // which Chromium lets a cookie be set even beside a secure one of its name.
 const urlOf = (cookie) => `https://${domainOf(cookie)}${cookie.path || '/'}`
-
-// Chromium's identity for a cookie: its domain as stored (a domain cookie
-// keeps its dot), path and name.
-const keyOf = (cookie) => `${cookie.domain}\n${cookie.path || '/'}\n${cookie.name}`
 
 // Electron removes every cookie of that name sent to the address, so
 // removing `sid` at /app also takes `sid` at /, and a host's takes its

@@ -24,9 +24,18 @@ test('list groups cookies by domain, related domains together', () => {
   assert.deepEqual(domains.map((item) => item.domain), ['a.com', 'b.com', 'google.com', 'accounts.google.com'])
   // A host's own cookies and its domain cookies are one domain, by name.
   assert.deepEqual(domains[2].cookies, [
-    { name: 'AEC', value: '', path: '/', hostOnly: true, expires: null, secure: false, httpOnly: false },
-    { name: 'NID', value: '', path: '/', hostOnly: false, expires: 1800000000400, secure: true, httpOnly: true },
+    { name: 'AEC', value: '', path: '/', hostOnly: true, copies: 1, expires: null, secure: false, httpOnly: false },
+    { name: 'NID', value: '', path: '/', hostOnly: false, copies: 1, expires: 1800000000400, secure: true, httpOnly: true },
   ])
+})
+
+test('list makes copies kept for each embedding site one entry', () => {
+  const [{ cookies }] = list([
+    cookie({ domain: 'embed.com', name: 'pc', value: 'one' }),
+    cookie({ domain: 'embed.com', name: 'pc', value: 'two' }),
+    cookie({ domain: '.embed.com', name: 'pc' }),
+  ])
+  assert.deepEqual(cookies.map(({ value, hostOnly, copies }) => [value, hostOnly, copies]), [['one', true, 2], ['', false, 1]])
 })
 
 test('list cuts long values', () => {
