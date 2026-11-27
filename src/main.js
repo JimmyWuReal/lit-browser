@@ -1189,6 +1189,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const frame = current?.fullScreen !== 'on' && profile.settings.framePages
     const tabsAt = tabsPlace(profile.settings)
     const beside = current?.fullScreen !== 'on' && tabsAt === 'side'
+    // The page moves sideways with the sidebar, and a list of logins over
+    // it would be left where it was, as when the window is resized.
+    if (beside !== besideSidebar) hideLogins()
     if (top !== pageTop || frame !== framed || beside !== besideSidebar) { pageTop = top; framed = frame; besideSidebar = beside; layout() }
     const title = signInPage(current)?.url || current?.title || (current?.started ? current.url : '') || 'New Tab'
     const named = profiles.length > 1 ? `${title} — ${profile.name}` : title

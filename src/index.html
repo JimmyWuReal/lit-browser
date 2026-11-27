@@ -1112,6 +1112,8 @@
       tabList.setAttribute('aria-orientation', tabsAt === 'side' ? 'vertical' : 'horizontal')
       // Hiding the sidebar takes focus from a tab in it; the page gets it.
       if (tabsAt === 'none' && focused) window.lit.focusActive()
+      // The address field moves, so its list would be left where it was.
+      if (relaid) closeSuggestions()
 
       for (const [id, elements] of tabElements) {
         if (ids.has(id)) continue
