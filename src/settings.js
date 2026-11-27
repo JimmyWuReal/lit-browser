@@ -279,6 +279,20 @@ const SECTIONS = [
         default: true,
       },
       {
+        key: 'sleepTabsAfter',
+        label: 'Sleep tabs',
+        description: 'Tabs you haven’t looked at for this long close their page to save memory, keeping their title, icon and back and forward history, and load again when you click them. Never a tab playing sound, using your camera, microphone or screen, or on a site allowed to show notifications.',
+        type: 'choice',
+        options: [
+          { value: 0, label: 'Never' },
+          { value: 15, label: '15 min' },
+          { value: 30, label: '30 min' },
+          { value: 60, label: '1 hour' },
+          { value: 120, label: '2 hours' },
+        ],
+        default: 30,
+      },
+      {
         key: 'closeWindowWithLastTab',
         label: 'Close window with its last tab',
         description: 'Otherwise closing the last tab leaves a new one.',
