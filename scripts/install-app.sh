@@ -4,7 +4,13 @@
 set -e
 cd "$(dirname "$0")/.."
 
-npx electron-builder
+# With a provisioning profile (README: Passkeys), the copy is signed with
+# the Developer ID and can use Apple's passkey sheet; else ad-hoc signed.
+if [ -f build/Lit.provisionprofile ]; then
+  npm run build:signed
+else
+  npm run build
+fi
 
 # electron-builder names the folder by architecture (mac-arm64 or mac).
 built=$(ls -d out/mac*/Lit.app | head -n 1)

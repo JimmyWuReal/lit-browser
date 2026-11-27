@@ -7,14 +7,17 @@
   "scripts": {
     "start": "LIT_FOREGROUND=1 electron .",
     "dev": "LIT_FOREGROUND=1 node --watch-path=src node_modules/electron/cli.js .",
-    "build": "electron-builder",
+    "native": "node-gyp rebuild --directory native",
+    "build": "npm run native && electron-builder",
+    "build:signed": "npm run native && electron-builder --config build/signed.config.js",
     "app": "sh scripts/install-app.sh",
     "test": "node --test"
   },
   "build": {
     "appId": "app.jimmywu.lit",
     "directories": { "output": "out" },
-    "files": ["src/**/*"],
+    "files": ["src/**/*", "native/build/Release/passkeys.node"],
+    "asarUnpack": ["native/build/Release/passkeys.node"],
     "mac": {
       "target": "dir",
       "icon": "build/icon.png",
@@ -49,11 +52,13 @@
   "license": "MIT",
   "type": "commonjs",
   "dependencies": {
-    "@ghostery/adblocker-electron": "^2.20.3"
+    "@ghostery/adblocker-electron": "^2.20.3",
+    "tldts": "^7.6.2"
   },
   "devDependencies": {
     "electron": "^45.4.1",
-    "electron-builder": "^26.18.0"
+    "electron-builder": "^26.18.0",
+    "node-gyp": "^12.4.0"
   },
   "private": true
 }

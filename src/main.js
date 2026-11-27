@@ -28,6 +28,7 @@ const sessionStore = require('./session')
 const shortcuts = require('./shortcuts')
 const downloadsStore = require('./downloads')
 const zoom = require('./zoom')
+const webauthn = require('./webauthn')
 const pdf = require('./pdf')
 const permissions = require('./permissions')
 const passwords = require('./passwords')
@@ -69,8 +70,10 @@ const PRELOAD = path.join(__dirname, 'preload.js')
 // What runs in web pages.
 const PAGE_PRELOAD = path.join(__dirname, 'page.js')
 const PASSKEYS_PRELOAD = path.join(__dirname, 'passkeys.js')
-// Runs preloads in the frames inside a page too, for passkeys.js. page.js and
-// the ad blocker's keep to the top frame. Pages get no Node either way.
+const PASSKEY_SHEET_PRELOAD = path.join(__dirname, 'passkeysheet.js')
+// Runs preloads in the frames inside a page too, for passkeys.js and
+// passkeysheet.js. page.js and the ad blocker's keep to the top frame. Pages
+// get no Node either way.
 const PAGE_PREFERENCES = { nodeIntegrationInSubFrames: true }
 // Keep in sync with .menu padding and .row height in suggestions.html.
 const SUGGESTION_ROW = 38
@@ -486,7 +489,7 @@ function setUpSession(ses, profile, store) {
   ses.on('will-download', (_event, item) => trackDownload(item, ses, profile))
   ses.webRequest.onBeforeRedirect({ urls: ['<all_urls>'], types: ['mainFrame'] }, (details) => onAppRedirect(store, details))
   ses.registerPreloadScript({ type: 'frame', filePath: PAGE_PRELOAD })
-  ses.registerPreloadScript({ type: 'frame', filePath: PASSKEYS_PRELOAD })
+  ses.registerPreloadScript({ type: 'frame', filePath: passkeySheet ? PASSKEY_SHEET_PRELOAD : PASSKEYS_PRELOAD })
   applyDoNotTrack(ses, profile)
 }
 
@@ -903,7 +906,9 @@ function settingsState(profile, error) {
   for (const setting of settingsStore.SETTINGS) {
     if (setting.type === 'shortcut') labels[setting.key] = settings[setting.key] ? shortcuts.label(settings[setting.key]) : ''
   }
-  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), passwords: passwords.list(profile.passwords), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, defaultBrowser: defaultBrowser(), ...(error && { error }) }
+  // With the passkey sheet, security keys need no setting.
+  const sections = passkeySheet ? settingsStore.SECTIONS.filter((section) => section.id !== 'securityKeys') : settingsStore.SECTIONS
+  return { sections, values: settings, labels, sitePermissions: permissions.list(sitePermissions), passwords: passwords.list(profile.passwords), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, defaultBrowser: defaultBrowser(), ...(error && { error }) }
 }
 
 // Whether Lit is the Mac's default browser: 'yes', 'no', or 'unavailable' when
@@ -973,9 +978,72 @@ function applyDoNotTrack(ses, profile) {
 // A profile's session, and those of its private windows.
 const sessionsOf = (profile) => [profile.session, ...[...privateSessions].filter(([, owner]) => owner === profile).map(([ses]) => ses)]
 
-// Unless Security Keys is on, Lit has no passkeys (src/passkeys.js). Called
-// once, before any page: their processes take this as they start, and tabs and
-// profiles share them.
+// Apple's passkey sheet (native/passkeys.m, built by `npm run native`), when
+// this copy of Lit may use it: signed with the entitlement Apple gives
+// browsers, on macOS 14.4 or later. Then every page gets src/passkeysheet.js
+// and passkeys work; else src/passkeys.js turns them away (turnAwayPasskeys).
+const passkeySheet = (() => {
+  try {
+    const sheet = require(path.join(__dirname, '..', 'native', 'build', 'Release', 'passkeys.node'))
+    return sheet.available() ? sheet : null
+  } catch {
+    return null
+  }
+})()
+
+// The passkey request the sheet shows, if any: there is one sheet, so one
+// request at a time, from any page.
+let passkeyAsk = null
+
+// A page's passkey request (src/passkeysheet.js), shown in the sheet over its
+// window. Only the tab in front of a focused window may ask, as Chromium
+// wants the page focused; src/webauthn.js checks the request against the
+// frame's origin, as Chromium knows it. Always answered, as the page waits.
+async function askPasskey(event, kind, options) {
+  const frame = event.senderFrame
+  const contents = event.sender
+  if (!passkeySheet || passkeyAsk || !frame || frame.isDestroyed()) return webauthn.refusal()
+  const controls = [...openWindows].find((each) => each.showsPage(contents))
+  if (!controls) return webauthn.refusal()
+  const checked = webauthn.check(kind, options, { origin: frame.origin, topOrigin: frame.top?.origin })
+  if (checked.error) return checked
+  const answer = await new Promise((resolve) => {
+    const ask = passkeyAsk = { frame, resolve }
+    // Closed when the page goes or the frame moves on, so the sheet never
+    // answers a page that didn't ask.
+    const gone = () => passkeyAsk === ask && passkeySheet.cancel()
+    const moved = (_event, _url, _code, _text, _isMainFrame, processId, routingId) => {
+      if (frame.isDestroyed() || (processId === frame.processId && routingId === frame.routingId)) gone()
+    }
+    contents.once('destroyed', gone)
+    contents.on('did-frame-navigate', moved)
+    const timer = setTimeout(gone, checked.timeout)
+    passkeySheet.perform(controls.win.getNativeWindowHandle(), checked.request, (result) => {
+      clearTimeout(timer)
+      if (!contents.isDestroyed()) {
+        contents.off('destroyed', gone)
+        contents.off('did-frame-navigate', moved)
+      }
+      passkeyAsk = null
+      resolve(result)
+    })
+  })
+  if (!answer?.credential) return webauthn.errorOf(answer?.error)
+  try {
+    return { credential: webauthn.credentialOf(kind, answer.credential, checked) }
+  } catch {
+    return webauthn.refusal()
+  }
+}
+ipcMain.handle('passkey', askPasskey)
+// The page gave up (its AbortSignal): the sheet closes if it is for that frame.
+ipcMain.on('passkey-cancel', (event) => {
+  if (passkeyAsk && passkeyAsk.frame === event.senderFrame) passkeySheet.cancel()
+})
+
+// Unless Lit can use the sheet or Security Keys is on, Lit has no passkeys
+// (src/passkeys.js). Called once, before any page: their processes take this
+// as they start, and tabs and profiles share them.
 function turnAwayPasskeys() {
   // Sites that look for PublicKeyCredential find none, in any frame, and offer
   // another way to sign in.
@@ -2918,6 +2986,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     askSignIn,
     answerSignIn,
     hasTab: (contents) => tabs.some((tab) => tab.page === contents),
+    // Whether `contents` is the page in front, in a focused window, with no
+    // popup over it.
+    showsPage: (contents) => { const tab = active(); return Boolean(tab?.page === contents && !tab.error && !popupOpen && win.isFocused()) },
     // Whether a frame started the page's current navigation.
     startedByFrame: (contents) => Boolean(tabs.find((tab) => tab.page === contents)?.startedByFrame),
     answerPrompt,
@@ -3556,7 +3627,7 @@ app.whenReady().then(async () => {
   if (swept !== profileList) setProfileList(swept)
   for (const profile of profileList.profiles) openProfile(profile)
   currentProfile = profiles.find((profile) => profile.id === profileList.last)
-  if (!shared().securityKeys) turnAwayPasskeys()
+  if (!passkeySheet && !shared().securityKeys) turnAwayPasskeys()
   adblock = createAdblock(path.join(root, 'adblock.bin'))
   // A saved engine is in use before any tab loads; first-time lists
   // download in the background.
