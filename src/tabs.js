@@ -56,7 +56,11 @@ function keepNewest(closed, limit) {
   const newest = closed.at(-1)
   if (newest?.tabs?.length > limit) {
     const start = Math.min(Math.max(newest.activeIndex - Math.floor(limit / 2), 0), newest.tabs.length - limit)
-    closed[closed.length - 1] = { ...newest, tabs: newest.tabs.slice(start, start + limit), activeIndex: newest.activeIndex - start }
+    // Its split view stays only while both its tabs do.
+    const { split, ...rest } = newest
+    const indexes = split?.indexes.map((index) => index - start)
+    const kept = indexes?.every((index) => index >= 0 && index < limit) && { split: { ...split, indexes } }
+    closed[closed.length - 1] = { ...rest, tabs: newest.tabs.slice(start, start + limit), activeIndex: newest.activeIndex - start, ...kept }
   }
   let count = 0
   let keep = 0
@@ -97,4 +101,35 @@ function sidebarToggle(values) {
   ]
 }
 
-module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle }
+// Split view: two tabs of a window side by side, as { ids: [left, right],
+// ratio }, `ratio` being the left pane's share of the width. It shows while
+// either of its tabs is the active one.
+
+// The two panes ({ x, width }) across `area` ({ x, width }), `gap` apart:
+// the left one `ratio` of the room, neither narrower than `min`, unless the
+// room is too small for that, when they share it evenly.
+function splitPanes(area, ratio, gap, min) {
+  const room = Math.max(area.width - gap, 0)
+  const least = Math.min(min, room / 2)
+  const left = Math.round(Math.min(Math.max(room * ratio, least), room - least))
+  return [{ x: area.x, width: left }, { x: area.x + left + gap, width: room - left }]
+}
+
+// The ratio that puts the middle of the gap at `x`, keeping both panes at
+// least `min` wide as splitPanes does.
+function splitRatio(area, x, gap, min) {
+  const room = Math.max(area.width - gap, 1)
+  const least = Math.min(min, room / 2)
+  return Math.min(Math.max(x - area.x - gap / 2, least), room - least) / room
+}
+
+// The split once tab `id` goes beside the active one: a new pair, the active
+// tab on the left, or, while the active tab is in one already, `id` in place
+// of the other tab. Pairing a tab with itself changes nothing.
+function splitWith(split, activeId, id) {
+  if (id === activeId) return split
+  if (split?.ids.includes(activeId)) return { ...split, ids: split.ids.map((each) => (each === activeId ? each : id)) }
+  return { ids: [activeId, id], ratio: 0.5 }
+}
+
+module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith }

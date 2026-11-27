@@ -95,10 +95,14 @@
       font-weight: 500;
       letter-spacing: -.01em;
       text-align: left;
-      transition: color 260ms ease, background-color 200ms ease;
+      transition: color 260ms ease, background-color 200ms ease, box-shadow 200ms ease;
     }
     .tab:not(.is-active):hover .tab-select { color: #e6e6e6; background: rgba(255, 255, 255, .05); }
     .tab.is-active .tab-select { color: #ededed; }
+    /* Split view's two tabs keep a hairline; while they show, the one beside
+       the active tab has a faint fill too. */
+    .tab.is-split .tab-select { box-shadow: inset 0 0 0 1px var(--line); }
+    .tab.is-beside .tab-select { color: #e6e6e6; background: rgba(255, 255, 255, .05); }
     /* A tab being dragged, and the edge of the one it would land at. */
     .tab.is-dragged { opacity: .4; }
     .tab::before, .tab::after {
@@ -700,6 +704,15 @@
     /* In the card a framed page would be: PAGE_INSET and PAGE_RADIUS in main.js. */
     .framed.failed .error { margin: 0 6px 6px; border-radius: 10px; background: #111; }
     .private.framed.failed .error { background: #14111c; }
+    /* In split view, in the active tab's pane (see drawPanes). */
+    .split.failed .error {
+      position: fixed;
+      left: var(--pane-x);
+      top: var(--pane-y);
+      width: var(--pane-width);
+      height: var(--pane-height);
+      margin: 0;
+    }
     .error-box {
       display: flex;
       flex-direction: column;
@@ -731,6 +744,88 @@
     }
     .outline-button:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
     .outline-button:active { transform: scale(.97); transition-duration: 55ms; }
+
+    /* Split view: the cards main lays its two pages over, at the places it
+       sends (SPLIT_GAP in main.js), and the divider in the gap between them.
+       The active page has a ring around it, in the gap. A page not on show
+       (a blank tab, one that failed) leaves its card showing: the active
+       one's holds the error page, or, blank, a list of tabs to show there;
+       the other's names its tab, to click to. */
+    .panes[hidden] { display: none; }
+    .pane {
+      position: fixed;
+      display: flex;
+      border-radius: 10px;
+      background: #111;
+      box-shadow: 0 0 0 2px transparent;
+      transition: box-shadow 200ms ease;
+    }
+    .private .pane { background: #14111c; }
+    .pane.is-active { box-shadow: 0 0 0 2px var(--line-hover); }
+    .pane-label {
+      flex: 1;
+      min-width: 0;
+      padding: 24px;
+      border: 0;
+      border-radius: inherit;
+      background: transparent;
+      color: var(--dim);
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      overflow-wrap: anywhere;
+      transition: color 200ms ease;
+    }
+    .pane-label:hover { color: #ededed; }
+    .pane-pick {
+      width: min(320px, 100% - 48px);
+      max-height: 100%;
+      display: flex;
+      flex-direction: column;
+      margin: auto;
+      padding: 32px 0;
+    }
+    .pane-pick p { margin: 0 0 14px; color: #a0a0a0; font-size: 13px; line-height: 1.7; text-align: center; text-wrap: pretty; }
+    .pick-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow: hidden auto; }
+    .pick-row {
+      flex: 0 0 auto;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #a0a0a0;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      text-align: left;
+      transition: color 200ms ease, background-color 200ms ease, transform 140ms var(--settle);
+    }
+    .pick-row:hover { color: #fff; background: rgba(255, 255, 255, .05); }
+    .pick-row:active { transform: scale(.98); transition-duration: 55ms; }
+    .pick-row > span:last-child { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .divider {
+      position: fixed;
+      display: grid;
+      place-items: center;
+      cursor: col-resize;
+      outline: 0;
+      touch-action: none;
+    }
+    .divider::before {
+      content: '';
+      width: 2px;
+      height: 28px;
+      border-radius: 1px;
+      background: var(--line);
+      transition: background-color 200ms ease, height 240ms var(--settle);
+    }
+    .divider:hover::before,
+    .divider:focus-visible::before,
+    .divider.is-dragging::before { height: 44px; background: var(--line-live); }
 
     /* A private window (?private in its address, from main) is a shade of
        violet instead of grey, with a Private badge in the strip and a note
@@ -926,6 +1021,11 @@
   </form>
 
   <!-- The active tab's error page (see errors.js). -->
+  <div class="panes" id="panes" hidden>
+    <div class="pane"></div>
+    <div class="pane"></div>
+    <div class="divider" id="divider" role="separator" aria-orientation="vertical" aria-label="Split view divider" tabindex="0" title="Drag to resize, double-click to make even"></div>
+  </div>
   <main class="error" id="error" tabindex="-1" aria-labelledby="error-title" aria-describedby="error-detail">
     <div class="error-box">
       <h1 id="error-title"></h1>
@@ -1128,6 +1228,8 @@
         const isActive = tab.id === state.activeId
         const label = tabLabel(tab)
         elements.root.classList.toggle('is-active', isActive)
+        elements.root.classList.toggle('is-split', Boolean(next.split?.includes(tab.id)))
+        elements.root.classList.toggle('is-beside', !isActive && Boolean(panes?.ids.includes(tab.id)))
         elements.select.setAttribute('aria-selected', String(isActive))
         elements.select.tabIndex = isActive ? 0 : -1
         elements.close.tabIndex = isActive ? 0 : -1
@@ -1154,7 +1256,7 @@
       if (switched || relaid) tabElements.get(state.activeId)?.root.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 
       const tab = activeTab()
-      document.body.classList.toggle('home', !tab?.started)
+      drawPanes()
       // Framed pages are a card in the window; the error page draws as one too.
       document.body.classList.toggle('framed', Boolean(state.framed))
       // Switching tabs shows the new tab's address. Otherwise the field
@@ -1596,6 +1698,114 @@
     })
     errorRetry.addEventListener('click', () => window.lit.reload(errorTab))
     errorBack.addEventListener('click', () => window.lit.goBack(errorTab))
+
+    // Split view, while it shows (see onPanes in preload.js), drawn around
+    // and between its pages. Each pane's card is drawn again only when what
+    // it shows changes, so a hovered row stays hovered.
+    let panes = null
+    const panesLayer = document.getElementById('panes')
+    const paneBoxes = [...panesLayer.querySelectorAll('.pane')]
+    const divider = document.getElementById('divider')
+    const place = (element, { x, y, width, height }) => Object.assign(element.style, { left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px` })
+    // Whether main shows the tab's page, rather than its card.
+    const onShow = (tab) => tab.started && !tab.error && !tab.signIn?.main
+    function drawPanes() {
+      const shown = panes?.ids.every((id) => state.tabs.some((tab) => tab.id === id)) ? panes : null
+      document.body.classList.toggle('split', Boolean(shown))
+      // A blank tab fills the window with the search box, but not in a pane.
+      document.body.classList.toggle('home', !activeTab()?.started && !shown)
+      panesLayer.hidden = !shown
+      if (!shown) return
+      shown.ids.forEach((id, side) => {
+        const box = paneBoxes[side]
+        const rect = shown.rects[side]
+        const tab = state.tabs.find((each) => each.id === id)
+        const isActive = id === state.activeId
+        place(box, rect)
+        box.classList.toggle('is-active', isActive)
+        if (isActive) for (const [name, value] of Object.entries(rect)) document.body.style.setProperty(`--pane-${name}`, `${value}px`)
+        const others = state.tabs.filter((each) => !shown.ids.includes(each.id))
+        const mode = onShow(tab) ? 'page' : !isActive ? 'label' : !tab.started ? 'pick' : 'empty'
+        // The list of tabs keeps its rows, and the focus in them, as they change.
+        if (mode === 'pick' && box.dataset.key === `${id} pick`) return drawPick(box.firstElementChild, id, others)
+        const key = JSON.stringify([id, mode, mode === 'label' && (tab.error?.title || tabLabel(tab))])
+        if (box.dataset.key === key) return
+        box.dataset.key = mode === 'pick' ? `${id} pick` : key
+        if (mode === 'label') {
+          const label = document.createElement('button')
+          label.type = 'button'
+          label.className = 'pane-label'
+          label.textContent = tab.error?.title || tabLabel(tab)
+          label.title = `Show ${tabLabel(tab)}`
+          label.addEventListener('click', () => window.lit.activateTab(id))
+          box.replaceChildren(label)
+        } else if (mode === 'pick') {
+          const pick = document.createElement('div')
+          pick.className = 'pane-pick'
+          pick.innerHTML = '<p></p><div class="pick-list"></div>'
+          box.replaceChildren(pick)
+          drawPick(pick, id, others)
+        } else box.replaceChildren()
+      })
+      const [left, right] = shown.rects
+      place(divider, { x: left.x + left.width, y: left.y, width: shown.gap, height: left.height })
+      divider.setAttribute('aria-valuenow', String(Math.round(left.width / (left.width + right.width) * 100)))
+    }
+    // A new split view's blank pane (`pick`): type an address, or pick a tab
+    // for it. Each tab's row is made once and then kept up to date, in order.
+    const pickRows = new WeakMap()
+    function drawPick(pick, blankId, others) {
+      const [say, list] = pick.children
+      say.textContent = others.length ? 'Search or enter an address above, or pick a tab to show here.' : 'Search or enter an address above.'
+      const rows = pickRows.get(pick) ?? new Map()
+      pickRows.set(pick, rows)
+      const ids = new Set(others.map((tab) => tab.id))
+      for (const [id, { row }] of rows) if (!ids.has(id)) { row.remove(); rows.delete(id) }
+      others.forEach((tab, index) => {
+        let elements = rows.get(tab.id)
+        if (!elements) {
+          const row = document.createElement('button')
+          row.type = 'button'
+          row.className = 'pick-row'
+          elements = { row, icon: document.createElement('span'), title: document.createElement('span'), iconKey: null }
+          elements.icon.className = 'tab-icon'
+          row.append(elements.icon, elements.title)
+          row.addEventListener('click', () => window.lit.pickForSplit(blankId, tab.id))
+          rows.set(tab.id, elements)
+        }
+        drawIcon(elements, tab)
+        elements.title.textContent = tabLabel(tab)
+        if (list.children[index] !== elements.row) list.insertBefore(elements.row, list.children[index] || null)
+      })
+    }
+    window.lit.onPanes((next) => { panes = next; drawPanes() })
+
+    // Dragging the divider resizes the panes, from where it was taken hold
+    // of; a double-click makes them even again, and ← and → move it too.
+    // The page keeps focus, as after a click on the toolbar's buttons.
+    let grab = 0
+    const dividerAt = () => panes.rects[0].x + panes.rects[0].width + panes.gap / 2
+    divider.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || !panes) return
+      event.preventDefault()
+      grab = event.clientX - dividerAt()
+      divider.setPointerCapture(event.pointerId)
+      divider.classList.add('is-dragging')
+    })
+    divider.addEventListener('pointermove', (event) => {
+      if (divider.hasPointerCapture(event.pointerId)) window.lit.resizeSplit(event.clientX - grab)
+    })
+    divider.addEventListener('lostpointercapture', () => {
+      divider.classList.remove('is-dragging')
+      window.lit.focusActive()
+    })
+    divider.addEventListener('dblclick', () => window.lit.resizeSplit(null))
+    divider.addEventListener('keydown', (event) => {
+      const direction = { ArrowLeft: -1, ArrowRight: 1 }[event.key]
+      if (!direction || !panes || event.metaKey || event.ctrlKey || event.altKey) return
+      event.preventDefault()
+      window.lit.resizeSplit(dividerAt() + direction * (event.shiftKey ? 120 : 40))
+    })
 
     // The find field shows the active tab's find. Its text comes from main
     // only on opening or switching tabs; otherwise the field is the source.

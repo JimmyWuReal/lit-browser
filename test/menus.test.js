@@ -107,14 +107,20 @@ test("Lit's own fields get only editing items, and nothing elsewhere", () => {
 
 test('tab menu enables what fits the tab', () => {
   const only = tabMenu({ index: 0, count: 1, started: false })
-  assert.deepEqual(labels(only), ['Reload', 'Duplicate', 'Mute Tab', '—', 'Close Tab', 'Close Other Tabs', 'Close Tabs to the Right'])
+  assert.deepEqual(labels(only), ['Reload', 'Duplicate', 'Mute Tab', '—', 'Open in Split View', '—', 'Close Tab', 'Close Other Tabs', 'Close Tabs to the Right'])
   assert.deepEqual(only.filter((item) => item.enabled === false).map((item) => item.label), ['Reload', 'Close Other Tabs', 'Close Tabs to the Right'])
   const middle = tabMenu({ index: 1, count: 3, started: true })
   assert.ok(middle.every((item) => item.enabled !== false))
   assert.equal(tabMenu({ index: 2, count: 3, started: true }).at(-1).enabled, false)
   assert.equal(tabMenu({ index: 0, count: 1, started: true, muted: true })[2].label, 'Unmute Tab')
-  const keys = { reload: 'R', duplicateTab: 'D', muteTab: 'M', closeTab: 'W', closeOtherTabs: 'O', closeTabsToRight: 'T' }
-  assert.deepEqual(tabMenu({ index: 0, count: 1, started: true, keys }).map((item) => item.accelerator), ['R', 'D', 'M', undefined, 'W', 'O', 'T'])
+  const keys = { reload: 'R', duplicateTab: 'D', muteTab: 'M', splitView: 'S', closeTab: 'W', closeOtherTabs: 'O', closeTabsToRight: 'T' }
+  assert.deepEqual(tabMenu({ index: 0, count: 1, started: true, active: true, keys }).map((item) => item.accelerator), ['R', 'D', 'M', undefined, 'S', undefined, 'W', 'O', 'T'])
+})
+
+test('a tab opens in split view, or closes the split it is in', () => {
+  const splitItem = (options) => tabMenu({ index: 0, count: 2, started: true, keys: { splitView: 'S' }, ...options })[4]
+  assert.deepEqual(splitItem({}), { label: 'Open in Split View', command: 'split', accelerator: undefined })
+  assert.deepEqual(splitItem({ split: true, active: true }), { label: 'Close Split View', command: 'unsplit', accelerator: 'S' })
 })
 
 test('a private window offers no Add to Dictionary or Inspect Element', () => {
