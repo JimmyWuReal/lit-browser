@@ -1720,11 +1720,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     return tab
   }
 
-  // What a new tab opens, from Settings: an address, or the search box.
-  const newTabUrl = () => (profile.settings.newTabPage ? toUrl(profile.settings.newTabPage, profile.settings.searchEngine) : undefined)
-
   // A new tab from ⌘T or the + button, placed and filled as Settings says.
-  function newTab(url = newTabUrl()) {
+  function newTab(url = profile.settings.newTabPage ? toUrl(profile.settings.newTabPage, profile.settings.searchEngine) : undefined) {
     const current = active()
     addTab({
       url,
@@ -2513,11 +2510,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // Shows tab `id` beside the active one (see splitWith), or a new tab
-  // (null) right after it, and makes it the active one.
+  // (null) right after it, and makes it the active one. The new tab is blank
+  // whatever new tabs open, so its pane lists the tabs to pick from.
   function openSplit(id) {
     const current = active()
     if (!current || id === activeId) return
-    const other = id === null ? addTab({ url: newTabUrl(), index: tabs.indexOf(current) + 1, background: true }) : find(id)
+    const other = id === null ? addTab({ index: tabs.indexOf(current) + 1, background: true }) : find(id)
     if (!other) return
     split = splitWith(split, activeId, other.id)
     activate(other.id)
