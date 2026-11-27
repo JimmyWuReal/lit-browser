@@ -72,6 +72,11 @@ test('a request goes to main in WebAuthn’s JSON form', async (t) => {
   assert.deepEqual(sent[2][1].challenge, undefined)
   assert.equal(sent[2][1].allowCredentials, null)
   await assert.rejects(credentials.get({ publicKey: { get challenge() { throw new Error('boom') } } }), TypeError)
+  // A buffer from another frame (here, another realm) is read too.
+  const other = require('node:vm').runInNewContext('new Uint8Array([6, 7]).buffer')
+  assert.equal(other instanceof ArrayBuffer, false)
+  await credentials.get({ publicKey: { challenge: other } }).catch(() => {})
+  assert.equal(sent[3][1].challenge, b64([6, 7]))
 })
 
 test('a passkey used comes back as Chromium’s would', async (t) => {

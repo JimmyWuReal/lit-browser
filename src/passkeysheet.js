@@ -15,7 +15,8 @@ function bridge(ask, cancel) {
 
   const toBase64url = (source) => {
     const bytes = ArrayBuffer.isView(source) ? new Uint8Array(source.buffer, source.byteOffset, source.byteLength)
-      : source instanceof ArrayBuffer ? new Uint8Array(source) : null
+      // Not instanceof: a buffer from another frame of the page is just as good.
+      : Object.prototype.toString.call(source) === '[object ArrayBuffer]' ? new Uint8Array(source) : null
     if (!bytes) return undefined
     let binary = ''
     for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))

@@ -1011,21 +1011,20 @@ async function askPasskey(event, kind, options) {
   if (checked.error) return checked
   const answer = await new Promise((resolve) => {
     const ask = passkeyAsk = { frame, resolve }
-    // Closed when the page goes or the frame moves on, so the sheet never
-    // answers a page that didn't ask.
+    // Closed when the frame goes (its tab closed, or the page removed it) or
+    // moves on, so the sheet never answers a page that didn't ask, nor keeps
+    // others waiting. Electron tells of neither going, so it is looked for.
     const gone = () => passkeyAsk === ask && passkeySheet.cancel()
     const moved = (_event, _url, _code, _text, _isMainFrame, processId, routingId) => {
-      if (frame.isDestroyed() || (processId === frame.processId && routingId === frame.routingId)) gone()
+      if (processId === frame.processId && routingId === frame.routingId) gone()
     }
-    contents.once('destroyed', gone)
     contents.on('did-frame-navigate', moved)
+    const watch = setInterval(() => (frame.isDestroyed() || frame.detached) && gone(), 500)
     const timer = setTimeout(gone, checked.timeout)
     passkeySheet.perform(controls.win.getNativeWindowHandle(), checked.request, (result) => {
       clearTimeout(timer)
-      if (!contents.isDestroyed()) {
-        contents.off('destroyed', gone)
-        contents.off('did-frame-navigate', moved)
-      }
+      clearInterval(watch)
+      if (!contents.isDestroyed()) contents.off('did-frame-navigate', moved)
       passkeyAsk = null
       resolve(result)
     })
