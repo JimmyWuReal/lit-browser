@@ -1782,7 +1782,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       const inUse = tab.page.isBeingCaptured() || tab.page.isCurrentlyAudible() || tab.page.isDevToolsOpened() || mediaPages.has(tab.page) ||
         (Boolean(site) && permissions.status(permissionStore.sites, site, ['notifications']) === 'allow')
       const asking = tab.prompts.length > 0 || tab.signIns.length > 0 || Boolean(tab.offer) || share?.tab === tab
-      if (sleepy({ ...tab, active: tab.id === activeId, url: tab.started && tab.url, asking, inUse }, now, minutes)) sleep(tab)
+      // The page's own address: a popup can be on one that never committed.
+      if (sleepy({ ...tab, active: tab.id === activeId, url: tab.started && tab.url && urlOf(tab), asking, inUse }, now, minutes)) sleep(tab)
     }
   }
 

@@ -124,6 +124,12 @@ test('a tab on show, asleep already, or on no page stays as it is', () => {
   assert.equal(sleepy({ ...idle, url: '' }, minutes(60), 30), false)
 })
 
+test('only a page that loads again from its address sleeps', () => {
+  assert.equal(sleepy({ ...idle, url: 'file:///Users/me/notes.html' }, minutes(60), 30), true)
+  assert.equal(sleepy({ ...idle, url: 'blob:https://example.com/4f1c' }, minutes(60), 30), false)
+  assert.equal(sleepy({ ...idle, url: 'about:blank' }, minutes(60), 30), false)
+})
+
 test('a tab doing something you would miss stays awake', () => {
   for (const busy of [{ loading: true }, { error: { kind: 'crash' } }, { audible: true }, { fullScreen: 'on' }, { asking: true }, { edited: true }, { inUse: true }, { keepAwake: true }]) {
     assert.equal(sleepy({ ...idle, ...busy }, minutes(60), 30), false, JSON.stringify(busy))
