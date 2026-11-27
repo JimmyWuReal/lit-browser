@@ -239,6 +239,12 @@ if (typeof window !== 'undefined') {
   }
   addEventListener('beforeinput', onEdit, true)
   addEventListener('input', onEdit, true)
+  // Drawing apps take strokes on a canvas or an SVG, with no input events;
+  // a drag on one counts.
+  addEventListener('pointermove', (event) => {
+    const target = event.composedPath()[0]
+    if (event.buttons && (target instanceof HTMLCanvasElement || target instanceof SVGElement)) onEdit(event)
+  }, true)
   // Back to a page kept in the back-forward cache is a new page to main,
   // which forgets the edit, so it is told again.
   addEventListener('pageshow', (event) => { if (event.persisted && edited) require('electron').ipcRenderer.send('page-edited') })
