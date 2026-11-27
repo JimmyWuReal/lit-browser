@@ -996,8 +996,8 @@ const passkeySheet = (() => {
 let passkeyAsk = null
 
 // A page's passkey request (src/passkeysheet.js), shown in the sheet over its
-// window. Only the tab in front of a focused window may ask, as Chromium
-// wants the page focused; src/webauthn.js checks the request against the
+// window. Only the focused page in front of a focused window may ask, as
+// Chromium wants; src/webauthn.js checks the request against the
 // frame's origin, as Chromium knows it. Always answered, as the page waits.
 async function askPasskey(event, kind, options) {
   const frame = event.senderFrame
@@ -2992,9 +2992,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     askSignIn,
     answerSignIn,
     hasTab: (contents) => tabs.some((tab) => tab.page === contents),
-    // Whether `contents` is the page in front, in a focused window, with no
-    // popup over it.
-    showsPage: (contents) => { const tab = active(); return Boolean(tab?.page === contents && !tab.error && !popupOpen && win.isFocused()) },
+    // Whether `contents` is the page in front, with focus (not the toolbar)
+    // in a focused window, and no popup over it.
+    showsPage: (contents) => { const tab = active(); return Boolean(tab?.page === contents && !tab.error && !popupOpen && win.isFocused() && contents.isFocused()) },
     // Whether a frame started the page's current navigation.
     startedByFrame: (contents) => Boolean(tabs.find((tab) => tab.page === contents)?.startedByFrame),
     answerPrompt,

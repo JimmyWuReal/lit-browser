@@ -21,7 +21,6 @@ const MAX_LIST = 64
 // ES256 and RS256, as the spec says.
 const ES256 = -7
 const DEFAULT_ALGORITHMS = [ES256, -257]
-const KEY_TRANSPORTS = ['usb', 'nfc', 'ble']
 
 // Chromium's words for a refused request, which tell a site nothing more.
 const NOT_ALLOWED = 'The operation either timed out or was not allowed. See: https://www.w3.org/TR/webauthn-2/#sctn-privacy-considerations-client.'
@@ -38,7 +37,8 @@ const textOf = (value) => (typeof value === 'string' && value.length <= MAX_TEXT
 const listOf = (value) => (value === undefined ? [] : Array.isArray(value) && value.length <= MAX_LIST ? value : null)
 const oneOf = (value, values, fallback) => (values.includes(value) ? value : fallback)
 
-// Credentials a site names, to allow or exclude: [{ id, transports }].
+// Credentials a site names, to allow or exclude: [{ id }]. Their transports
+// are left out: they are only hints a site stored, and may be out of date.
 function descriptorsOf(value) {
   const list = listOf(value)
   if (!list) return null
@@ -47,8 +47,7 @@ function descriptorsOf(value) {
     if (each?.type !== 'public-key') continue
     const id = bytesOf(each.id, { min: 1 })
     if (!id) return null
-    const transports = listOf(each.transports)?.filter((transport) => typeof transport === 'string')
-    descriptors.push({ id, ...(transports?.length && { transports }) })
+    descriptors.push({ id })
   }
   return descriptors
 }
@@ -96,12 +95,9 @@ function check(kind, options, { origin, sameOriginWithAncestors }) {
   if (kind === 'get') {
     const allow = descriptorsOf(options.allowCredentials)
     if (!allow) return failure('TypeError', 'The allowed credentials can’t be read.')
-    // Credentials that say where they are go only there: this Mac or a phone,
-    // or a security key. Any others may be on either.
-    const on = (transports) => allow.length > 0 && allow.every((each) => each.transports?.every((transport) => transports.includes(transport)))
-    const securityKey = !on(['internal', 'hybrid'])
-    const platform = !on(KEY_TRANSPORTS)
-    return { request: { ...request, allow, platform, securityKey, hybrid: platform }, timeout }
+    // The sheet offers this Mac, a phone and security keys alike, as any of
+    // them may hold a credential the site names.
+    return { request: { ...request, allow, platform: true, securityKey: true, hybrid: true }, timeout }
   }
 
   const userId = bytesOf(options.user?.id, { min: 1, max: 64 })

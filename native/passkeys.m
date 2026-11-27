@@ -89,22 +89,6 @@ static void each(napi_env env, napi_value object, const char *name, void (^block
   }
 }
 
-// WebAuthn's transport names, as Apple calls them, for security keys. A key
-// with none named may be on any.
-static NSArray<ASAuthorizationSecurityKeyPublicKeyCredentialDescriptorTransport> *keyTransports(napi_env env, napi_value descriptor) {
-  NSMutableArray *transports = [NSMutableArray array];
-  napi_value list = property(env, descriptor, "transports");
-  each(env, descriptor, "transports", ^(napi_value element) {
-    size_t length = 0;
-    char name[16] = {0};
-    if (napi_get_value_string_utf8(env, element, name, sizeof name, &length) != napi_ok) return;
-    if (!strcmp(name, "usb")) [transports addObject:ASAuthorizationSecurityKeyPublicKeyCredentialDescriptorTransportUSB];
-    else if (!strcmp(name, "nfc")) [transports addObject:ASAuthorizationSecurityKeyPublicKeyCredentialDescriptorTransportNFC];
-    else if (!strcmp(name, "ble")) [transports addObject:ASAuthorizationSecurityKeyPublicKeyCredentialDescriptorTransportBluetooth];
-  });
-  return list && transports.count ? transports : ASAuthorizationAllSupportedPublicKeyCredentialDescriptorTransports();
-}
-
 static NSArray *platformDescriptors(napi_env env, napi_value request, const char *name) {
   NSMutableArray *descriptors = [NSMutableArray array];
   each(env, request, name, ^(napi_value descriptor) {
@@ -118,7 +102,9 @@ static NSArray *keyDescriptors(napi_env env, napi_value request, const char *nam
   NSMutableArray *descriptors = [NSMutableArray array];
   each(env, request, name, ^(napi_value descriptor) {
     NSData *id = bytes(env, descriptor, "id");
-    if (id) [descriptors addObject:[[ASAuthorizationSecurityKeyPublicKeyCredentialDescriptor alloc] initWithCredentialID:id transports:keyTransports(env, descriptor)]];
+    // On any transport: what a site stored is only a hint, and a key may have
+    // been used another way since.
+    if (id) [descriptors addObject:[[ASAuthorizationSecurityKeyPublicKeyCredentialDescriptor alloc] initWithCredentialID:id transports:ASAuthorizationAllSupportedPublicKeyCredentialDescriptorTransports()]];
   });
   return descriptors;
 }

@@ -71,13 +71,10 @@ test('a request to get a passkey', () => {
   assert.equal(check('get', getOptions(), page).timeout, TIMEOUT.default)
   assert.equal(check('get', getOptions({ userVerification: 'maybe' }), page).request.userVerification, 'preferred')
 
-  // Credentials that say where they are only go there.
-  const where = (...lists) => check('get', getOptions({ allowCredentials: lists.map((transports) => ({ type: 'public-key', id: 'AQ', transports })) }), page).request
-  assert.deepEqual([where(['internal', 'hybrid']).platform, where(['internal', 'hybrid']).securityKey], [true, false])
-  assert.deepEqual([where(['usb'], ['nfc', 'ble']).platform, where(['usb']).securityKey], [false, true])
-  assert.deepEqual([where(['usb'], ['internal']).platform, where(['usb'], ['internal']).securityKey], [true, true])
-  assert.deepEqual([where(undefined).platform, where(undefined).securityKey], [true, true])
-  assert.deepEqual(where(['usb']).allow, [{ id: Buffer.from([1]), transports: ['usb'] }])
+  // Transports are hints, so every way stays open, and ids are what is sent.
+  const allowed = check('get', getOptions({ allowCredentials: [{ type: 'public-key', id: 'AQ', transports: ['usb'] }, { type: 'public-key', id: 'Ag', transports: ['internal'] }] }), page).request
+  assert.deepEqual([allowed.platform, allowed.securityKey, allowed.hybrid], [true, true, true])
+  assert.deepEqual(allowed.allow, [{ id: Buffer.from([1]) }, { id: Buffer.from([2]) }])
   // Others than public-key are skipped, as in Chromium.
   assert.deepEqual(check('get', getOptions({ allowCredentials: [{ type: 'password', id: 'AQ' }] }), page).request.allow, [])
 })
