@@ -5,9 +5,10 @@
 //
 // The file is { windows: [window] }, oldest-focused window first, so the
 // last one opened is the one that was in front. A window is { tabs:
-// [history | null], activeIndex, bounds, maximized, fullScreen, profile },
-// `profile` being its profile's id (none in a file from before profiles),
-// otherwise the same shape Reopen Closed Tab uses; a null history is a tab on the search
+// [history | null], activeIndex, bounds, maximized, fullScreen, profile,
+// split? }, `profile` being its profile's id (none in a file from before
+// profiles) and `split` its split view, { indexes: [left, right], ratio }, by
+// the tabs' places; otherwise the same shape Reopen Closed Tab uses; a null history is a tab on the search
 // box. A history is { entries: [{ url, title, pageState? }], index }.
 const fs = require('node:fs')
 const { save: write } = require('./settings')
@@ -43,6 +44,13 @@ const cleanBounds = (bounds) => (bounds && ['x', 'y', 'width', 'height'].every((
   ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
   : undefined)
 
+// Two different tabs of the window, and a ratio a pane can have.
+const cleanSplit = (split, length) => (Array.isArray(split?.indexes) && split.indexes.length === 2 &&
+  split.indexes.every((index) => isIndex(index, length)) && split.indexes[0] !== split.indexes[1] &&
+  Number.isFinite(split.ratio) && split.ratio > 0 && split.ratio < 1
+  ? { indexes: [...split.indexes], ratio: split.ratio }
+  : undefined)
+
 // Only well-formed windows survive a hand-edited or older file.
 function clean(saved) {
   if (!saved || !Array.isArray(saved.windows)) return []
@@ -55,6 +63,7 @@ function clean(saved) {
       maximized: win.maximized === true,
       fullScreen: win.fullScreen === true,
       ...(typeof win.profile === 'string' && { profile: win.profile }),
+      ...(cleanSplit(win.split, win.tabs.length) && { split: cleanSplit(win.split, win.tabs.length) }),
     }))
 }
 
@@ -67,7 +76,7 @@ function load(file) {
   }
 }
 
-const save = (file, windows) => write(file, { windows: windows.map(({ tabs, activeIndex, bounds, maximized, fullScreen, profile }) => ({ tabs, activeIndex, bounds, maximized, fullScreen, profile })) })
+const save = (file, windows) => write(file, { windows: windows.map(({ tabs, activeIndex, bounds, maximized, fullScreen, profile, split }) => ({ tabs, activeIndex, bounds, maximized, fullScreen, profile, split })) })
 
 // Restoring turned off: nothing of the last session stays on disk.
 const forget = (file) => fs.rmSync(file, { force: true })

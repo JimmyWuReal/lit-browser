@@ -127,16 +127,22 @@ function pageMenu(params, context = {}) {
 }
 
 // The menu for a right-click on a tab, the `index`th of `count`.
-// `started` is false for a tab still showing the search box. `keys`
-// ({ reload, duplicateTab, muteTab, closeTab, closeOtherTabs, closeTabsToRight })
-// are the current accelerators, shown next to their items.
-function tabMenu({ index, count, started, muted = false, keys = {} }) {
+// `started` is false for a tab still showing the search box. `split` says
+// whether the tab is in the window's split view, which it can then close,
+// else open beside the active tab (`active`: beside a new tab). `keys`
+// ({ reload, duplicateTab, muteTab, splitView, closeTab, closeOtherTabs,
+// closeTabsToRight }) are the current accelerators, shown next to their
+// items; Split View's only on the active tab, the one its shortcut acts on.
+function tabMenu({ index, count, started, muted = false, split = false, active = false, keys = {} }) {
   return joinGroups([
     [
       { label: 'Reload', command: 'reload', enabled: Boolean(started), accelerator: keys.reload },
       { label: 'Duplicate', command: 'duplicate', accelerator: keys.duplicateTab },
       { label: muted ? 'Unmute Tab' : 'Mute Tab', command: 'mute', accelerator: keys.muteTab },
     ],
+    [split
+      ? { label: 'Close Split View', command: 'unsplit', accelerator: active ? keys.splitView : undefined }
+      : { label: 'Open in Split View', command: 'split', accelerator: active ? keys.splitView : undefined }],
     [
       { label: 'Close Tab', command: 'close', accelerator: keys.closeTab },
       { label: 'Close Other Tabs', command: 'closeOthers', enabled: count > 1, accelerator: keys.closeOtherTabs },

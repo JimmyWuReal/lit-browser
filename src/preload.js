@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('lit', {
   nudgeTab: (id, direction) => ipcRenderer.send('nudge-tab', id, direction),
   // Focus to the active tab's page, or what stands in for it.
   focusActive: () => ipcRenderer.send('focus-active'),
-  // { activeId, navigationButtons, tabs: [{ id, title, url, address, favicon, loading,
+  // { activeId, navigationButtons, framed, tabsAt, split, tabs: [{ id, title, url, address, favicon, loading,
   // started, asleep, canGoBack, canGoForward, audio, find, zoom, signIn, prompt, error }] },
   // `asleep` being a tab whose page is closed until it is shown,
   // `address` being the url's parts to draw (addressParts in src/url.js),
@@ -31,6 +31,15 @@ contextBridge.exposeInMainWorld('lit', {
   // what to show instead of a page that failed, { title, detail, code,
   // action }, or null.
   onTabs: (callback) => on('tabs', callback),
+  // Split view while it shows: { ids: [left, right], rects: [{ x, y, width,
+  // height }], gap }, the two pages' places in the window, or null. Comes
+  // before the tabs it goes with. The tabs say both its tabs as `split`,
+  // shown or not.
+  onPanes: (callback) => on('panes', callback),
+  // Drags split view's divider to x in the window, or back to the middle (null).
+  resizeSplit: (x) => ipcRenderer.send('split-resize', x),
+  // Puts tab `id` in place of the blank tab of a new split view.
+  pickForSplit: (blankId, id) => ipcRenderer.send('split-pick', blankId, id),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),
   // The error page's buttons, for the tab it is on.
   reload: (tabId) => ipcRenderer.send('reload', tabId),

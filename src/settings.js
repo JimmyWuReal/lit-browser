@@ -342,6 +342,7 @@ const SECTIONS = [
         shortcut('nextTab', 'Show Next Tab', 'Ctrl+Tab'),
         shortcut('previousTab', 'Show Previous Tab', 'Ctrl+Shift+Tab'),
         shortcut('tabSidebar', 'Show Tab Sidebar', 'Shift+CmdOrCtrl+L'),
+        shortcut('splitView', 'Split View', 'Alt+CmdOrCtrl+S'),
       ]),
       ...group('Page', [
         shortcut('openLocation', 'Open Location', 'CmdOrCtrl+L'),

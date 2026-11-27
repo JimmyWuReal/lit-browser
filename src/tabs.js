@@ -56,7 +56,11 @@ function keepNewest(closed, limit) {
   const newest = closed.at(-1)
   if (newest?.tabs?.length > limit) {
     const start = Math.min(Math.max(newest.activeIndex - Math.floor(limit / 2), 0), newest.tabs.length - limit)
-    closed[closed.length - 1] = { ...newest, tabs: newest.tabs.slice(start, start + limit), activeIndex: newest.activeIndex - start }
+    // Its split view stays only while both its tabs do.
+    const { split, ...rest } = newest
+    const indexes = split?.indexes.map((index) => index - start)
+    const kept = indexes?.every((index) => index >= 0 && index < limit) && { split: { ...split, indexes } }
+    closed[closed.length - 1] = { ...rest, tabs: newest.tabs.slice(start, start + limit), activeIndex: newest.activeIndex - start, ...kept }
   }
   let count = 0
   let keep = 0
@@ -97,18 +101,50 @@ function sidebarToggle(values) {
   ]
 }
 
+// Split view: two tabs of a window side by side, as { ids: [left, right],
+// ratio }, `ratio` being the left pane's share of the width. It shows while
+// either of its tabs is the active one.
+
+// The two panes ({ x, width }) across `area` ({ x, width }), `gap` apart:
+// the left one `ratio` of the room, neither narrower than `min`, unless the
+// room is too small for that, when they share it evenly.
+function splitPanes(area, ratio, gap, min) {
+  const room = Math.max(area.width - gap, 0)
+  const least = Math.min(min, room / 2)
+  const left = Math.round(Math.min(Math.max(room * ratio, least), room - least))
+  return [{ x: area.x, width: left }, { x: area.x + left + gap, width: room - left }]
+}
+
+// The ratio that puts the middle of the gap at `x`, keeping both panes at
+// least `min` wide as splitPanes does.
+function splitRatio(area, x, gap, min) {
+  const room = Math.max(area.width - gap, 1)
+  const least = Math.min(min, room / 2)
+  return Math.min(Math.max(x - area.x - gap / 2, least), room - least) / room
+}
+
+// The split once tab `id` goes beside the active one: a new pair, the active
+// tab on the left, or, while the active tab is in one already, `id` in place
+// of the other tab. Pairing a tab with itself changes nothing.
+function splitWith(split, activeId, id) {
+  if (id === activeId) return split
+  if (split?.ids.includes(activeId)) return { ...split, ids: split.ids.map((each) => (each === activeId ? each : id)) }
+  return { ids: [activeId, id], ratio: 0.5 }
+}
+
 // Whether a tab may go to sleep (the Sleep tabs setting): its page closes,
 // keeping its title, icon and back/forward list, and loads again when the
-// tab is shown. Only a tab out of sight for `minutes` (0 is never) whose
-// page has settled and can be loaded again from its address (not a blob:
-// document a page made, or an about:blank one its opener wrote into), and
-// that is doing nothing you would miss: playing
-// sound, full screen, asking something, edited by hand (a draft could be
-// lost), or `inUse` (main's say: a camera, a microphone or a screen it was
-// given, being shared, notifications, its Developer Tools). `keepAwake` is
-// a page that wouldn't close without asking you first. `seen` is when it was last on show, in milliseconds.
-const sleepy = (tab, now, minutes) => minutes > 0 && !tab.active && !tab.asleep && /^(https?|file):/.test(tab.url || '') &&
+// tab is shown. Only a tab out of sight (not `shown`: the active one, or
+// both in split view) for `minutes` (0 is never), whose page has settled
+// and can be loaded again from its address (not a blob: document a page
+// made, or an about:blank one its opener wrote into), and that is doing
+// nothing you would miss: playing sound, full screen, asking something,
+// edited by hand (a draft could be lost), or `inUse` (main's say: a camera,
+// a microphone or a screen it was given, being shared, notifications, its
+// Developer Tools). `keepAwake` is a page that wouldn't close without
+// asking you first. `seen` is when it was last on show, in milliseconds.
+const sleepy = (tab, now, minutes) => minutes > 0 && !tab.shown && !tab.asleep && /^(https?|file):/.test(tab.url || '') &&
   !tab.loading && !tab.error && !tab.audible && !tab.fullScreen && !tab.asking && !tab.edited && !tab.inUse && !tab.keepAwake &&
   now - tab.seen >= minutes * 60_000
 
-module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, sleepy }
+module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith, sleepy }

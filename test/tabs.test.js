@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, sleepy } = require('../src/tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith, sleepy } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -108,8 +108,46 @@ test('sidebarToggle hides a shown sidebar, else shows it, turning vertical tabs 
   assert.deepEqual(sidebarToggle({ verticalTabs: false, tabSidebar: false }), [['tabSidebar', true], ['verticalTabs', true]])
 })
 
+test('a split window bigger than the limit keeps its split only with both its tabs', () => {
+  const kept = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 4, split: { indexes: [3, 4], ratio: 0.4 } }]
+  keepNewest(kept, 2)
+  assert.deepEqual(kept, [{ tabs: [3, 4], activeIndex: 1, split: { indexes: [0, 1], ratio: 0.4 } }])
+  const dropped = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 4, split: { indexes: [0, 4], ratio: 0.5 } }]
+  keepNewest(dropped, 2)
+  assert.deepEqual(dropped, [{ tabs: [3, 4], activeIndex: 1 }])
+})
+
+test('splitPanes shares the width at the ratio, gap apart', () => {
+  assert.deepEqual(splitPanes({ x: 10, width: 1008 }, 0.5, 8, 200), [{ x: 10, width: 500 }, { x: 518, width: 500 }])
+  assert.deepEqual(splitPanes({ x: 0, width: 1008 }, 0.25, 8, 200), [{ x: 0, width: 250 }, { x: 258, width: 750 }])
+})
+
+test('splitPanes keeps both panes at least the minimum, or even when there is no room', () => {
+  assert.deepEqual(splitPanes({ x: 0, width: 1008 }, 0.05, 8, 200), [{ x: 0, width: 200 }, { x: 208, width: 800 }])
+  assert.deepEqual(splitPanes({ x: 0, width: 1008 }, 0.99, 8, 200), [{ x: 0, width: 800 }, { x: 808, width: 200 }])
+  assert.deepEqual(splitPanes({ x: 0, width: 308 }, 0.1, 8, 200), [{ x: 0, width: 150 }, { x: 158, width: 150 }])
+  assert.deepEqual(splitPanes({ x: 0, width: 0 }, 0.5, 8, 200), [{ x: 0, width: 0 }, { x: 8, width: 0 }])
+})
+
+test('splitRatio puts the gap under the pointer, within the minimum', () => {
+  const area = { x: 100, width: 1008 }
+  assert.equal(splitRatio(area, 354, 8, 200), 0.25)
+  assert.deepEqual(splitPanes(area, splitRatio(area, 354, 8, 200), 8, 200)[0], { x: 100, width: 250 })
+  assert.equal(splitRatio(area, 0, 8, 200), 0.2)
+  assert.equal(splitRatio(area, 5000, 8, 200), 0.8)
+})
+
+test('splitWith pairs a tab with the active one, or swaps in the other side', () => {
+  assert.deepEqual(splitWith(null, 1, 2), { ids: [1, 2], ratio: 0.5 })
+  assert.deepEqual(splitWith({ ids: [3, 1], ratio: 0.3 }, 1, 2), { ids: [2, 1], ratio: 0.3 })
+  // A split the active tab is not in gives way to a new one.
+  assert.deepEqual(splitWith({ ids: [3, 4], ratio: 0.3 }, 1, 2), { ids: [1, 2], ratio: 0.5 })
+  const split = { ids: [1, 2], ratio: 0.5 }
+  assert.equal(splitWith(split, 1, 1), split)
+})
+
 // A background tab on a settled page, last on show at 0.
-const idle = { active: false, asleep: null, url: 'https://example.com/', loading: false, error: null, audible: false, fullScreen: null, asking: false, edited: false, inUse: false, keepAwake: false, seen: 0 }
+const idle = { shown: false, asleep: null, url: 'https://example.com/', loading: false, error: null, audible: false, fullScreen: null, asking: false, edited: false, inUse: false, keepAwake: false, seen: 0 }
 const minutes = (count) => count * 60_000
 
 test('a tab out of sight for the setting\'s minutes goes to sleep', () => {
@@ -119,7 +157,7 @@ test('a tab out of sight for the setting\'s minutes goes to sleep', () => {
 })
 
 test('a tab on show, asleep already, or on no page stays as it is', () => {
-  assert.equal(sleepy({ ...idle, active: true }, minutes(60), 30), false)
+  assert.equal(sleepy({ ...idle, shown: true }, minutes(60), 30), false)
   assert.equal(sleepy({ ...idle, asleep: { history: {} } }, minutes(60), 30), false)
   assert.equal(sleepy({ ...idle, url: '' }, minutes(60), 30), false)
 })
