@@ -128,6 +128,9 @@ test('a refusal reaches the site as the error Chromium would give', async (t) =>
   await assert.rejects(credentials.get({ publicKey: {} }), { name: 'NotAllowedError' })
   const { credentials: broken } = start(t, async () => { throw new Error('gone') })
   await assert.rejects(broken.get({ publicKey: {} }), { name: 'NotAllowedError' })
+  // An answer that can't be read is a refusal too, not a request left waiting.
+  const { credentials: garbled } = start(t, async () => ({ credential: { response: {} } }))
+  await assert.rejects(garbled.get({ publicKey: {} }), { name: 'NotAllowedError' })
 })
 
 test('passkeys in login fields are refused without asking', async (t) => {

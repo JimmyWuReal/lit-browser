@@ -1021,13 +1021,18 @@ async function askPasskey(event, kind, options) {
     contents.on('did-frame-navigate', moved)
     const watch = setInterval(() => (frame.isDestroyed() || frame.detached) && gone(), 500)
     const timer = setTimeout(gone, checked.timeout)
-    passkeySheet.perform(controls.win.getNativeWindowHandle(), checked.request, (result) => {
+    const done = (result) => {
       clearTimeout(timer)
       clearInterval(watch)
       if (!contents.isDestroyed()) contents.off('did-frame-navigate', moved)
       passkeyAsk = null
       resolve(result)
-    })
+    }
+    try {
+      passkeySheet.perform(controls.win.getNativeWindowHandle(), checked.request, done)
+    } catch {
+      done(null)
+    }
   })
   if (!answer?.credential) return webauthn.errorOf(answer?.error)
   try {

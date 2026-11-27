@@ -112,12 +112,12 @@ function bridge(ask, cancel) {
         const answer = new Promise((resolve, reject) => {
           const aborted = () => { cancel(); reject(signal.reason) }
           signal?.addEventListener('abort', aborted, { once: true })
+          const refused = () => new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError')
           ask(name, sent).then((result) => {
-            signal?.removeEventListener('abort', aborted)
             if (result?.credential) resolve(credentialOf(result.credential))
             else if (result?.error?.name === 'TypeError') reject(new TypeError(result.error.message))
             else reject(new DOMException(result?.error?.message ?? '', result?.error?.name ?? 'NotAllowedError'))
-          }, () => reject(new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError')))
+          }).catch(() => reject(refused())).finally(() => signal?.removeEventListener('abort', aborted))
         })
         return answer
       },
