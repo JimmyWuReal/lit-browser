@@ -1,6 +1,7 @@
 // Lit's main process. Each window has a toolbar on top (src/index.html,
 // the window's own page) and one Chromium WebContentsView per tab below it.
-// Only the active tab's view is visible. The Settings, History and
+// Only the active tab's view is visible, or, in split view, it and the tab
+// beside it (see `split` in createWindow). The Settings, History and
 // Downloads popups and the command palette (src/commands.js) are each one
 // more view, transparent and over everything, shown only while open. Find in page lives in the toolbar; each tab keeps its own
 // search (src/find.js). A site asking for the camera, location and the like,
@@ -20,7 +21,7 @@ const fs = require('node:fs')
 const { quiet } = require('./quiet')
 const { toUrl, webAddress, searchUrl, engineOf, addressParts } = require('./url')
 const quickSearch = require('./quicksearch')
-const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle } = require('./tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const bookmarkStore = require('./bookmarks')
@@ -65,6 +66,10 @@ const PAGE_RADIUS = 10
 const SIDEBAR_WIDTH = 220
 const SIDEBAR_RAIL = 48
 const SIDEBAR_FULL_FROM = 700
+// Split view: the gap between its two pages, where the toolbar draws the
+// divider to drag, and how narrow dragging it can make a page.
+const SPLIT_GAP = 8
+const SPLIT_MIN = 240
 const PRELOAD = path.join(__dirname, 'preload.js')
 // What runs in web pages.
 const PAGE_PRELOAD = path.join(__dirname, 'page.js')
@@ -1078,8 +1083,9 @@ function toggleTabSidebar(profile) {
   }
 }
 
-// `key`, `tabs`, `activeIndex`, `bounds`, `maximized` and `fullScreen` reopen
-// a closed window (see `closed`). Its old position is used only while it is
+// `key`, `tabs`, `activeIndex`, `bounds`, `maximized`, `fullScreen` and
+// `split` reopen a closed window (see `closed`), `split` being its split view
+// by the tabs' places, { indexes, ratio }. Its old position is used only while it is
 // still on a connected display; otherwise only its size.
 // `url` opens in the new window's first tab.
 // `profile` is the one it browses as, for good; everything in it, from its
@@ -1090,7 +1096,7 @@ function toggleTabSidebar(profile) {
 // suggests only bookmarks, nothing from history, and starts every site at the default
 // zoom; only the sites' saved Blocks reach it. What changes in it goes when
 // it closes.
-function createWindow({ key = nextWindowKey++, profile = currentProfile, isPrivate = false, url, tabs: restored = [], activeIndex = 0, bounds, maximized, fullScreen } = {}) {
+function createWindow({ key = nextWindowKey++, profile = currentProfile, isPrivate = false, url, tabs: restored = [], activeIndex = 0, bounds, maximized, fullScreen, split: restoredSplit } = {}) {
   // A private window's own permission choices, kept in memory, under the
   // saved Blocks, which always win (choosePermission settles its prompts too).
   const permissionStore = isPrivate
@@ -1140,6 +1146,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   const find = (id) => tabs.find((tab) => tab.id === id)
   const active = () => find(activeId)
   const ids = () => tabs.map((tab) => tab.id)
+  // Split view: two tabs side by side, { ids: [left, right], ratio } (see
+  // src/tabs.js), or null. It shows while either is the active tab, which
+  // the toolbar is for; clicking the other page makes that one active.
+  let split = null
+  // The split's two tabs while it shows, left first, else null. Not while
+  // the active page is full screen, which has the window to itself.
+  const paneTabs = () => (split?.ids.includes(activeId) && active()?.fullScreen !== 'on' ? split.ids.map(find) : null)
   // Popup views by name, each made on first open (see openPopup), and the
   // name of the one open, if any.
   const popups = {}
@@ -1157,9 +1170,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // Whether the pages start right of the tab sidebar: while it shows, and
   // not while the active page is full screen.
   let besideSidebar = false
-  // Whether pages are framed as a card (the Frame pages setting), which a
-  // full screen page never is.
+  // Whether pages are framed as a card (the Frame pages setting, and always
+  // in split view, so the gap and the active page's ring have room), which
+  // a full screen page never is.
   let framed = profile.settings.framePages
+  // The tabs split view last laid out side by side, as `ids,ratio`, or ''.
+  let shownPanes = ''
   // The tab whose page took the window full screen with it, if one did: the
   // window leaves with that page. One you made full screen yourself stays.
   let fullScreenFor = null
@@ -1186,13 +1202,17 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (win.isDestroyed()) return
     const current = active()
     const top = current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (showsBookmarks() ? BOOKMARKS_HEIGHT : 0) + promptHeight(current)
-    const frame = current?.fullScreen !== 'on' && profile.settings.framePages
+    const pair = paneTabs()
+    const panes = pair ? `${split.ids},${split.ratio}` : ''
+    const frame = current?.fullScreen !== 'on' && (profile.settings.framePages || Boolean(pair))
     const tabsAt = tabsPlace(profile.settings)
     const beside = current?.fullScreen !== 'on' && tabsAt === 'side'
-    // The page moves sideways with the sidebar, and a list of logins over
-    // it would be left where it was, as when the window is resized.
-    if (beside !== besideSidebar) hideLogins()
-    if (top !== pageTop || frame !== framed || beside !== besideSidebar) { pageTop = top; framed = frame; besideSidebar = beside; layout() }
+    // The page moves sideways with the sidebar, or into a pane, and a list
+    // of logins over it would be left where it was, as when the window is
+    // resized.
+    if (beside !== besideSidebar || panes !== shownPanes) hideLogins()
+    if (top !== pageTop || frame !== framed || beside !== besideSidebar || panes !== shownPanes) { pageTop = top; framed = frame; besideSidebar = beside; layout() }
+    else reveal()
     const title = signInPage(current)?.url || current?.title || (current?.started ? current.url : '') || 'New Tab'
     const named = profiles.length > 1 ? `${title} — ${profile.name}` : title
     win.setTitle(isPrivate ? `${named} (Private)` : named)
@@ -1201,6 +1221,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       navigationButtons: profile.settings.navigationButtons,
       framed,
       tabsAt,
+      // Both tabs of the split view, shown or not, so the strip can mark them.
+      split: split?.ids ?? null,
       tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, pdf: isPdf, page, prompts, signIns, offer, error, audible }) => ({
         id, title, url, favicon, loading, started,
         canGoBack: !page.isDestroyed() && page.navigationHistory.canGoBack(),
@@ -1246,15 +1268,37 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // The toolbar's downloads indicator.
   const sendDownloads = () => { if (!win.isDestroyed()) win.webContents.send('downloads', downloadsSummary(ses)) }
 
+  // Where the pages go: the room under the toolbar, or in split view its
+  // two panes, which the toolbar learns to draw what goes around and between
+  // them (`panes`: { ids, rects: [{ x, y, width, height }], gap }, or null).
+  // `area` is the room, for the divider (resizeSplit).
+  let area = { x: 0, width: 0 }
   function layout() {
     const { width, height } = win.getContentBounds()
     const inset = framed ? PAGE_INSET : 0
     const pageLeft = !besideSidebar ? 0 : width >= SIDEBAR_FULL_FROM ? SIDEBAR_WIDTH : SIDEBAR_RAIL
+    area = { x: pageLeft + inset, width: Math.max(width - pageLeft - 2 * inset, 0) }
+    const y = pageTop
+    const pageHeight = Math.max(height - pageTop - inset, 0)
+    const pair = paneTabs()
+    const rects = pair && splitPanes(area, split.ratio, SPLIT_GAP, SPLIT_MIN)
+    shownPanes = pair ? `${split.ids},${split.ratio}` : ''
     for (const tab of tabs) {
-      tab.view.setBounds({ x: pageLeft + inset, y: pageTop, width: Math.max(width - pageLeft - 2 * inset, 0), height: Math.max(height - pageTop - inset, 0) })
+      const { x, width: pageWidth } = rects?.[pair.indexOf(tab)] ?? area
+      tab.view.setBounds({ x, y, width: pageWidth, height: pageHeight })
       tab.view.setBorderRadius(framed ? PAGE_RADIUS : 0)
     }
     for (const view of Object.values(popups)) view.setBounds({ x: 0, y: 0, width, height })
+    reveal()
+    win.webContents.send('panes', pair && { ids: split.ids, rects: rects.map((rect) => ({ ...rect, y, height: pageHeight })), gap: SPLIT_GAP })
+  }
+
+  // Shows the pages on show, and hides the rest: the active tab's, or both
+  // in split view. A blank tab shows the toolbar's search box (or, in split
+  // view, its pane's card), and one that failed the toolbar's error page.
+  function reveal() {
+    const pair = paneTabs()
+    for (const tab of tabs) tab.view.setVisible((pair ? pair.includes(tab) : tab.id === activeId) && tab.started && !tab.error && !signInPage(tab))
   }
 
   // Takes a full screen page out of it, bringing the toolbar back right
@@ -1296,7 +1340,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // `focus` is false when the toolbar keeps focus, as when arrow keys
   // move along the tabs.
   function show(tab, focus = true) {
-    for (const other of tabs) other.view.setVisible(other === tab && tab.started && !tab.error && !signInPage(tab))
+    reveal()
     if (!focus || popupOpen) return
     if (signInPage(tab)) {
       win.webContents.focus()
@@ -1459,6 +1503,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // committed, for `committed`: a page moving on with none is redirecting.
     page.on('input-event', (_event, input) => {
       if (['mouseDown', 'rawKeyDown', 'keyDown', 'touchStart', 'mouseWheel', 'gestureScrollBegin'].includes(input.type)) tab.touched = true
+      // In split view, clicking the other page makes it the active one; the
+      // click gives it focus itself.
+      if (['mouseDown', 'touchStart'].includes(input.type) && tab.id !== activeId && paneTabs()?.includes(tab)) activate(tab.id, false)
       // Back skips pages that added themselves with no click or key press on
       // them, so one can be what makes it possible, with no other event.
       // Chromium counts it a moment later.
@@ -1673,8 +1720,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     return tab
   }
 
+  // What a new tab opens, from Settings: an address, or the search box.
+  const newTabUrl = () => (profile.settings.newTabPage ? toUrl(profile.settings.newTabPage, profile.settings.searchEngine) : undefined)
+
   // A new tab from ⌘T or the + button, placed and filled as Settings says.
-  function newTab(url = profile.settings.newTabPage ? toUrl(profile.settings.newTabPage, profile.settings.searchEngine) : undefined) {
+  function newTab(url = newTabUrl()) {
     const current = active()
     addTab({
       url,
@@ -1782,8 +1832,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   // What Reopen Closed Tab needs to bring this window back. Full screen only
   // if it was without a page's help, as the page won't be when it reopens.
+  // `histories` are all its tabs', in order, for its split view's places.
   function closedWindow(histories, activeIndex) {
-    return { key, tabs: histories, activeIndex, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: windowFullScreen === 'own', profile: profile.id }
+    const indexes = split?.ids.map((id) => tabs.findIndex((tab) => tab.id === id))
+    return {
+      key, tabs: histories, activeIndex, bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullScreen: windowFullScreen === 'own', profile: profile.id,
+      ...(indexes && histories.length === tabs.length && { split: { indexes, ratio: split.ratio } }),
+    }
   }
 
   // A site can answer with an HTTP error and an empty page, which would show
@@ -1831,7 +1886,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (!find(tab.id)) return
     dropPrompts(tab)
     dropSignIns(tab)
-    const nextId = afterClose(ids(), activeId, tab.id)
+    // Its split view ends, and the tab beside it takes its place.
+    const partner = split?.ids.includes(tab.id) ? split.ids.find((id) => id !== tab.id) : null
+    if (partner !== null) split = null
+    const nextId = partner !== null && activeId === tab.id ? partner : afterClose(ids(), activeId, tab.id)
     const focus = tab.closeFocus ?? true
     const index = tabs.indexOf(tab)
     const history = tab.started ? saveHistory(tab) || tab.closeSnapshot || null : null
@@ -2447,6 +2505,51 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // 'playing', or null.
   const audioOf = ({ page, audible }) => (!page.isDestroyed() && page.isAudioMuted() ? 'muted' : audible ? 'playing' : null)
 
+  // Split View: the active tab beside a new one, or, in split view, its two
+  // tabs one at a time again.
+  function toggleSplit() {
+    if (split?.ids.includes(activeId)) closeSplit()
+    else openSplit(null)
+  }
+
+  // Shows tab `id` beside the active one (see splitWith), or a new tab
+  // (null) right after it, and makes it the active one.
+  function openSplit(id) {
+    const current = active()
+    if (!current || id === activeId) return
+    const other = id === null ? addTab({ url: newTabUrl(), index: tabs.indexOf(current) + 1, background: true }) : find(id)
+    if (!other) return
+    split = splitWith(split, activeId, other.id)
+    activate(other.id)
+  }
+
+  // Its two tabs stay, the active one on show.
+  function closeSplit() {
+    if (!split) return
+    split = null
+    sync()
+  }
+
+  // A tab picked in the blank pane of a new split view goes there instead,
+  // and the blank tab closes, never to be reopened.
+  function pickForSplit(blankId, id) {
+    const blank = find(blankId)
+    if (!blank || blank.started || blankId !== activeId || !split?.ids.includes(blankId) || split.ids.includes(id) || !find(id)) return
+    split = { ...split, ids: split.ids.map((each) => (each === blankId ? id : each)) }
+    activate(id)
+    if (blank.page.isDestroyed()) removeTab(blank)
+    else blank.page.close()
+  }
+
+  // The divider dragged to `x` in the window, or back to the middle (null).
+  function resizeSplit(x) {
+    if (!paneTabs()) return
+    split = { ...split, ratio: x === null ? 0.5 : splitRatio(area, x, SPLIT_GAP, SPLIT_MIN) }
+    hideLogins()
+    layout()
+    if (!isPrivate) sessionChanged()
+  }
+
   // Muting belongs to the tab: it lasts across pages, until it closes.
   function toggleMute(id) {
     const tab = find(id)
@@ -2492,11 +2595,15 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function showTabMenu(id) {
     const tab = find(id)
     if (!tab) return
-    const keys = Object.fromEntries(['reload', 'duplicateTab', 'muteTab', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
+    const keys = Object.fromEntries(['reload', 'duplicateTab', 'muteTab', 'splitView', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
       .map((command) => [command, profile.settings[`shortcuts.${command}`]]))
-    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, muted: audioOf(tab) === 'muted', keys }), (command) => {
+    const inSplit = Boolean(split?.ids.includes(id))
+    popup(tabMenu({ index: tabs.indexOf(tab), count: tabs.length, started: tab.started, muted: audioOf(tab) === 'muted', split: inSplit, active: id === activeId, keys }), (command) => {
       if (!find(id)) return
       switch (command) {
+        // Beside the active tab, or, for the active tab itself, a new one.
+        case 'split': return openSplit(id === activeId ? null : id)
+        case 'unsplit': return split?.ids.includes(id) && closeSplit()
         case 'reload': return reload(tab)
         case 'duplicate': return duplicateTab(id)
         case 'mute': return toggleMute(id)
@@ -2967,6 +3074,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     toggleMute: (id = activeId) => toggleMute(id),
     closeOtherTabs: () => closeOtherTabs(activeId),
     closeTabsToRight: () => closeTabsToRight(activeId),
+    toggleSplit,
+    resizeSplit,
+    pickForSplit,
     setRecording: (on, keys) => {
       recording = on
       keyboardLayout = on && keys && typeof keys === 'object' ? keys : {}
@@ -3062,7 +3172,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     closingWindow = histories.length ? closedWindow(histories, Math.max(tabs.indexOf(active()), 0)) : null
   })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
-  win.webContents.on('did-finish-load', () => { sync(); sendShortcuts(); sendQuickSearch(); sendBookmarks(); sendDownloads(); sendProfile() })
+  win.webContents.on('did-finish-load', () => { layout(); sync(); sendShortcuts(); sendQuickSearch(); sendBookmarks(); sendDownloads(); sendProfile() })
   win.on('closed', () => {
     openWindows.delete(controls)
     dropShare()
@@ -3093,6 +3203,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   if (fullScreen) win.setFullScreen(true)
   if (restored.length) {
     for (const history of restored) addTab(history ? { history, background: true } : { background: true })
+    const splitIds = restoredSplit?.indexes.map((index) => tabs[index]?.id)
+    if (splitIds?.every(Boolean) && splitIds[0] !== splitIds[1]) split = { ids: splitIds, ratio: restoredSplit.ratio }
     activate(tabs[Math.min(activeIndex, tabs.length - 1)].id)
   } else if (url) addTab({ url })
   else newTab()
@@ -3232,6 +3344,8 @@ function buildMenu() {
         { type: 'separator' },
         // Unchecked with tabs across the top too, where it turns on vertical tabs.
         { label: 'Show Tab Sidebar', type: 'checkbox', checked: tabsPlace(settings) === 'side', accelerator: key('tabSidebar'), click: (_item, win) => toggleTabSidebar(controlsOf(win)?.profile ?? currentProfile) },
+        // The active tab beside a new one, or back to one tab at a time.
+        { label: 'Split View', accelerator: key('splitView'), click: inFocused((c) => { c.closePopup(); c.toggleSplit() }) },
         { type: 'separator' },
         { label: 'Reload', accelerator: key('reload'), click: inFocused((c) => c.reload()) },
         { type: 'separator' },
@@ -3339,6 +3453,10 @@ ipcMain.on('stop', fromToolbar((c, tabId) => c.isActive(tabId) && c.stop()))
 ipcMain.on('focus-active', fromToolbar((c) => c.focusActive()))
 ipcMain.on('focus-page', fromToolbar((c, tabId) => c.isActive(tabId) && c.focusPage()))
 ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
+// Split view's divider, dragged to x in the window or reset (null), and
+// the tab picked for a new split view's blank pane.
+ipcMain.on('split-resize', fromToolbar((c, x) => (x === null || Number.isFinite(x)) && c.resizeSplit(x)))
+ipcMain.on('split-pick', fromToolbar((c, blankId, id) => Number.isInteger(blankId) && Number.isInteger(id) && c.pickForSplit(blankId, id)))
 // A prompt's answer: 'allow', 'block', or null to dismiss it, for the
 // kinds the row showed.
 ipcMain.on('answer-permission', fromToolbar((c, tabId, promptId, kinds, choice) => {
