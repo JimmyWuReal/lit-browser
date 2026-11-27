@@ -18,7 +18,8 @@ contextBridge.exposeInMainWorld('lit', {
   // Focus to the active tab's page, or what stands in for it.
   focusActive: () => ipcRenderer.send('focus-active'),
   // { activeId, navigationButtons, framed, tabsAt, split, tabs: [{ id, title, url, address, favicon, loading,
-  // started, canGoBack, canGoForward, audio, find, zoom, signIn, prompt, error }] },
+  // started, asleep, canGoBack, canGoForward, audio, find, zoom, signIn, prompt, error }] },
+  // `asleep` being a tab whose page is closed until it is shown,
   // `address` being the url's parts to draw (addressParts in src/url.js),
   // `zoom` '125%', or '' at the default zoom, `signIn` what asks for a
   // username and password, { id, name, asks, note, main }, `main` when it is

@@ -132,4 +132,19 @@ function splitWith(split, activeId, id) {
   return { ids: [activeId, id], ratio: 0.5 }
 }
 
-module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith }
+// Whether a tab may go to sleep (the Sleep tabs setting): its page closes,
+// keeping its title, icon and back/forward list, and loads again when the
+// tab is shown. Only a tab out of sight (not `shown`: the active one, or
+// both in split view) for `minutes` (0 is never), whose page has settled
+// and can be loaded again from its address (not a blob: document a page
+// made, or an about:blank one its opener wrote into), and that is doing
+// nothing you would miss: playing sound, full screen, asking something,
+// edited by hand (a draft could be lost), or `inUse` (main's say: a camera,
+// a microphone or a screen it was given, being shared, notifications, its
+// Developer Tools). `keepAwake` is a page that wouldn't close without
+// asking you first. `seen` is when it was last on show, in milliseconds.
+const sleepy = (tab, now, minutes) => minutes > 0 && !tab.shown && !tab.asleep && /^(https?|file):/.test(tab.url || '') &&
+  !tab.loading && !tab.error && !tab.audible && !tab.fullScreen && !tab.asking && !tab.edited && !tab.inUse && !tab.keepAwake &&
+  now - tab.seen >= minutes * 60_000
+
+module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith, sleepy }

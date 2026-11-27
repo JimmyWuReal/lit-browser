@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith } = require('../src/tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith, sleepy } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -144,4 +144,32 @@ test('splitWith pairs a tab with the active one, or swaps in the other side', ()
   assert.deepEqual(splitWith({ ids: [3, 4], ratio: 0.3 }, 1, 2), { ids: [1, 2], ratio: 0.5 })
   const split = { ids: [1, 2], ratio: 0.5 }
   assert.equal(splitWith(split, 1, 1), split)
+})
+
+// A background tab on a settled page, last on show at 0.
+const idle = { shown: false, asleep: null, url: 'https://example.com/', loading: false, error: null, audible: false, fullScreen: null, asking: false, edited: false, inUse: false, keepAwake: false, seen: 0 }
+const minutes = (count) => count * 60_000
+
+test('a tab out of sight for the setting\'s minutes goes to sleep', () => {
+  assert.equal(sleepy(idle, minutes(30), 30), true)
+  assert.equal(sleepy(idle, minutes(30) - 1, 30), false)
+  assert.equal(sleepy(idle, minutes(120), 0), false)
+})
+
+test('a tab on show, asleep already, or on no page stays as it is', () => {
+  assert.equal(sleepy({ ...idle, shown: true }, minutes(60), 30), false)
+  assert.equal(sleepy({ ...idle, asleep: { history: {} } }, minutes(60), 30), false)
+  assert.equal(sleepy({ ...idle, url: '' }, minutes(60), 30), false)
+})
+
+test('only a page that loads again from its address sleeps', () => {
+  assert.equal(sleepy({ ...idle, url: 'file:///Users/me/notes.html' }, minutes(60), 30), true)
+  assert.equal(sleepy({ ...idle, url: 'blob:https://example.com/4f1c' }, minutes(60), 30), false)
+  assert.equal(sleepy({ ...idle, url: 'about:blank' }, minutes(60), 30), false)
+})
+
+test('a tab doing something you would miss stays awake', () => {
+  for (const busy of [{ loading: true }, { error: { kind: 'crash' } }, { audible: true }, { fullScreen: 'on' }, { asking: true }, { edited: true }, { inUse: true }, { keepAwake: true }]) {
+    assert.equal(sleepy({ ...idle, ...busy }, minutes(60), 30), false, JSON.stringify(busy))
+  }
 })

@@ -21,7 +21,7 @@ const fs = require('node:fs')
 const { quiet } = require('./quiet')
 const { toUrl, webAddress, searchUrl, engineOf, addressParts } = require('./url')
 const quickSearch = require('./quicksearch')
-const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith } = require('./tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith, sleepy } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const bookmarkStore = require('./bookmarks')
@@ -359,8 +359,17 @@ function onPermissionRequest(store, contents, permission, callback, details) {
   if (!kinds) return callback(true)
   const site = siteFor(contents, details.securityOrigin ?? details.requestingUrl)
   if (!details.isMainFrame && !details.securityOrigin) return callback(false)
-  answerRequest(store, contents, site, kinds, callback)
+  const usesMedia = kinds.includes('camera') || kinds.includes('microphone')
+  answerRequest(store, contents, site, kinds, !usesMedia ? callback : (allowed) => {
+    if (allowed && contents) mediaPages.add(contents)
+    callback(allowed)
+  })
 }
+
+// Pages given a camera, a microphone or a screen since they loaded, which
+// may be in a call, so their tabs never go to sleep. Electron can't say
+// when a page stops using them; a new page in the tab starts again.
+const mediaPages = new WeakSet()
 
 // A site wants to share the screen (getDisplayMedia, as Meet and Zoom do).
 // Asked each time, in the picker of the tab that asked; the page or a frame
@@ -412,7 +421,7 @@ function grantShare(contents, site, callback, streams) {
     return callback(false)
   }
   let taken = false
-  granting = { contents, site, streams, take: () => { taken = true } }
+  granting = { contents, site, streams, take: () => { taken = true; mediaPages.add(contents) } }
   try {
     callback(true)
   } finally {
@@ -1150,6 +1159,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // src/tabs.js), or null. It shows while either is the active tab, which
   // the toolbar is for; clicking the other page makes that one active.
   let split = null
+  // The tabs on show: the active one, or both in split view.
+  const shownTabs = () => paneTabs() ?? (active() ? [active()] : [])
   // The split's two tabs while it shows, left first, else null. Not while
   // the active page is full screen, which has the window to itself.
   const paneTabs = () => (split?.ids.includes(activeId) && active()?.fullScreen !== 'on' ? split.ids.map(find) : null)
@@ -1230,11 +1241,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tabsAt,
       // Both tabs of the split view, shown or not, so the strip can mark them.
       split: split?.ids ?? null,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, pdf: isPdf, page, prompts, signIns, offer, error, audible }) => ({
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, pdf: isPdf, page, prompts, signIns, offer, error, audible, asleep }) => ({
         id, title, url, favicon, loading, started,
-        canGoBack: !page.isDestroyed() && page.navigationHistory.canGoBack(),
-        canGoForward: !page.isDestroyed() && page.navigationHistory.canGoForward(),
-        audio: profile.settings.tabAudio ? audioOf({ page, audible }) : null,
+        asleep: Boolean(asleep),
+        canGoBack: asleep ? asleep.history.index > 0 : !page.isDestroyed() && page.navigationHistory.canGoBack(),
+        canGoForward: asleep ? asleep.history.index < asleep.history.entries.length - 1 : !page.isDestroyed() && page.navigationHistory.canGoForward(),
+        audio: profile.settings.tabAudio ? audioOf({ page, audible, asleep }) : null,
         address: addressParts(signInPage({ signIns })?.url ?? url, profile.settings.fullAddress),
         // The address asking to sign in, not the page it would replace, so
         // another site's name is never over its prompt.
@@ -1247,7 +1259,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
         // The address bar shows the zoom, to reset it, when it is not the
         // default or the site has its own (which can match a later default).
         // A PDF's viewer shows its own zoom instead.
-        zoom: started && !error && !isPdf && !signInPage({ signIns }) && (!zoom.same(factor, profile.settings.defaultZoom) || ownZoom(page.isDestroyed() ? '' : page.getURL()))
+        zoom: started && !error && !isPdf && !signInPage({ signIns }) && (!zoom.same(factor, profile.settings.defaultZoom) || ownZoom(asleep ? url : page.isDestroyed() ? '' : page.getURL()))
           ? zoom.percent(factor)
           : '',
         find: find && { text: find.text, active: find.active, matches: find.matches },
@@ -1305,6 +1317,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // view, its pane's card), and one that failed the toolbar's error page.
   function reveal() {
     const pair = paneTabs()
+    // A sleeping tab coming on show wakes first.
+    for (const tab of shownTabs()) wake(tab)
     for (const tab of tabs) tab.view.setVisible((pair ? pair.includes(tab) : tab.id === activeId) && tab.started && !tab.error && !signInPage(tab))
   }
 
@@ -1382,6 +1396,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   // Reload, for a page as it is or one that failed.
   function reload(tab, ignoreCache = false) {
+    // A sleeping tab loads its page again by waking.
+    if (tab?.asleep) return wake(tab)
     if (!tab?.started || tab.page.isDestroyed()) return
     if (tab.error) retry(tab, ignoreCache)
     else if (ignoreCache) tab.page.reloadIgnoringCache()
@@ -1446,6 +1462,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (id !== activeId) hideLogins()
     // Sharing is asked by the tab on show.
     if (share && share.tab !== tab) closePopup()
+    // Those left were on show until now; the one shown wakes (reveal), and
+    // may be put to sleep again.
+    for (const shown of shownTabs()) shown.seen = Date.now()
+    tab.seen = Date.now()
+    tab.keepAwake = false
     activeId = id
     // A page stays full screen only while it is the one on show.
     for (const other of tabs) if (other !== tab) leaveFullScreen(other)
@@ -1460,6 +1481,25 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // fails. `referrer` ({ url, policy }) is sent with `url`, as a link opened
   // from a page sends it.
   function addTab({ url, webContents, history, referrer, background = false, index = tabs.length } = {}) {
+    // `seen` is when the tab was last on show, for sleepIdle; `asleep`
+    // holds what a sleeping tab needs to wake (see sleep).
+    const tab = { id: nextTabId++, view: null, page: null, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, pdf: false, prompts: [], signIns: [], submitted: null, offer: null, fullScreen: null, error: null, audible: false, seen: Date.now(), asleep: null }
+    tabs.splice(index, 0, tab)
+    const page = attach(tab, webContents)
+    if (history) restore(tab, history, url)
+    else if (url) page.loadURL(url, referrer ? { httpReferrer: referrer } : {}).catch(() => {})
+    // A popup can stay on the about:blank its opener writes into, without
+    // ever firing did-navigate, so it gets its zoom here.
+    if (webContents) setZoom(tab, zoomOf(page.getURL() || 'about:blank'))
+    if (background) sync()
+    else activate(tab.id)
+    return tab
+  }
+
+  // Gives the tab a page of its own, in a view under the window's popups:
+  // when it opens, and again each time it wakes. Its events act on the
+  // tab while this page is the tab's.
+  function attach(tab, webContents) {
     // A page a tab opened is already in its session.
     // Private pages get no DevTools, which saves its state (breakpoints and
     // the like) to the profile on disk, whatever the session. A page opened
@@ -1467,15 +1507,16 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // setWindowOpenHandler, or its frames miss them.
     const view = new WebContentsView(webContents ? { webContents, webPreferences: PAGE_PREFERENCES } : { webPreferences: { ...PAGE_PREFERENCES, session: ses, devTools: !isPrivate } })
     // `page` keeps the WebContents itself: once it is destroyed (a popup
-    // calling window.close()), Electron clears `view.webContents`.
+    // calling window.close(), or the tab going to sleep), Electron clears
+    // `view.webContents`.
     const page = view.webContents
+    tab.view = view
+    tab.page = page
     // A page opened by another ignores the devTools preference.
     if (isPrivate) page.on('devtools-opened', () => page.closeDevTools())
     // Lit sets each page's zoom itself (setZoom). Chromium's own sharing,
     // by URL, would also zoom Lit's toolbar when a tab shows its file.
     page.setZoomMode('isolated')
-    const tab = { id: nextTabId++, view, page, title: '', url: '', favicon: null, loading: false, started: Boolean(url || webContents || history), history: null, find: null, zoom: profile.settings.defaultZoom, pdf: false, prompts: [], signIns: [], submitted: null, offer: null, fullScreen: null, error: null, audible: false }
-    tabs.splice(index, 0, tab)
     view.setVisible(false)
     win.contentView.addChildView(view)
     // Re-adding a view moves it to the top, so popups stay over new tabs.
@@ -1533,6 +1574,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tab.title = history.getEntryAtIndex(history.getActiveIndex())?.title || ''
       tab.favicon = null
       tab.pageId = nextPageId++
+      mediaPages.delete(page)
+      // A new page has nothing typed into it (page-edited).
+      tab.edited = false
       tab.find = findState.reset(tab.find)
       // A new page has not asked for anything yet; the old page's requests go.
       dropPrompts(tab)
@@ -1655,11 +1699,23 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       if (reason !== 'clean-exit' && !tab.error) fail(tab, { kind: 'crash', reason, exitCode })
     })
     // Every tab leaves through here: after closeTab's request, or when a
-    // page closes itself (window.close() on a popup it opened).
-    page.on('destroyed', () => removeTab(tab))
+    // page closes itself (window.close() on a popup it opened). A page
+    // closed to sleep leaves its tab asleep instead.
+    page.on('destroyed', () => {
+      if (tab.page !== page) return
+      if (tab.sleeping && !tab.closedByUser) fellAsleep(tab)
+      else removeTab(tab)
+    })
     // Electron cancels an unload a page objects to without asking; ask the
     // way other browsers do, both for closing the tab and for leaving the page.
+    // A page going to sleep is not asked: it stays awake, until it is next
+    // on show, as it may hold something typed that would be lost.
     page.on('will-prevent-unload', (event) => {
+      if (tab.sleeping && !tab.closedByUser) {
+        tab.sleeping = null
+        tab.keepAwake = true
+        return
+      }
       const choice = dialog.showMessageBoxSync(win, {
         type: 'question',
         buttons: ['Leave', 'Stay'],
@@ -1705,32 +1761,92 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
     // A right-click's menu takes the release of the click (see heldTop).
     page.on('context-menu', (_event, params) => { releaseHeldTop(); showPageMenu(page, params) })
+    return page
+  }
 
-    if (history) {
-      // Shows the page's address and title until it loads.
-      const current = history.entries[history.index] || {}
-      tab.url = current.url || ''
-      tab.title = current.title || ''
-      tab.history = history
-      // Reopening a page is not a new visit to it, as in other browsers.
-      tab.restoring = true
-      // If restoring fails, the page it was on still loads.
-      const retry = url || current.url
-      // When neither commits, the next page is a visit again.
-      const restored = () => { tab.restoring = false }
-      page.navigationHistory.restore(history).catch(() => {
-        // Restored, though its page couldn't load; the error page says so.
-        if (tab.error) return
-        if (retry && !tab.stopped && !page.isDestroyed()) page.loadURL(retry).catch(restored)
-        else restored()
-      })
-    } else if (url) page.loadURL(url, referrer ? { httpReferrer: referrer } : {}).catch(() => {})
-    // A popup can stay on the about:blank its opener writes into, without
-    // ever firing did-navigate, so it gets its zoom here.
-    if (webContents) setZoom(tab, zoomOf(page.getURL() || 'about:blank'))
-    if (background) sync()
-    else activate(tab.id)
-    return tab
+  // Loads a back/forward list ({ entries, index }) into the tab's page: a
+  // closed tab reopened, a tab restored or duplicated, or one waking.
+  // `url` loads if that fails.
+  function restore(tab, history, url) {
+    const { page } = tab
+    // Shows the page's address and title until it loads.
+    const current = history.entries[history.index] || {}
+    tab.url = current.url || ''
+    tab.title = current.title || ''
+    tab.history = history
+    // Reopening a page is not a new visit to it, as in other browsers.
+    tab.restoring = true
+    // If restoring fails, the page it was on still loads.
+    const retry = url || current.url
+    // When neither commits, the next page is a visit again.
+    const restored = () => { tab.restoring = false }
+    page.navigationHistory.restore(history).catch(() => {
+      // Restored, though its page couldn't load; the error page says so.
+      if (tab.error || tab.page !== page) return
+      if (retry && !tab.stopped && !page.isDestroyed()) page.loadURL(retry).catch(restored)
+      else restored()
+    })
+  }
+
+  // Sleeping tabs. A tab out of sight for a while (the Sleep tabs setting)
+  // closes its page, which frees its memory, and keeps what the tab strip
+  // shows (title, icon, address) and its back/forward list, with each
+  // page's scroll position and form values, to load again once shown. The
+  // page is closed the way closing the tab does, so one that would ask
+  // before leaving stays awake instead (will-prevent-unload).
+  // tab.sleeping is set while its page closes, tab.asleep once it has.
+  function sleep(tab) {
+    const history = liveHistory(tab)
+    if (!history) return
+    tab.sleeping = { history, muted: tab.page.isAudioMuted() }
+    tab.page.close({ waitForBeforeUnload: true })
+  }
+
+  // The page closed; the tab keeps no view until it wakes. Shown meanwhile
+  // (or beside the active tab in split view), it wakes right away.
+  function fellAsleep(tab) {
+    if (win.isDestroyed() || !find(tab.id)) return
+    win.contentView.removeChildView(tab.view)
+    tab.asleep = tab.sleeping
+    tab.sleeping = null
+    tab.loading = false
+    clearTimeout(tab.silence)
+    tab.audible = false
+    tab.leaving = false
+    if (tab.id === activeId) show(tab)
+    else if (shownTabs().includes(tab)) reveal()
+    sync()
+  }
+
+  // A new page for the tab, on the page it was on, as when it is reopened:
+  // not a new visit. Muting belongs to the tab, so it stays. One woken
+  // out of sight (Reload in its menu) counts as just seen, so it isn't put
+  // back to sleep as soon as it loads.
+  function wake(tab) {
+    if (!tab.asleep) return
+    const { history, muted } = tab.asleep
+    tab.asleep = null
+    tab.stopped = false
+    tab.seen = Date.now()
+    attach(tab)
+    tab.page.setAudioMuted(muted)
+    restore(tab, history)
+  }
+
+  // Puts to sleep the tabs out of sight for `minutes` (see sleepy in
+  // src/tabs.js), from a timer in main.
+  function sleepIdle(now, minutes) {
+    const shown = shownTabs()
+    for (const tab of shown) tab.seen = now
+    for (const tab of tabs) {
+      if (tab.sleeping || tab.page.isDestroyed()) continue
+      const site = permissions.originOf(tab.url)
+      const inUse = tab.page.isBeingCaptured() || tab.page.isCurrentlyAudible() || tab.page.isDevToolsOpened() || mediaPages.has(tab.page) ||
+        (Boolean(site) && permissions.status(permissionStore.sites, site, ['notifications']) === 'allow')
+      const asking = tab.prompts.length > 0 || tab.signIns.length > 0 || Boolean(tab.offer) || share?.tab === tab
+      // The page's own address: a popup can be on one that never committed.
+      if (sleepy({ ...tab, shown: shown.includes(tab), url: tab.started && tab.url && urlOf(tab), asking, inUse }, now, minutes)) sleep(tab)
+    }
   }
 
   // A new tab from ⌘T or the + button, placed and filled as Settings says.
@@ -1758,8 +1874,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
 
   // The page's back/forward list as Chromium has it now, once its first
-  // page has committed.
+  // page has committed; a sleeping tab's, as it was when it fell asleep.
   function liveHistory(tab) {
+    if (tab.asleep) return tab.asleep.history
     if (tab.page.isDestroyed() || !tab.url) return null
     const entries = tab.page.navigationHistory.getAllEntries()
     return entries.length ? { entries, index: tab.page.navigationHistory.getActiveIndex() } : null
@@ -1907,7 +2024,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (tab.closedByUser) settle(tab)
     tabs.splice(index, 1)
     if (win.isDestroyed()) return
-    win.contentView.removeChildView(tab.view)
+    if (!tab.asleep) win.contentView.removeChildView(tab.view)
     // Closing the last tab closes the window, as in Chrome and Safari,
     // unless Settings says to keep it open with a new tab. Then the window
     // is what reopens.
@@ -1928,7 +2045,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   }
   // The page's own URL, not tab.url: a popup can stay on the about:blank its
   // opener writes into, which never fires did-navigate.
-  const urlOf = (tab) => (tab.page.isDestroyed() ? '' : tab.page.getURL())
+  // A sleeping tab's is the one it fell asleep on.
+  const urlOf = (tab) => (tab.asleep ? tab.url : tab.page.isDestroyed() ? '' : tab.page.getURL())
   // A PDF zooms in its viewer, apart from its site's zoom (see src/pdf.js).
   const zoomPdf = (tab, direction) => { if (!tab.page.isDestroyed()) pdf.viewerOf(tab.page)?.executeJavaScript(pdf.zoomScript(direction)).catch(() => {}) }
   const zoomBy = (tab, direction) => { const url = urlOf(tab); if (tab.pdf) zoomPdf(tab, direction); else if (url) changeZoom(url, zoom.step(tab.zoom, direction)) }
@@ -2513,7 +2631,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   // What a tab's speaker shows: 'muted' (even while nothing plays),
   // 'playing', or null.
-  const audioOf = ({ page, audible }) => (!page.isDestroyed() && page.isAudioMuted() ? 'muted' : audible ? 'playing' : null)
+  const audioOf = ({ page, audible, asleep }) => ((asleep ? asleep.muted : !page.isDestroyed() && page.isAudioMuted()) ? 'muted' : audible ? 'playing' : null)
 
   // Split View: the active tab beside a new one, or, in split view, its two
   // tabs one at a time again.
@@ -2564,6 +2682,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // Muting belongs to the tab: it lasts across pages, until it closes.
   function toggleMute(id) {
     const tab = find(id)
+    if (tab?.asleep) {
+      tab.asleep.muted = !tab.asleep.muted
+      return sync()
+    }
     if (!tab || tab.page.isDestroyed()) return
     tab.page.setAudioMuted(!tab.page.isAudioMuted())
     sync()
@@ -2577,6 +2699,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const tab = find(id)
     if (!tab) return
     const index = tabs.indexOf(tab) + 1
+    if (tab.asleep) return addTab({ history: tab.asleep.history, url: tab.url, index })
     const destroyed = tab.page.isDestroyed()
     const url = (!destroyed && tab.page.getURL()) || tab.url || tab.pendingUrl || undefined
     const history = destroyed ? null : tab.page.navigationHistory
@@ -3032,7 +3155,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     shareTabsChanged,
     chooseShare,
     isSharing: (id) => Boolean(share) && share.id === id,
+    // Not sleeping ones, whose page is closed: a tab is shared as it shows.
     shareableTabs: () => tabs.filter((tab) => tab.started && !tab.error && tab.url && !tab.page.isDestroyed()),
+    // A page in the tab, or a frame in it, was edited by hand.
+    pageEdited(contents) {
+      const tab = tabs.find((each) => each.page === contents)
+      if (tab) tab.edited = true
+    },
     askSignIn,
     answerSignIn,
     hasTab: (contents) => tabs.some((tab) => tab.page === contents),
@@ -3125,6 +3254,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     },
     // Records the pages still loading, as Lit quits.
     settleAll: () => { for (const tab of tabs) settle(tab) },
+    sleepIdle,
     // What reopening this window at the next launch needs (see src/session.js).
     snapshot: () => (tabs.length && !isPrivate ? closedWindow(tabs.map(sessionHistory), Math.max(tabs.indexOf(active()), 0)) : null),
     historyChanged() {
@@ -3602,6 +3732,7 @@ ipcMain.on('login-name', fromPage('name', (value) => (passwords.isText(value?.us
 ipcMain.on('login-abandoned', fromPage('abandoned', () => true))
 ipcMain.on('login-done', fromPage('done', () => true))
 ipcMain.on('login-field', fromPage('field', (value) => (value && ['request', 'x', 'top', 'y', 'width'].every((key) => Number.isFinite(value[key])) ? value : null)))
+ipcMain.on('page-edited', (event) => { for (const controls of openWindows) controls.pageEdited(event.sender) })
 ipcMain.on('login-field-left', fromPage('left', () => true))
 ipcMain.on('logins-pick', fromPopup('logins', (c, id, generation) => c.pickLogin(id, generation)))
 ipcMain.handle('default-browser-make', fromSettings((c) => settingsState(c.profile, makeDefaultBrowser())))
@@ -3676,7 +3807,17 @@ app.on('open-file', (event, file) => {
   openExternalLink(pathToFileURL(file).href)
 })
 
+// Every minute, tabs out of sight for longer than the Sleep tabs setting
+// go to sleep (sleepIdle in createWindow).
+function sleepIdleTabs() {
+  const minutes = shared().sleepTabsAfter
+  if (!minutes) return
+  const now = Date.now()
+  for (const controls of openWindows) controls.sleepIdle(now, minutes)
+}
+
 app.whenReady().then(async () => {
+  setInterval(sleepIdleTabs, 60_000)
   const root = app.getPath('userData')
   profilesFile = path.join(root, 'profiles.json')
   profileList = profileStore.load(profilesFile)
