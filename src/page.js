@@ -227,5 +227,17 @@ function start({ ipcRenderer }) {
 }
 
 if (typeof window !== 'undefined') {
+  // A page edited by hand, in it or any frame inside it, tells main once, so
+  // its tab stays awake until it moves to another page (see sleepy in
+  // src/tabs.js): a draft in an editor can't be brought back after sleep.
+  // beforeinput too, as editors that cancel it and edit themselves fire no input.
+  let edited = false
+  const onEdit = (event) => {
+    if (edited || !event.isTrusted) return
+    edited = true
+    require('electron').ipcRenderer.send('page-edited')
+  }
+  addEventListener('beforeinput', onEdit, true)
+  addEventListener('input', onEdit, true)
   if (window === window.top && /^https?:$/.test(location.protocol)) start(require('electron'))
 } else module.exports = { passwordOf, oldOf, signsIn, nameOf }

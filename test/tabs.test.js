@@ -109,7 +109,7 @@ test('sidebarToggle hides a shown sidebar, else shows it, turning vertical tabs 
 })
 
 // A background tab on a settled page, last on show at 0.
-const idle = { active: false, asleep: null, url: 'https://example.com/', loading: false, error: null, audible: false, fullScreen: null, asking: false, inUse: false, keepAwake: false, seen: 0 }
+const idle = { active: false, asleep: null, url: 'https://example.com/', loading: false, error: null, audible: false, fullScreen: null, asking: false, edited: false, inUse: false, keepAwake: false, seen: 0 }
 const minutes = (count) => count * 60_000
 
 test('a tab out of sight for the setting\'s minutes goes to sleep', () => {
@@ -125,7 +125,7 @@ test('a tab on show, asleep already, or on no page stays as it is', () => {
 })
 
 test('a tab doing something you would miss stays awake', () => {
-  for (const busy of [{ loading: true }, { error: { kind: 'crash' } }, { audible: true }, { fullScreen: 'on' }, { asking: true }, { inUse: true }, { keepAwake: true }]) {
+  for (const busy of [{ loading: true }, { error: { kind: 'crash' } }, { audible: true }, { fullScreen: 'on' }, { asking: true }, { edited: true }, { inUse: true }, { keepAwake: true }]) {
     assert.equal(sleepy({ ...idle, ...busy }, minutes(60), 30), false, JSON.stringify(busy))
   }
 })

@@ -101,12 +101,12 @@ function sidebarToggle(values) {
 // keeping its title, icon and back/forward list, and loads again when the
 // tab is shown. Only a tab out of sight for `minutes` (0 is never) whose
 // page has settled, and that is doing nothing you would miss: playing
-// sound, full screen, asking something, or `inUse` (main's say: a camera,
-// a microphone or a screen it was given, being shared, notifications, its
-// Developer Tools). `keepAwake` is a page that wouldn't close without
-// asking you first. `seen` is when it was last on show, in milliseconds.
+// sound, full screen, asking something, edited by hand (a draft could be
+// lost), or `inUse` (main's say: a camera, a microphone or a screen it was
+// given, being shared, notifications, its Developer Tools). `keepAwake` is
+// a page that wouldn't close without asking you first. `seen` is when it was last on show, in milliseconds.
 const sleepy = (tab, now, minutes) => minutes > 0 && !tab.active && !tab.asleep && Boolean(tab.url) &&
-  !tab.loading && !tab.error && !tab.audible && !tab.fullScreen && !tab.asking && !tab.inUse && !tab.keepAwake &&
+  !tab.loading && !tab.error && !tab.audible && !tab.fullScreen && !tab.asking && !tab.edited && !tab.inUse && !tab.keepAwake &&
   now - tab.seen >= minutes * 60_000
 
 module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, sleepy }

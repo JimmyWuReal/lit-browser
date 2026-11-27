@@ -1514,6 +1514,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tab.favicon = null
       tab.pageId = nextPageId++
       mediaPages.delete(page)
+      // A new page has nothing typed into it (page-edited).
+      tab.edited = false
       tab.find = findState.reset(tab.find)
       // A new page has not asked for anything yet; the old page's requests go.
       dropPrompts(tab)
@@ -2360,7 +2362,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (kind === 'tabs') {
       const picked = shareTabs().find((each) => each.id === id)
       if (picked && !shareRows().some((row) => row.id === id && row.page === page)) return shareTabsChanged()
-      const frame = picked?.page.mainFrame
+      // A sleeping tab is shared once it has woken and loaded.
+      if (picked?.asleep) {
+        await Promise.all([...openWindows].map((controls) => controls.wakeTab(id)))
+        if (share !== asked || asked.choice !== choice) return
+      }
+      const frame = picked && !picked.page.isDestroyed() ? picked.page.mainFrame : null
       if (frame && !frame.isDestroyed()) streams = shareStore.tabStreams(frame, wantsAudio && audio === true)
     } else if (kind === 'windows' || kind === 'screens') {
       const now = await desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 0, height: 0 } }).catch(() => [])
@@ -3032,7 +3039,23 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     shareTabsChanged,
     chooseShare,
     isSharing: (id) => Boolean(share) && share.id === id,
-    shareableTabs: () => tabs.filter((tab) => tab.started && !tab.error && tab.url && !tab.page.isDestroyed()),
+    // Sleeping tabs too: picking one wakes it (wakeTab).
+    shareableTabs: () => tabs.filter((tab) => tab.started && !tab.error && tab.url && (tab.asleep || !tab.page.isDestroyed())),
+    // Wakes a sleeping tab, out of sight, to share it: resolves once its
+    // page has loaded, or gone. Null for a tab that isn't asleep here.
+    wakeTab(id) {
+      const tab = find(id)
+      if (!tab?.asleep) return null
+      wake(tab)
+      const { page } = tab
+      sync()
+      return new Promise((resolve) => { page.once('did-stop-loading', resolve); page.once('destroyed', resolve) })
+    },
+    // A page in the tab, or a frame in it, was edited by hand.
+    pageEdited(contents) {
+      const tab = tabs.find((each) => each.page === contents)
+      if (tab) tab.edited = true
+    },
     askSignIn,
     answerSignIn,
     hasTab: (contents) => tabs.some((tab) => tab.page === contents),
@@ -3592,6 +3615,7 @@ ipcMain.on('login-name', fromPage('name', (value) => (passwords.isText(value?.us
 ipcMain.on('login-abandoned', fromPage('abandoned', () => true))
 ipcMain.on('login-done', fromPage('done', () => true))
 ipcMain.on('login-field', fromPage('field', (value) => (value && ['request', 'x', 'top', 'y', 'width'].every((key) => Number.isFinite(value[key])) ? value : null)))
+ipcMain.on('page-edited', (event) => { for (const controls of openWindows) controls.pageEdited(event.sender) })
 ipcMain.on('login-field-left', fromPage('left', () => true))
 ipcMain.on('logins-pick', fromPopup('logins', (c, id, generation) => c.pickLogin(id, generation)))
 ipcMain.handle('default-browser-make', fromSettings((c) => settingsState(c.profile, makeDefaultBrowser())))
