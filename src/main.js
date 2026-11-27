@@ -2365,7 +2365,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       // A sleeping tab is shared once it has woken and loaded, if it is
       // still the page picked; one that went elsewhere (a site sending it
       // to sign in again) or failed is shown in the picker to choose again.
-      if (picked?.asleep) {
+      // Picked again while it wakes, it waits the same way.
+      if (picked?.asleep || picked?.waking) {
         const { url } = picked
         await Promise.all([...openWindows].map((controls) => controls.wakeTab(id)))
         if (share !== asked || asked.choice !== choice) return
@@ -2410,7 +2411,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     leaveFullScreen(tab)
     hideLoginsOf(tab)
     // A tab woken to share waits no more: it is not the page picked (wakeTab).
-    if (request.main) tab.waking?.()
+    if (request.main) tab.waking?.done()
     if (request.main && tab.id === activeId) show(tab, win.isFocused() && !win.webContents.isFocused())
     sync()
   }
@@ -3049,23 +3050,26 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     // to sign in to its page, which shows the prompt instead.
     shareableTabs: () => tabs.filter((tab) => tab.started && !tab.error && tab.url && !signInPage(tab) && (tab.asleep || !tab.page.isDestroyed())),
     // Wakes a sleeping tab, out of sight, to share it: resolves once its
-    // page has loaded, is gone, or asks to sign in. Null for a tab that
-    // isn't asleep here.
+    // page has loaded, is gone, or asks to sign in. Picked again meanwhile,
+    // it is the same wait. Null for a tab that isn't asleep or waking here.
     wakeTab(id) {
       const tab = find(id)
+      if (tab?.waking) return tab.waking.promise
       if (!tab?.asleep) return null
       wake(tab)
       const { page } = tab
-      sync()
-      return new Promise((resolve) => {
-        const done = () => {
-          if (tab.waking === done) tab.waking = null
+      const waking = {}
+      waking.promise = new Promise((resolve) => {
+        waking.done = () => {
+          if (tab.waking === waking) tab.waking = null
           resolve()
         }
-        tab.waking = done
-        page.once('did-stop-loading', done)
-        page.once('destroyed', done)
       })
+      tab.waking = waking
+      page.once('did-stop-loading', waking.done)
+      page.once('destroyed', waking.done)
+      sync()
+      return waking.promise
     },
     // A page in the tab, or a frame in it, was edited by hand.
     pageEdited(contents) {
