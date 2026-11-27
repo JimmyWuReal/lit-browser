@@ -20,7 +20,7 @@ const fs = require('node:fs')
 const { quiet } = require('./quiet')
 const { toUrl, webAddress, searchUrl, engineOf, addressParts } = require('./url')
 const quickSearch = require('./quicksearch')
-const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen } = require('./tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const bookmarkStore = require('./bookmarks')
@@ -58,6 +58,13 @@ const BOOKMARKS_HEIGHT = 34
 // window's sides and bottom; keep in sync with .framed .error in index.html.
 const PAGE_INSET = 6
 const PAGE_RADIUS = 10
+// With vertical tabs, the sidebar down the window's left, which pages start
+// right of while it shows. In a window narrower than SIDEBAR_FULL_FROM it is
+// a rail of the tabs' icons, so the toolbar keeps the room of a window at its
+// minimum width. Keep in sync with .vertical in index.html.
+const SIDEBAR_WIDTH = 220
+const SIDEBAR_RAIL = 48
+const SIDEBAR_FULL_FROM = 700
 const PRELOAD = path.join(__dirname, 'preload.js')
 // What runs in web pages.
 const PAGE_PRELOAD = path.join(__dirname, 'page.js')
@@ -1060,6 +1067,17 @@ function toggleBookmarkBar(profile) {
   dialog.showMessageBox({ type: 'warning', message: 'Couldn’t save settings' }).catch(() => {})
 }
 
+// Show Tab Sidebar: hides the sidebar, or shows it, turning vertical tabs on
+// first if need be (see sidebarToggle). The menu's checkbox follows as above.
+function toggleTabSidebar(profile) {
+  for (const [key, value] of sidebarToggle(profile.settings)) {
+    if (!changeSetting(profile, key, value)) continue
+    Menu.setApplicationMenu(buildMenu())
+    dialog.showMessageBox({ type: 'warning', message: 'Couldn’t save settings' }).catch(() => {})
+    return
+  }
+}
+
 // `key`, `tabs`, `activeIndex`, `bounds`, `maximized` and `fullScreen` reopen
 // a closed window (see `closed`). Its old position is used only while it is
 // still on a connected display; otherwise only its size.
@@ -1136,6 +1154,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // active tab has a prompt; at the very top, over the toolbar, while the
   // active page is full screen.
   let pageTop = BAR_HEIGHT
+  // Whether the pages start right of the tab sidebar: while it shows, and
+  // not while the active page is full screen.
+  let besideSidebar = false
   // Whether pages are framed as a card (the Frame pages setting), which a
   // full screen page never is.
   let framed = profile.settings.framePages
@@ -1166,7 +1187,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const current = active()
     const top = current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (showsBookmarks() ? BOOKMARKS_HEIGHT : 0) + promptHeight(current)
     const frame = current?.fullScreen !== 'on' && profile.settings.framePages
-    if (top !== pageTop || frame !== framed) { pageTop = top; framed = frame; layout() }
+    const tabsAt = tabsPlace(profile.settings)
+    const beside = current?.fullScreen !== 'on' && tabsAt === 'side'
+    // The page moves sideways with the sidebar, and a list of logins over
+    // it would be left where it was, as when the window is resized.
+    if (beside !== besideSidebar) hideLogins()
+    if (top !== pageTop || frame !== framed || beside !== besideSidebar) { pageTop = top; framed = frame; besideSidebar = beside; layout() }
     const title = signInPage(current)?.url || current?.title || (current?.started ? current.url : '') || 'New Tab'
     const named = profiles.length > 1 ? `${title} — ${profile.name}` : title
     win.setTitle(isPrivate ? `${named} (Private)` : named)
@@ -1174,6 +1200,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       activeId,
       navigationButtons: profile.settings.navigationButtons,
       framed,
+      tabsAt,
       tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, pdf: isPdf, page, prompts, signIns, offer, error, audible }) => ({
         id, title, url, favicon, loading, started,
         canGoBack: !page.isDestroyed() && page.navigationHistory.canGoBack(),
@@ -1222,8 +1249,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function layout() {
     const { width, height } = win.getContentBounds()
     const inset = framed ? PAGE_INSET : 0
+    const pageLeft = !besideSidebar ? 0 : width >= SIDEBAR_FULL_FROM ? SIDEBAR_WIDTH : SIDEBAR_RAIL
     for (const tab of tabs) {
-      tab.view.setBounds({ x: inset, y: pageTop, width: Math.max(width - 2 * inset, 0), height: Math.max(height - pageTop - inset, 0) })
+      tab.view.setBounds({ x: pageLeft + inset, y: pageTop, width: Math.max(width - pageLeft - 2 * inset, 0), height: Math.max(height - pageTop - inset, 0) })
       tab.view.setBorderRadius(framed ? PAGE_RADIUS : 0)
     }
     for (const view of Object.values(popups)) view.setBounds({ x: 0, y: 0, width, height })
@@ -3201,6 +3229,9 @@ function buildMenu() {
       submenu: [
         // Lists every other command here, so it is left out of its own list.
         { id: 'commandPalette', label: 'Command Palette…', accelerator: key('commandPalette'), click: togglePopup('palette') },
+        { type: 'separator' },
+        // Unchecked with tabs across the top too, where it turns on vertical tabs.
+        { label: 'Show Tab Sidebar', type: 'checkbox', checked: tabsPlace(settings) === 'side', accelerator: key('tabSidebar'), click: (_item, win) => toggleTabSidebar(controlsOf(win)?.profile ?? currentProfile) },
         { type: 'separator' },
         { label: 'Reload', accelerator: key('reload'), click: inFocused((c) => c.reload()) },
         { type: 'separator' },
