@@ -1176,6 +1176,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   let framed = profile.settings.framePages
   // The tabs split view last laid out side by side, as `ids,ratio`, or ''.
   let shownPanes = ''
+  // While the click that made the other page of a split view the active one
+  // is still down, { tab, top }: the pages stay at `top`, so the toolbar's
+  // prompt row coming or going doesn't move them under the pointer.
+  let heldTop = null
   // The tab whose page took the window full screen with it, if one did: the
   // window leaves with that page. One you made full screen yourself stays.
   let fullScreenFor = null
@@ -1201,7 +1205,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function sync() {
     if (win.isDestroyed()) return
     const current = active()
-    const top = current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (showsBookmarks() ? BOOKMARKS_HEIGHT : 0) + promptHeight(current)
+    if (heldTop?.tab !== current) heldTop = null
+    const top = heldTop ? heldTop.top : current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (showsBookmarks() ? BOOKMARKS_HEIGHT : 0) + promptHeight(current)
     const pair = paneTabs()
     const panes = pair ? `${split.ids},${split.ratio}` : ''
     const frame = current?.fullScreen !== 'on' && (profile.settings.framePages || Boolean(pair))
@@ -1504,8 +1509,16 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     page.on('input-event', (_event, input) => {
       if (['mouseDown', 'rawKeyDown', 'keyDown', 'touchStart', 'mouseWheel', 'gestureScrollBegin'].includes(input.type)) tab.touched = true
       // In split view, clicking the other page makes it the active one; the
-      // click gives it focus itself.
-      if (['mouseDown', 'touchStart'].includes(input.type) && tab.id !== activeId && paneTabs()?.includes(tab)) activate(tab.id, false)
+      // click gives it focus itself. The pages move for its prompts once the
+      // click is done (see heldTop).
+      if (['mouseDown', 'touchStart'].includes(input.type) && tab.id !== activeId && paneTabs()?.includes(tab)) {
+        heldTop = { tab, top: pageTop }
+        activate(tab.id, false)
+      }
+      if (['mouseUp', 'touchEnd', 'touchCancel'].includes(input.type) && heldTop?.tab === tab) {
+        heldTop = null
+        sync()
+      }
       // Back skips pages that added themselves with no click or key press on
       // them, so one can be what makes it possible, with no other event.
       // Chromium counts it a moment later.
