@@ -1180,6 +1180,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // is still down, { tab, top }: the pages stay at `top`, so the toolbar's
   // prompt row coming or going doesn't move them under the pointer.
   let heldTop = null
+  // The click is done, or something else took its release.
+  const releaseHeldTop = () => { if (heldTop) { heldTop = null; sync() } }
   // The tab whose page took the window full screen with it, if one did: the
   // window leaves with that page. One you made full screen yourself stays.
   let fullScreenFor = null
@@ -1206,7 +1208,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (win.isDestroyed()) return
     const current = active()
     if (heldTop?.tab !== current) heldTop = null
-    const top = heldTop ? heldTop.top : current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (showsBookmarks() ? BOOKMARKS_HEIGHT : 0) + promptHeight(current)
+    const top = current?.fullScreen === 'on' ? 0 : heldTop ? heldTop.top : BAR_HEIGHT + (showsBookmarks() ? BOOKMARKS_HEIGHT : 0) + promptHeight(current)
     const pair = paneTabs()
     const panes = pair ? `${split.ids},${split.ratio}` : ''
     const frame = current?.fullScreen !== 'on' && (profile.settings.framePages || Boolean(pair))
@@ -1515,10 +1517,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
         heldTop = { tab, top: pageTop }
         activate(tab.id, false)
       }
-      if (['mouseUp', 'touchEnd', 'touchCancel'].includes(input.type) && heldTop?.tab === tab) {
-        heldTop = null
-        sync()
-      }
+      if (['mouseUp', 'touchEnd', 'touchCancel'].includes(input.type) && heldTop?.tab === tab) releaseHeldTop()
       // Back skips pages that added themselves with no click or key press on
       // them, so one can be what makes it possible, with no other event.
       // Chromium counts it a moment later.
@@ -1704,7 +1703,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       },
     }))
 
-    page.on('context-menu', (_event, params) => showPageMenu(page, params))
+    // A right-click's menu takes the release of the click (see heldTop).
+    page.on('context-menu', (_event, params) => { releaseHeldTop(); showPageMenu(page, params) })
 
     if (history) {
       // Shows the page's address and title until it loads.
@@ -3140,7 +3140,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   win.on('resize', () => { hideLogins(); layout() })
   // Another app or window comes to the front.
-  win.on('blur', () => hideLogins())
+  win.on('blur', () => { hideLogins(); releaseHeldTop() })
   // Where the window is, and which window was in front, come back next
   // launch; a private window changes none of that.
   const changed = () => { if (!isPrivate) sessionChanged() }
