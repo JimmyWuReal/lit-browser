@@ -5,7 +5,7 @@ const { check, credentialOf, errorOf, refusal, cbor, rpIdFits, TIMEOUT } = requi
 
 const b64 = (bytes) => Buffer.from(bytes).toString('base64url')
 const challenge = b64(crypto.randomBytes(32))
-const at = (origin, topOrigin = origin) => ({ origin, topOrigin })
+const at = (origin, sameOriginWithAncestors = true) => ({ origin, sameOriginWithAncestors })
 const page = at('https://login.example.com')
 const getOptions = (more) => ({ challenge, ...more })
 const createOptions = (more) => ({
@@ -20,7 +20,8 @@ test('only https pages, or localhost, and the frame of the page itself, may ask'
   for (const origin of ['http://example.com', 'https://192.168.1.1', 'https://[::1]', 'null', 'file://', 'https://example.com/path', 'not a url']) {
     assert.deepEqual(check('get', getOptions(), at(origin)), refusal(), origin)
   }
-  assert.deepEqual(check('get', getOptions(), at('https://ads.example.net', 'https://example.com')), refusal())
+  assert.deepEqual(check('get', getOptions(), at('https://ads.example.net', false)), refusal())
+  assert.deepEqual(check('get', getOptions(), { origin: 'https://example.com' }), refusal())
   assert.equal(check('get', getOptions(), at('http://localhost:3000')).request.rpId, 'localhost')
   assert.equal(check('get', getOptions(), at('https://example.com')).request.origin, 'https://example.com')
   assert.equal(check('sign', getOptions(), page).error.name, 'TypeError')
@@ -91,7 +92,7 @@ test('a request to make a passkey', () => {
   assert.equal(credProps, true)
   const made = (more) => check('create', createOptions(more), page)
   const selection = (authenticatorSelection) => made({ authenticatorSelection })
-  assert.deepEqual(['platform', 'securityKey'].map((key) => selection({ authenticatorAttachment: 'platform' }).request[key]), [true, false])
+  assert.deepEqual(['platform', 'securityKey', 'hybrid'].map((key) => selection({ authenticatorAttachment: 'platform' }).request[key]), [true, false, false])
   assert.deepEqual(['platform', 'securityKey'].map((key) => selection({ authenticatorAttachment: 'cross-platform' }).request[key]), [false, true])
   assert.equal(selection({ residentKey: 'required' }).request.residentKey, 'required')
   assert.equal(selection({ requireResidentKey: true }).request.residentKey, 'required')

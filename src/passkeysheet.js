@@ -147,10 +147,21 @@ function bridge(ask, cancel) {
   }
 }
 
+// Whether the document may make this kind of request, by its Permissions
+// Policy (publickey-credentials-get or -create), which only the page knows.
+// Asked here, out of the page's reach.
+function allows(policy, kind) {
+  return !policy || policy.allowsFeature(kind === 'create' ? 'publickey-credentials-create' : 'publickey-credentials-get')
+}
+
 if (typeof window !== 'undefined') {
   const { contextBridge, ipcRenderer } = require('electron')
+  const refused = { error: { name: 'NotAllowedError', message: 'The operation either timed out or was not allowed.' } }
   contextBridge.executeInMainWorld({
     func: bridge,
-    args: [(kind, options) => ipcRenderer.invoke('passkey', kind, options), () => ipcRenderer.send('passkey-cancel')],
+    args: [
+      async (kind, options) => (allows(document.featurePolicy, kind) ? ipcRenderer.invoke('passkey', kind, options) : refused),
+      () => ipcRenderer.send('passkey-cancel'),
+    ],
   })
-} else module.exports = { bridge }
+} else module.exports = { bridge, allows }

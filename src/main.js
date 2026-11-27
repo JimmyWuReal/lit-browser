@@ -1005,7 +1005,9 @@ async function askPasskey(event, kind, options) {
   if (!passkeySheet || passkeyAsk || !frame || frame.isDestroyed()) return webauthn.refusal()
   const controls = [...openWindows].find((each) => each.showsPage(contents))
   if (!controls) return webauthn.refusal()
-  const checked = webauthn.check(kind, options, { origin: frame.origin, topOrigin: frame.top?.origin })
+  let sameOriginWithAncestors = true
+  for (let above = frame.parent; above; above = above.parent) sameOriginWithAncestors &&= above.origin === frame.origin
+  const checked = webauthn.check(kind, options, { origin: frame.origin, sameOriginWithAncestors })
   if (checked.error) return checked
   const answer = await new Promise((resolve) => {
     const ask = passkeyAsk = { frame, resolve }

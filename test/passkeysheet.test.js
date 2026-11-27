@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { bridge } = require('../src/passkeysheet')
+const { bridge, allows } = require('../src/passkeysheet')
 
 const b64 = (bytes) => Buffer.from(bytes).toString('base64url')
 const bytesOf = (buffer) => [...new Uint8Array(buffer)]
@@ -155,6 +155,15 @@ test('sites learn the sheet is there, and login-field passkeys aren’t', async 
   const capabilities = await PublicKeyCredential.getClientCapabilities()
   assert.deepEqual([capabilities.conditionalGet, capabilities.hybridTransport, capabilities.passkeyPlatformAuthenticator], [false, true, true])
   assert.equal(PublicKeyCredential.getClientCapabilities.name, 'getClientCapabilities')
+})
+
+test('a document its Permissions Policy keeps from passkeys isn’t asked for', () => {
+  const asked = []
+  const policy = (allowed) => ({ allowsFeature: (feature) => { asked.push(feature); return allowed } })
+  assert.equal(allows(policy(true), 'get'), true)
+  assert.equal(allows(policy(false), 'create'), false)
+  assert.deepEqual(asked, ['publickey-credentials-get', 'publickey-credentials-create'])
+  assert.equal(allows(undefined, 'get'), true)
 })
 
 test('an insecure page, with no credentials, is left alone', () => bridge())

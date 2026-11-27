@@ -74,15 +74,16 @@ function rpIdFits(rpId, host) {
 }
 
 // A page's request (`kind` 'create' or 'get', `options` in WebAuthn's JSON
-// form), from a frame on `origin` in a page on `topOrigin`. Answers
+// form), from a frame on `origin`, which is `sameOriginWithAncestors` when
+// every frame above it is on that origin too. Answers
 // `{ request, timeout, credProps }`, the native module's request and what
 // main needs after, or `{ error: { name, message } }` for the page.
-function check(kind, options, { origin, topOrigin }) {
+function check(kind, options, { origin, sameOriginWithAncestors }) {
   if ((kind !== 'create' && kind !== 'get') || !options || typeof options !== 'object') return failure('TypeError', 'The request isn’t one Lit knows.')
-  // Frames from another origin than their page's would need the page's leave
-  // (publickey-credentials-* in Permissions Policy), which Lit can't see.
+  // A frame under one from another origin would need that frame's leave
+  // (publickey-credentials-* in Permissions Policy), which main can't see.
   const url = originOf(origin)
-  if (!url || origin !== topOrigin) return refusal()
+  if (!url || sameOriginWithAncestors !== true) return refusal()
 
   const challenge = bytesOf(options.challenge, { min: 1 })
   if (!challenge) return failure('TypeError', 'The challenge is missing or too long.')
@@ -115,7 +116,8 @@ function check(kind, options, { origin, topOrigin }) {
   const selection = options.authenticatorSelection ?? {}
   const attachment = selection.authenticatorAttachment
   // Passkeys Apple keeps, or made on a phone, are ES256; a security key may
-  // take what the site lists. A site that wants a security key gets only that.
+  // take what the site lists. A site that wants a security key gets only that,
+  // and one that wants this Mac gets no phone either.
   const platform = attachment !== 'cross-platform' && algorithms.includes(ES256)
   const securityKey = attachment !== 'platform' && algorithms.length > 0
   if (!platform && !securityKey) return failure('NotSupportedError', 'None of the algorithms asked for are supported.')
@@ -130,7 +132,7 @@ function check(kind, options, { origin, topOrigin }) {
       attestation: oneOf(options.attestation, ['none', 'indirect', 'direct', 'enterprise'], 'none'),
       platform,
       securityKey,
-      hybrid: platform,
+      hybrid: platform && attachment !== 'platform',
     },
     timeout,
     credProps: options.extensions?.credProps === true,
