@@ -103,6 +103,7 @@ test('a request to make a passkey', () => {
   assert.equal(made({ pubKeyCredParams: [{ type: 'other', alg: -7 }] }).error.name, 'NotSupportedError')
   assert.deepEqual(made({ pubKeyCredParams: [] }).request.algorithms, [-7, -257])
   assert.equal(made({ attestation: 'weird' }).request.attestation, 'none')
+  assert.equal(made({ attestation: 'enterprise' }).request.attestation, 'none')
   assert.equal(made().credProps, false)
   assert.equal(check('create', createOptions({ user: { id: 'AQ', name: 'a' } }), page).request.user.displayName, '')
 })

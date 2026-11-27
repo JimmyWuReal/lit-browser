@@ -105,6 +105,8 @@ function bridge(ask, cancel) {
         if (!options?.publicKey) return real.apply(this, args)
         const { signal } = options
         if (signal?.aborted) throw signal.reason
+        // A passkey always takes the person's say, so a silent one is none.
+        if (name === 'get' && options.mediation === 'silent') return null
         // Passkeys listed in a login field are left for another time.
         if (options.mediation === 'conditional') throw new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError')
         let sent

@@ -137,6 +137,8 @@ test('passkeys in login fields are refused without asking', async (t) => {
   const { credentials, sent } = start(t)
   await assert.rejects(credentials.get({ publicKey: {}, mediation: 'conditional' }), { name: 'NotAllowedError' })
   await assert.rejects(credentials.create({ publicKey: {}, mediation: 'conditional' }), { name: 'NotAllowedError' })
+  // Nor is a silent one, which gets nothing.
+  assert.equal(await credentials.get({ publicKey: {}, mediation: 'silent' }), null)
   assert.equal(sent.length, 0)
 })
 

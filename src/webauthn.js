@@ -129,7 +129,9 @@ function check(kind, options, { origin, sameOriginWithAncestors }) {
       algorithms,
       exclude,
       residentKey,
-      attestation: oneOf(options.attestation, ['none', 'indirect', 'direct', 'enterprise'], 'none'),
+      // Enterprise attestation names the very authenticator, which Chrome
+      // gives only to sites a company's policy names; Lit has no such policy.
+      attestation: oneOf(options.attestation, ['none', 'indirect', 'direct'], 'none'),
       platform,
       securityKey,
       hybrid: platform && attachment !== 'platform',
