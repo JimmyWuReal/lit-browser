@@ -59,8 +59,12 @@ const BOOKMARKS_HEIGHT = 34
 const PAGE_INSET = 6
 const PAGE_RADIUS = 10
 // With vertical tabs, the sidebar down the window's left, which pages start
-// right of while it shows; keep in sync with .vertical in index.html.
+// right of while it shows. In a window narrower than SIDEBAR_FULL_FROM it is
+// a rail of the tabs' icons, so the toolbar keeps the room of a window at its
+// minimum width. Keep in sync with .vertical in index.html.
 const SIDEBAR_WIDTH = 220
+const SIDEBAR_RAIL = 48
+const SIDEBAR_FULL_FROM = 700
 const PRELOAD = path.join(__dirname, 'preload.js')
 // What runs in web pages.
 const PAGE_PRELOAD = path.join(__dirname, 'page.js')
@@ -1150,9 +1154,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // active tab has a prompt; at the very top, over the toolbar, while the
   // active page is full screen.
   let pageTop = BAR_HEIGHT
-  // How far right the pages start: past the tab sidebar while it shows, and
-  // at the very left while the active page is full screen.
-  let pageLeft = 0
+  // Whether the pages start right of the tab sidebar: while it shows, and
+  // not while the active page is full screen.
+  let besideSidebar = false
   // Whether pages are framed as a card (the Frame pages setting), which a
   // full screen page never is.
   let framed = profile.settings.framePages
@@ -1184,8 +1188,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const top = current?.fullScreen === 'on' ? 0 : BAR_HEIGHT + (showsBookmarks() ? BOOKMARKS_HEIGHT : 0) + promptHeight(current)
     const frame = current?.fullScreen !== 'on' && profile.settings.framePages
     const tabsAt = tabsPlace(profile.settings)
-    const left = current?.fullScreen !== 'on' && tabsAt === 'side' ? SIDEBAR_WIDTH : 0
-    if (top !== pageTop || frame !== framed || left !== pageLeft) { pageTop = top; framed = frame; pageLeft = left; layout() }
+    const beside = current?.fullScreen !== 'on' && tabsAt === 'side'
+    if (top !== pageTop || frame !== framed || beside !== besideSidebar) { pageTop = top; framed = frame; besideSidebar = beside; layout() }
     const title = signInPage(current)?.url || current?.title || (current?.started ? current.url : '') || 'New Tab'
     const named = profiles.length > 1 ? `${title} — ${profile.name}` : title
     win.setTitle(isPrivate ? `${named} (Private)` : named)
@@ -1242,6 +1246,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function layout() {
     const { width, height } = win.getContentBounds()
     const inset = framed ? PAGE_INSET : 0
+    const pageLeft = !besideSidebar ? 0 : width >= SIDEBAR_FULL_FROM ? SIDEBAR_WIDTH : SIDEBAR_RAIL
     for (const tab of tabs) {
       tab.view.setBounds({ x: pageLeft + inset, y: pageTop, width: Math.max(width - pageLeft - 2 * inset, 0), height: Math.max(height - pageTop - inset, 0) })
       tab.view.setBorderRadius(framed ? PAGE_RADIUS : 0)

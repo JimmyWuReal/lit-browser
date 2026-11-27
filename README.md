@@ -44,7 +44,7 @@ A tab playing sound shows a speaker. Click it to mute the tab, and again to unmu
 
 Drag a tab to move it along the strip. Middle-click closes a tab. In the tab strip, arrow keys move between tabs, ⇧← and ⇧→ move the tab itself, and Delete closes one.
 
-Turn on Vertical tabs in Settings › Tabs to list the tabs down a sidebar on the window's left instead, each with its full title; the address bar and the page sit to its right. There ↑ and ↓ move between tabs, ⇧↑ and ⇧↓ move one, and dragging works up and down. ⇧⌘L (View › Show Tab Sidebar) hides the sidebar, giving pages the whole width, and shows it again; the tab shortcuts still work while it is hidden. With tabs across the top, ⇧⌘L turns vertical tabs on.
+Turn on Vertical tabs in Settings › Tabs to list the tabs down a sidebar on the window's left instead, each with its full title; the address bar and the page sit to its right. In a window under 700 points wide, the sidebar narrows to the tabs' icons. There ↑ and ↓ move between tabs, ⇧↑ and ⇧↓ move one, and dragging works up and down. ⇧⌘L (View › Show Tab Sidebar) hides the sidebar, giving pages the whole width, and shows it again; the tab shortcuts still work while it is hidden. With tabs across the top, ⇧⌘L turns vertical tabs on.
 
 ⇧⌘T brings back the last tab you closed (⌘W, its close button, middle-click) as it was then, with its back/forward history, in its old place. A closed window comes back with all its tabs, and tabs closed from it before go back into it. Lit remembers up to 50 closed tabs by default (see Settings), counting each tab of a closed window. They are kept in memory only, so Lit forgets them when it quits; a page closing itself (such as a sign-in popup) is not remembered.
 

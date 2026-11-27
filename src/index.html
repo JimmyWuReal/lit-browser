@@ -263,11 +263,15 @@
 
     /* Vertical tabs: the tabs leave the strip for a sidebar down the
        window's left, under it, and the rows under the strip move right of
-       it. Its width matches SIDEBAR_WIDTH in main.js. The strip keeps the
-       window buttons, New Tab and the buttons at its end. With the sidebar
-       hidden, no tabs show (.no-tabs). */
+       it. Its width matches SIDEBAR_WIDTH in main.js; in a window narrower
+       than SIDEBAR_FULL_FROM it is SIDEBAR_RAIL, a rail of the tabs' icons
+       (see the narrow tabs' container query), so the rows keep the room of
+       a window at its minimum width. The strip keeps the window buttons,
+       New Tab and the buttons at its end. With the sidebar hidden, no tabs
+       show (.no-tabs). */
     body { --side: 0px; }
     body.vertical { --side: 220px; padding-left: var(--side); }
+    @media (max-width: 699px) { body.vertical { --side: 48px; } }
     .vertical .strip { margin-left: calc(-1 * var(--side)); }
     .no-tabs .tabs { display: none; }
     .vertical .tabs {
@@ -304,6 +308,9 @@
       display: flex;
       align-items: center;
       padding: 0 var(--edge) 4px;
+      /* For the narrow row's rules under .find, by the row's own width,
+         which the tab sidebar takes from the window's. */
+      container-type: inline-size;
     }
 
     /* Back, forward and reload, before the address; not on home, where
@@ -507,8 +514,9 @@
       white-space: nowrap;
     }
     .find-count:empty { display: none; }
-    /* In a narrow window, the buttons, the address and find share the row. */
-    @media (max-width: 600px) {
+    /* In a narrow row (a window up to 600px wide, or a little wider beside
+       the tab sidebar), the buttons, the address and find share it. */
+    @container (max-width: 588px) {
       .find { flex-basis: 204px; min-width: 204px; }
       .find-count { padding: 0 2px; font-size: 11px; }
       body:not(.home) .bar:has(.find.is-open) .address > svg { display: none; }
