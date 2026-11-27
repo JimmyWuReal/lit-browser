@@ -239,5 +239,8 @@ if (typeof window !== 'undefined') {
   }
   addEventListener('beforeinput', onEdit, true)
   addEventListener('input', onEdit, true)
+  // Back to a page kept in the back-forward cache is a new page to main,
+  // which forgets the edit, so it is told again.
+  addEventListener('pageshow', (event) => { if (event.persisted && edited) require('electron').ipcRenderer.send('page-edited') })
   if (window === window.top && /^https?:$/.test(location.protocol)) start(require('electron'))
 } else module.exports = { passwordOf, oldOf, signsIn, nameOf }

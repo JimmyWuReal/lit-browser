@@ -2362,10 +2362,14 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (kind === 'tabs') {
       const picked = shareTabs().find((each) => each.id === id)
       if (picked && !shareRows().some((row) => row.id === id && row.page === page)) return shareTabsChanged()
-      // A sleeping tab is shared once it has woken and loaded.
+      // A sleeping tab is shared once it has woken and loaded, if it is
+      // still the page picked; one that went elsewhere (a site sending it
+      // to sign in again) or failed is shown in the picker to choose again.
       if (picked?.asleep) {
+        const { url } = picked
         await Promise.all([...openWindows].map((controls) => controls.wakeTab(id)))
         if (share !== asked || asked.choice !== choice) return
+        if (picked.error || picked.page.isDestroyed() || picked.page.getURL() !== url) return shareTabsChanged()
       }
       const frame = picked && !picked.page.isDestroyed() ? picked.page.mainFrame : null
       if (frame && !frame.isDestroyed()) streams = shareStore.tabStreams(frame, wantsAudio && audio === true)
