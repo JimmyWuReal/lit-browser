@@ -1726,10 +1726,11 @@
         if (isActive) for (const [name, value] of Object.entries(rect)) document.body.style.setProperty(`--pane-${name}`, `${value}px`)
         const others = state.tabs.filter((each) => !shown.ids.includes(each.id))
         const mode = onShow(tab) ? 'page' : !isActive ? 'label' : !tab.started ? 'pick' : 'empty'
-        const key = JSON.stringify([id, mode, mode === 'label' && (tab.error?.title || tabLabel(tab)),
-          mode === 'pick' && others.map((each) => [each.id, tabLabel(each), each.favicon, each.loading])])
+        // The list of tabs keeps its rows, and the focus in them, as they change.
+        if (mode === 'pick' && box.dataset.key === `${id} pick`) return drawPick(box.firstElementChild, id, others)
+        const key = JSON.stringify([id, mode, mode === 'label' && (tab.error?.title || tabLabel(tab))])
         if (box.dataset.key === key) return
-        box.dataset.key = key
+        box.dataset.key = mode === 'pick' ? `${id} pick` : key
         if (mode === 'label') {
           const label = document.createElement('button')
           label.type = 'button'
@@ -1738,36 +1739,44 @@
           label.title = `Show ${tabLabel(tab)}`
           label.addEventListener('click', () => window.lit.activateTab(id))
           box.replaceChildren(label)
-        } else if (mode === 'pick') box.replaceChildren(drawPick(id, others))
-        else box.replaceChildren()
+        } else if (mode === 'pick') {
+          const pick = document.createElement('div')
+          pick.className = 'pane-pick'
+          pick.innerHTML = '<p></p><div class="pick-list"></div>'
+          box.replaceChildren(pick)
+          drawPick(pick, id, others)
+        } else box.replaceChildren()
       })
       const [left, right] = shown.rects
       place(divider, { x: left.x + left.width, y: left.y, width: shown.gap, height: left.height })
       divider.setAttribute('aria-valuenow', String(Math.round(left.width / (left.width + right.width) * 100)))
     }
-    // A new split view's blank pane: type an address, or pick a tab for it.
-    function drawPick(blankId, others) {
-      const pick = document.createElement('div')
-      pick.className = 'pane-pick'
-      const say = document.createElement('p')
+    // A new split view's blank pane (`pick`): type an address, or pick a tab
+    // for it. Each tab's row is made once and then kept up to date, in order.
+    const pickRows = new WeakMap()
+    function drawPick(pick, blankId, others) {
+      const [say, list] = pick.children
       say.textContent = others.length ? 'Search or enter an address above, or pick a tab to show here.' : 'Search or enter an address above.'
-      const list = document.createElement('div')
-      list.className = 'pick-list'
-      for (const tab of others) {
-        const row = document.createElement('button')
-        row.type = 'button'
-        row.className = 'pick-row'
-        const elements = { icon: document.createElement('span'), iconKey: null }
-        elements.icon.className = 'tab-icon'
+      const rows = pickRows.get(pick) ?? new Map()
+      pickRows.set(pick, rows)
+      const ids = new Set(others.map((tab) => tab.id))
+      for (const [id, { row }] of rows) if (!ids.has(id)) { row.remove(); rows.delete(id) }
+      others.forEach((tab, index) => {
+        let elements = rows.get(tab.id)
+        if (!elements) {
+          const row = document.createElement('button')
+          row.type = 'button'
+          row.className = 'pick-row'
+          elements = { row, icon: document.createElement('span'), title: document.createElement('span'), iconKey: null }
+          elements.icon.className = 'tab-icon'
+          row.append(elements.icon, elements.title)
+          row.addEventListener('click', () => window.lit.pickForSplit(blankId, tab.id))
+          rows.set(tab.id, elements)
+        }
         drawIcon(elements, tab)
-        const title = document.createElement('span')
-        title.textContent = tabLabel(tab)
-        row.append(elements.icon, title)
-        row.addEventListener('click', () => window.lit.pickForSplit(blankId, tab.id))
-        list.append(row)
-      }
-      pick.append(say, list)
-      return pick
+        elements.title.textContent = tabLabel(tab)
+        if (list.children[index] !== elements.row) list.insertBefore(elements.row, list.children[index] || null)
+      })
     }
     window.lit.onPanes((next) => { panes = next; drawPanes() })
 
