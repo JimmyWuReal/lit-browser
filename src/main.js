@@ -1021,21 +1021,24 @@ async function importFromChrome(profile, choice) {
     if (choice.passwords === true) {
       try {
         const found = chrome.readLogins(folder)
-        // Only logins need the key; sites never to save on don't.
+        // Only logins Lit doesn't have yet need the key; sites never to save
+        // on don't, so they come either way.
+        const fresh = chrome.newLogins(profile.passwords, found.logins)
         let key = null
-        if (found.logins.length) {
+        if (fresh.length) {
           try {
             key = await chrome.chromeKey()
           } catch {
             errors.push('Passwords weren’t imported, as the Keychain didn’t give Lit Chrome’s key.')
           }
         }
-        if ((key || !found.logins.length) && !profile.deleted) {
-          const result = chrome.mergeLogins(profile.passwords, found, key, encrypt)
+        if (!profile.deleted) {
+          const result = chrome.mergeLogins(profile.passwords, { logins: key ? fresh : [], never: found.never }, key, encrypt)
           if (result.error) errors.push(result.error)
           else if (!setPasswords(profile, result.store)) errors.push('Couldn’t save passwords.')
           else {
-            imported.passwords = result.added
+            // Not counted when the logins couldn't be.
+            if (key || !fresh.length) imported.passwords = result.added
             if (result.unreadable) errors.push(`${result.unreadable === 1 ? 'One password' : `${result.unreadable} passwords`} couldn’t be read.`)
           }
         }

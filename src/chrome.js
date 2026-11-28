@@ -275,6 +275,10 @@ function chromeKey() {
   })
 }
 
+// The imported logins Lit's password `store` has none for, by site and
+// username: those that need Chrome's key.
+const newLogins = (store, logins) => logins.filter(({ site, username }) => !store.logins.some((login) => login.site === site && login.username === username))
+
 // Adds imported logins to Lit's password `store`: each decrypted with
 // Chrome's `key` (its first copy that can be) and encrypted again with Lit's `encrypt` (null when it
 // can't). A login Lit already has for the site and username keeps Lit's
@@ -303,5 +307,5 @@ module.exports = {
   ROOT, RANGES, since, isProfileId, profiles,
   readBookmarks, countBookmarks, mergeBookmarks,
   readHistory, countHistory, mergeHistory,
-  readLogins, countLogins, deriveKey, decrypt, chromeKey, mergeLogins,
+  readLogins, countLogins, deriveKey, decrypt, chromeKey, newLogins, mergeLogins,
 }

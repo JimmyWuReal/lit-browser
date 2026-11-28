@@ -264,5 +264,8 @@ test('mergeLogins re-encrypts new logins from a copy that reads, and keeps Litâ€
     ['https://b.com', 'b', 'lit:local copy'],
   ])
   assert.deepEqual(result.store.never, ['https://never.com'])
+  // Only new logins need the key; never-save sites import without one.
+  assert.deepEqual(chrome.newLogins(store, imported.logins).map(({ site, username }) => `${username}@${site}`), ['other@https://a.com', 'b@https://b.com', '@https://c.com'])
+  assert.deepEqual(chrome.mergeLogins(store, { logins: [], never: imported.never }, null, hide), { store: { ...store, never: ['https://never.com'] }, added: 0, unreadable: 0 })
   assert.deepEqual(chrome.mergeLogins(store, imported, KEY, () => null), { error: 'Couldnâ€™t encrypt passwords with the Keychain.' })
 })
