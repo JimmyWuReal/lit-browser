@@ -60,6 +60,8 @@ contextBridge.exposeInMainWorld('lit', {
   // one profile. Its menu opens at { x, y }, in the window.
   onProfile: (callback) => on('profile', callback),
   openProfileMenu: (at) => ipcRenderer.send('profile-menu', at),
+  // The ad blocking button's menu, for the tab it showed.
+  openAdsMenu: (tabId, at) => ipcRenderer.send('ads-menu', tabId, at),
   openDownloads: () => ipcRenderer.send('open-downloads'),
   // The downloads indicator: { count, active, progress }, `progress` being
   // 0–1, or null while none is running or one has no known size.

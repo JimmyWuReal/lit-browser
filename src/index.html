@@ -195,6 +195,7 @@
     .new-tab,
     .open-downloads,
     .open-profile,
+    .open-ads,
     .open-settings { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; }
     .open-downloads { margin-left: auto; }
 
@@ -219,8 +220,9 @@
     /* Downloads: shown once this session has any. While some are on their
        way, a ring around the arrow fills with their progress, or spins
        while a size is unknown. Stays mounted and eases in and out like
-       the zoom button. */
-    .open-downloads.is-hidden {
+       the zoom button. The ad blocking button does too. */
+    .open-downloads.is-hidden,
+    .open-ads.is-hidden {
       opacity: 0;
       visibility: hidden;
       transform: scale(.8);
@@ -249,6 +251,13 @@
     .open-downloads.is-spinning .downloads-ring { animation: ring-spin 800ms linear infinite; }
     .open-downloads.is-spinning .ring-fill { stroke-dashoffset: 75; }
     @keyframes ring-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+
+    /* Ad blocking: shown on web pages while blocking is on. A shield while
+       it blocks, crossed out on a site it was stopped on; they trade
+       places like the speaker's waves and cross. */
+    .open-ads > svg { grid-area: 1 / 1; transition: opacity 180ms ease-out, transform 240ms var(--settle); }
+    .open-ads:not(.is-stopped) .ads-off,
+    .open-ads.is-stopped .ads-on { opacity: 0; transform: scale(.6); }
 
     /* Narrow tabs keep just the icon; the active one keeps its close button. */
     @container (max-width: 72px) {
@@ -923,6 +932,18 @@
     <button class="icon-button open-profile" id="open-profile" type="button" aria-haspopup="menu" hidden>
       <span class="profile-mark" id="profile-mark" aria-hidden="true"></span>
     </button>
+    <button class="icon-button open-ads is-hidden" id="open-ads" type="button" tabindex="-1" aria-haspopup="menu" aria-label="Ad blocking" title="Ad blocking">
+      <svg class="ads-on" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path>
+      </svg>
+      <svg class="ads-off" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m2 2 20 20"></path>
+        <path d="M5 5a1 1 0 0 0-1 1v7c0 5 3.5 7.5 7.67 8.94a1 1 0 0 0 .67.01c2.35-.82 4.48-1.97 5.9-3.71"></path>
+        <path d="M9.309 3.652A12.252 12.252 0 0 0 11.24 2.28a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1v7a9.784 9.784 0 0 1-.08 1.264"></path>
+      </svg>
+    </button>
     <button class="icon-button open-settings" id="open-settings" type="button" aria-label="Settings" title="Settings" data-shortcut="shortcuts.settings">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1096,6 +1117,7 @@
     const address = document.getElementById('address')
     const zoomButton = document.getElementById('zoom')
     const downloadsButton = document.getElementById('open-downloads')
+    const adsButton = document.getElementById('open-ads')
     const findBox = document.getElementById('find')
     const findInput = document.getElementById('find-input')
     const findCount = document.getElementById('find-count')
@@ -1297,6 +1319,7 @@
       }
       drawNav(tab, switched)
       drawStar()
+      drawAds(tab)
       drawFind(tab?.find, switched)
       drawPrompt(tab)
       drawSignIn(tab)
@@ -1415,6 +1438,27 @@
       labelShortcut(star)
     }
     star.addEventListener('click', () => window.lit.bookmarkPage())
+
+    // The ad blocking button, by what blocking does on the active tab's
+    // page (`ads`, from main). It keeps its last look while it fades out.
+    function drawAds(tab) {
+      const ads = tab?.ads
+      adsButton.classList.toggle('is-hidden', !ads)
+      adsButton.tabIndex = ads ? 0 : -1
+      if (!ads) return
+      adsButton.classList.toggle('is-stopped', ads.state !== 'block')
+      adsButton.title = {
+        block: `Blocking ads on ${ads.site}`,
+        site: `Not blocking ads on ${ads.site}`,
+        once: `Not blocking ads on ${ads.site} until you leave it`,
+      }[ads.state]
+      adsButton.setAttribute('aria-label', `Ad blocking: ${adsButton.title}`)
+    }
+    // Its menu hangs from the button, for the tab it showed.
+    adsButton.addEventListener('click', () => {
+      const { left, bottom } = adsButton.getBoundingClientRect()
+      window.lit.openAdsMenu(state.activeId, { x: left, y: bottom + 4 })
+    })
 
     const globe = () => globeTemplate.content.cloneNode(true)
     function bookmarkIcon(item) {

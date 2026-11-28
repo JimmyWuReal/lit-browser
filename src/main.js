@@ -38,7 +38,7 @@ const signIn = require('./signin')
 const errors = require('./errors')
 const profileStore = require('./profiles')
 const findState = require('./find')
-const { pageMenu, tabMenu, navigationMenu, bookmarkMenu } = require('./menus')
+const { pageMenu, tabMenu, navigationMenu, bookmarkMenu, adsMenu } = require('./menus')
 const commandStore = require('./commands')
 const { createAdblock } = require('./adblock')
 
@@ -1006,7 +1006,10 @@ function turnAwayPasskeys() {
 
 // Ad and tracker blocking, in private sessions too (src/adblock.js), made at
 // launch and switched with each profile's Block ads and trackers setting.
+// It spares the pages of sites ads were stopped on (see adsOf in
+// createWindow).
 let adblock
+const sparesAds = (contents, url) => [...openWindows].some((controls) => controls.sparesAds(contents, url))
 
 // After a closed list changes: the menu item is grayed out while there
 // is nothing to reopen, and an open History learns what Clear would forget.
@@ -1257,7 +1260,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tabsAt,
       // Both tabs of the split view, shown or not, so the strip can mark them.
       split: split?.ids ?? null,
-      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, pdf: isPdf, page, prompts, signIns, offer, error, audible, asleep }) => ({
+      tabs: tabs.map(({ id, title, url, favicon, loading, started, find, zoom: factor, pdf: isPdf, page, prompts, signIns, offer, error, audible, asleep }, index) => ({
         id, title, url, favicon, loading, started,
         asleep: Boolean(asleep),
         canGoBack: asleep ? asleep.history.index > 0 : !page.isDestroyed() && page.navigationHistory.canGoBack(),
@@ -1279,6 +1282,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
           ? zoom.percent(factor)
           : '',
         find: find && { text: find.text, active: find.active, matches: find.matches },
+        // The ad blocking button: what blocking does on the page, and its
+        // site's name, or null to hide the button.
+        ads: started && !error && !signInPage({ signIns }) && adsOf(tabs[index], url)
+          ? { state: adsOf(tabs[index], url), site: permissions.label(permissions.originOf(url)) }
+          : null,
         error: error && !signInPage({ signIns }) && {
           ...errors.describe(error, url),
           action: error.kind === 'crash' ? 'Reload' : 'Try again',
@@ -1623,6 +1631,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       tab.leaving = false
       // Until checkPdf says otherwise.
       tab.pdf = false
+      // Leaving the site ends its Stop on This Site Once.
+      if (tab.adsOnce && permissions.originOf(url) !== tab.adsOnce) tab.adsOnce = null
       setZoom(tab, zoomOf(url))
       // For checkResponse; a new object for each page.
       tab.response = { status }
@@ -2786,6 +2796,39 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     })
   }
 
+  // What ad blocking does on the page at `url` in `tab`: null where it does
+  // nothing (it is off, or the page is no web site's), else 'block', 'site'
+  // (Stop on This Site: the site's ads kind saved as Allow, in the window's
+  // permission store) or 'once' (Stop on This Site Once: this tab, until it
+  // leaves the site). See adsMenu and src/adblock.js.
+  function adsOf(tab, url) {
+    const site = profile.settings.blockAds && /^https?:/i.test(url || '') ? permissions.originOf(url) : null
+    if (!site) return null
+    if (tab.adsOnce === site) return 'once'
+    return permissions.status(permissionStore.sites, site, ['ads']) === 'allow' ? 'site' : 'block'
+  }
+
+  // The toolbar's ad blocking button, for the tab it showed. Each choice
+  // reloads the page, for its ads to come or go; other tabs on the site
+  // change at their next load.
+  function showAdsMenu(id, at) {
+    const tab = find(id)
+    const ads = tab && !tab.error && adsOf(tab, tab.url)
+    if (!ads) return
+    const site = permissions.originOf(tab.url)
+    popup(adsMenu({ ads, label: permissions.label(site) }), (command) => {
+      // The tab may have closed or moved on while the menu was open.
+      if (!find(id) || permissions.originOf(tab.url) !== site) return
+      if (command === 'settings') return openPopup('settings', 'privacy')
+      tab.adsOnce = command === 'stopOnce' ? site : null
+      // Unsaved, a choice still holds until Lit quits.
+      if (command === 'stopSite') permissionStore.choose(site, ['ads'], 'allow')
+      if (command === 'resume' && adsOf(tab, tab.url) === 'site') permissionStore.choose(site, ['ads'], null)
+      reload(tab)
+      sync()
+    }, at)
+  }
+
   // The toolbar's profile button: every profile, and managing them.
   function showProfileMenu({ x, y }) {
     if (win.isDestroyed()) return
@@ -3217,6 +3260,14 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     settingsSection: () => settingsSection,
     profileChanged() { sendProfile(); sync() },
     showProfileMenu,
+    showAdsMenu,
+    // Whether ad blocking leaves the page in `contents` alone, if it is one
+    // of this window's tabs: at `url`, the page it shows or is opening.
+    sparesAds(contents, url) {
+      const tab = tabs.find((each) => each.page === contents)
+      const ads = tab && adsOf(tab, url)
+      return ads === 'site' || ads === 'once'
+    },
     openFromHistory,
     suggest,
     selectSuggestion: (index) => { if (suggestionsOpen) suggestionsView.webContents.send('suggestions-select', index) },
@@ -3605,6 +3656,7 @@ ipcMain.on('open-downloads', fromToolbar((c) => c.openPopup('downloads')))
 ipcMain.on('mute-tab', fromToolbar((c, id) => Number.isInteger(id) && c.toggleMute(id)))
 ipcMain.on('tab-menu', fromToolbar((c, id) => c.showTabMenu(id)))
 ipcMain.on('profile-menu', fromToolbar((c, at) => isPoint(at) && c.showProfileMenu(at)))
+ipcMain.on('ads-menu', fromToolbar((c, tabId, at) => c.isActive(tabId) && isPoint(at) && c.showAdsMenu(tabId, at)))
 // Bookmarks, from the bar or the popup's lists, which share these.
 const fromBookmarks = (handler) => (event, ...args) => {
   const popup = windowsByPopup.get(event.sender)
@@ -3865,7 +3917,7 @@ app.whenReady().then(async () => {
   for (const profile of profileList.profiles) openProfile(profile)
   currentProfile = profiles.find((profile) => profile.id === profileList.last)
   if (!shared().securityKeys) turnAwayPasskeys()
-  adblock = createAdblock(path.join(root, 'adblock.bin'))
+  adblock = createAdblock(path.join(root, 'adblock.bin'), { spares: sparesAds })
   // A saved engine is in use before any tab loads; first-time lists
   // download in the background.
   await Promise.all(profiles.map((profile) => adblock.set(profile.session, profile.settings.blockAds)))

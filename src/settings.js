@@ -143,7 +143,7 @@ const SECTIONS = [
     // Also lists the sites given or refused a permission (see
     // src/permissions.js), after the settings.
     list: 'sitePermissions',
-    listWords: 'Site permissions camera microphone location notifications clipboard allow block',
+    listWords: 'Site permissions camera microphone location notifications clipboard ads trackers allow block',
     settings: [
       {
         key: 'saveHistory',
@@ -155,7 +155,7 @@ const SECTIONS = [
       {
         key: 'blockAds',
         label: 'Block ads and trackers',
-        description: 'Stops requests to ad and tracking servers and hides the space ads leave, using Ghostery’s lists, which download the first time and refresh weekly. Reload open pages to show or hide their ads.',
+        description: 'Stops requests to ad and tracking servers and hides the space ads leave, using Ghostery’s lists, which download the first time and refresh weekly. Reload open pages to show or hide their ads. The shield in the toolbar stops it on a site, for good or until you leave it.',
         type: 'toggle',
         default: true,
       },

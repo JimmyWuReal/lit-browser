@@ -9,6 +9,11 @@
 // at once, while fresh lists are fetched and swapped in. Nothing loads or
 // downloads while blocking is off. Plain Node apart from the engine, which
 // tests replace (test/adblock.test.js).
+//
+// A page can be spared: `spares(contents, url)`, from main, says whether the
+// page in `contents` (a tab), or the one it is opening at `url`, is on a site
+// ads were stopped for (the toolbar's ad blocking button). Its requests and
+// styles then go untouched, its frames' too.
 const fs = require('node:fs/promises')
 
 const ALL = { urls: ['<all_urls>'] }
@@ -20,10 +25,11 @@ const MAX_AGE = 7 * 24 * 60 * 60 * 1000
 const INJECT = '@ghostery/adblocker/inject-cosmetic-filters'
 const OBSERVE = '@ghostery/adblocker/is-mutation-observer-enabled'
 
-// `deps` are for tests: { Blocker, preload, handle, fetch, read, write, stat,
-// now, warn }.
+// `deps` holds `spares`, and the rest are for tests: { Blocker, preload,
+// handle, fetch, read, write, stat, now, warn }.
 function createAdblock(file, deps = {}) {
   const {
+    spares = () => false,
     Blocker = require('@ghostery/adblocker-electron').ElectronBlocker,
     preload = () => require.resolve('@ghostery/adblocker-electron-preload'),
     handle = (...args) => require('electron').ipcMain.handle(...args),
@@ -41,8 +47,15 @@ function createAdblock(file, deps = {}) {
   // block, and the preload script it has while it does.
   const sessions = new Map()
   const blocks = (ses) => Boolean(engine && sessions.get(ses)?.on)
-  handle(INJECT, (event, ...args) => (blocks(event.sender.session) ? engine.onInjectCosmeticFilters(event, ...args) : undefined))
-  handle(OBSERVE, (event) => blocks(event.sender.session) && engine.onIsMutationObserverEnabled(event))
+  // A request with no page (a service worker's) is never spared. A page's
+  // own load is for the address it opens, not the one it leaves.
+  const spared = (contents, url) => Boolean(contents) && !contents.isDestroyed() && spares(contents, url ?? contents.getURL())
+  const pageOf = (details) => [details.webContents, details.resourceType === 'mainFrame' ? details.url : undefined]
+  // The cosmetic filters' requests come from the page's frames, whose
+  // sender is the page's tab.
+  const styles = (event) => blocks(event.sender.session) && !spared(event.sender)
+  handle(INJECT, (event, ...args) => (styles(event) ? engine.onInjectCosmeticFilters(event, ...args) : undefined))
+  handle(OBSERVE, (event) => styles(event) && engine.onIsMutationObserverEnabled(event))
 
   // Matches one session to its setting, once there is an engine. `engine` is
   // read on each request, so fresh lists apply at once.
@@ -51,8 +64,8 @@ function createAdblock(file, deps = {}) {
     if (blocks(ses) === (state.preload !== null)) return
     if (blocks(ses)) {
       state.preload = ses.registerPreloadScript({ type: 'frame', filePath: preload() })
-      ses.webRequest.onBeforeRequest(ALL, (details, callback) => engine.onBeforeRequest(details, callback))
-      ses.webRequest.onHeadersReceived(ALL, (details, callback) => engine.onHeadersReceived(details, callback))
+      ses.webRequest.onBeforeRequest(ALL, (details, callback) => (spared(...pageOf(details)) ? callback({}) : engine.onBeforeRequest(details, callback)))
+      ses.webRequest.onHeadersReceived(ALL, (details, callback) => (spared(...pageOf(details)) ? callback({}) : engine.onHeadersReceived(details, callback)))
     } else {
       ses.unregisterPreloadScript(state.preload)
       state.preload = null

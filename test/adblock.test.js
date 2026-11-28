@@ -15,7 +15,11 @@ function fakeSession() {
 }
 
 // A stand-in for ElectronBlocker, whose "lists" are just a name carried through serialize/deserialize.
-function setup({ saved, savedAge = 0, fetchFails = false, writeFails = false, fetchGate } = {}) {
+// A tab's page at `url`, as the cosmetic filters' requests and webRequest
+// details name it.
+const fakePage = (session, url = 'https://a.com/') => ({ session, isDestroyed: () => false, getURL: () => url })
+
+function setup({ saved, savedAge = 0, fetchFails = false, writeFails = false, fetchGate, spares } = {}) {
   const session = fakeSession()
   const handlers = {}
   const log = { fetched: 0, written: [], warned: [] }
@@ -24,6 +28,7 @@ function setup({ saved, savedAge = 0, fetchFails = false, writeFails = false, fe
     onInjectCosmeticFilters: () => `styles from ${name}`,
     onIsMutationObserverEnabled: () => true,
     onBeforeRequest: (_details, callback) => callback(name),
+    onHeadersReceived: (_details, callback) => callback(`headers from ${name}`),
     serialize() { return new TextEncoder().encode(name) },
   })
   const Blocker = {
@@ -41,6 +46,7 @@ function setup({ saved, savedAge = 0, fetchFails = false, writeFails = false, fe
   }
   const missing = () => Promise.reject(new Error('ENOENT'))
   const adblock = createAdblock('adblock.bin', {
+    spares,
     preload: () => 'preload.js',
     handle: (channel, handler) => { assert.equal(channel in handlers, false); handlers[channel] = handler },
     Blocker,
@@ -161,8 +167,8 @@ test('each session blocks by its own setting, sharing one engine', async () => {
   assert.equal(other.live.size, 3)
   // Pages of a session that blocks get styles, with the default one off.
   const inject = handlers['@ghostery/adblocker/inject-cosmetic-filters']
-  assert.equal(inject({ sender: { session: other } }), 'styles from lists')
-  assert.equal(inject({ sender: { session } }), undefined)
+  assert.equal(inject({ sender: fakePage(other) }), 'styles from lists')
+  assert.equal(inject({ sender: fakePage(session) }), undefined)
   await adblock.set(session, true)
   await adblock.set(other, false)
   assert.equal(session.live.size, 3)
@@ -177,4 +183,34 @@ test('a session is let go when removed', async () => {
   adblock.remove(session)
   assert.equal(session.live.size, 0)
   adblock.remove(session)
+})
+
+test('pages main spares get no blocking, and the rest still do', async () => {
+  // Main spares b.com.
+  const asked = []
+  const spares = (contents, url) => { asked.push(url); return new URL(url).host === 'b.com' }
+  const { adblock, session, handlers } = setup({ saved: 'lists', spares })
+  await adblock.set(session, true)
+  const answer = (kind, details) => { let answered; session.live.get(kind)(details, (value) => { answered = value }); return answered }
+  const onA = fakePage(session, 'https://a.com/')
+  const onB = fakePage(session, 'https://b.com/')
+  // A page's requests go by the page they are for.
+  assert.equal(answer('request', { webContents: onA, resourceType: 'script', url: 'https://ads.com/x.js' }), 'lists')
+  assert.deepEqual(answer('request', { webContents: onB, resourceType: 'script', url: 'https://ads.com/x.js' }), {})
+  assert.deepEqual(answer('headers', { webContents: onB, resourceType: 'subFrame', url: 'https://ads.com/' }), {})
+  assert.equal(answer('headers', { webContents: onA, resourceType: 'subFrame', url: 'https://ads.com/' }), 'headers from lists')
+  // Opening a page goes by where it is going, not the page it leaves.
+  assert.equal(answer('request', { webContents: onB, resourceType: 'mainFrame', url: 'https://a.com/' }), 'lists')
+  assert.deepEqual(answer('request', { webContents: onA, resourceType: 'mainFrame', url: 'https://b.com/' }), {})
+  // With no page (a service worker), or a page that closed, it blocks.
+  assert.equal(answer('request', { resourceType: 'xhr', url: 'https://ads.com/' }), 'lists')
+  assert.equal(answer('request', { webContents: { ...onB, isDestroyed: () => true }, resourceType: 'xhr', url: 'https://ads.com/' }), 'lists')
+  // A spared page gets no styles.
+  const inject = handlers['@ghostery/adblocker/inject-cosmetic-filters']
+  const observe = handlers['@ghostery/adblocker/is-mutation-observer-enabled']
+  assert.equal(inject({ sender: onA }), 'styles from lists')
+  assert.equal(inject({ sender: onB }), undefined)
+  assert.equal(observe({ sender: onA }), true)
+  assert.equal(observe({ sender: onB }), false)
+  assert.ok(asked.every((url) => typeof url === 'string'))
 })
