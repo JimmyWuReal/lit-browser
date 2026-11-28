@@ -182,3 +182,12 @@ test('ads is a kind Lit never asks about, saved and listed like the rest', () =>
   assert.deepEqual(load(file), sites)
   fs.rmSync(dir, { recursive: true })
 })
+
+test('a private window stops ads on a site even where they were saved as blocked', () => {
+  const { privateView } = require('../src/permissions')
+  const saved = new Map([['https://a.com', { ads: 'block', camera: 'block' }], ['https://b.com', { ads: 'allow' }]])
+  assert.deepEqual(privateView(saved, new Map()), new Map([['https://a.com', { camera: 'block' }]]))
+  const own = choose(new Map(), 'https://a.com', ['ads'], 'allow')
+  assert.equal(status(privateView(saved, own), 'https://a.com', ['ads']), 'allow')
+  assert.equal(status(privateView(saved, own), 'https://a.com', ['camera']), 'block')
+})

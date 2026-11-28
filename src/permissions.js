@@ -149,11 +149,13 @@ function choose(sites, site, kinds, choice) {
 // What a private window goes by: its own choices (`own`), with the saved
 // Blocks over them, so a site blocked everywhere stays blocked, even after
 // the window allowed it, while one only allowed outside has to ask again,
-// as in Chrome's Incognito.
+// as in Chrome's Incognito. Ads are the window's own alone: a saved Block is
+// only blocking, as everywhere, and must not undo the window's Stop on This
+// Site.
 function privateView(saved, own) {
   const next = new Map(own)
   for (const [site, choices] of saved) {
-    const blocked = Object.fromEntries(Object.entries(choices).filter(([, choice]) => choice === 'block'))
+    const blocked = Object.fromEntries(Object.entries(choices).filter(([kind, choice]) => choice === 'block' && kind !== 'ads'))
     if (Object.keys(blocked).length) next.set(site, { ...next.get(site), ...blocked })
   }
   return next
