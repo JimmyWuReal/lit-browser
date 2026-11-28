@@ -38,6 +38,12 @@ contextBridge.exposeInMainWorld('lit', {
   onPanes: (callback) => on('panes', callback),
   // Drags split view's divider to x in the window, or back to the middle (null).
   resizeSplit: (x) => ipcRenderer.send('split-resize', x),
+  // The tab sidebar's width, as chosen; narrow windows show it narrower.
+  onSidebarWidth: (callback) => on('sidebar-width', callback),
+  // Drags the tab sidebar's edge to x in the window, saving it on release
+  // (`done`), or resets its width (null); or moves it with ← (-1) or → (1).
+  resizeSidebar: (x, done = false) => ipcRenderer.send('sidebar-resize', x, done),
+  nudgeSidebar: (direction, big = false) => ipcRenderer.send('sidebar-nudge', direction, big),
   // Puts tab `id` in place of the blank tab of a new split view.
   pickForSplit: (blankId, id) => ipcRenderer.send('split-pick', blankId, id),
   onFocusAddress: (callback) => ipcRenderer.on('focus-address', () => callback()),

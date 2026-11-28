@@ -21,7 +21,7 @@ const fs = require('node:fs')
 const { quiet } = require('./quiet')
 const { toUrl, webAddress, searchUrl, engineOf, addressParts } = require('./url')
 const quickSearch = require('./quicksearch')
-const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith, sleepy } = require('./tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, SIDEBAR, sidebarWidth, sidebarNudged, sidebarShowing, splitPanes, splitRatio, splitWith, sleepy } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const bookmarkStore = require('./bookmarks')
@@ -60,12 +60,11 @@ const BOOKMARKS_HEIGHT = 34
 const PAGE_INSET = 6
 const PAGE_RADIUS = 10
 // With vertical tabs, the sidebar down the window's left, which pages start
-// right of while it shows. In a window narrower than SIDEBAR_FULL_FROM it is
-// a rail of the tabs' icons, so the toolbar keeps the room of a window at its
-// minimum width. Keep in sync with .vertical in index.html.
-const SIDEBAR_WIDTH = 220
-const SIDEBAR_RAIL = 48
-const SIDEBAR_FULL_FROM = 700
+// right of while it shows, is as wide as the Tab sidebar width setting, its
+// edge dragged to change it, within the limits of SIDEBAR in src/tabs.js.
+// ← and → on its edge move it this far, with ⇧ further.
+const SIDEBAR_STEP = 20
+const SIDEBAR_BIG_STEP = 60
 // Showing or hiding the sidebar slides it, and the pages with it, this long,
 // easing out as --settle in index.html does (cubic-bezier(.22, 1, .36, 1)
 // is the ease-out quint below). Keep the time in sync with .sliding there.
@@ -1194,6 +1193,11 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   let sidebarShown = 0
   let slideTimer = null
   let lastTabsAt = tabsPlace(profile.settings)
+  // The sidebar's width while its edge is being dragged, before it is saved
+  // as the setting, and the width the toolbar was last sent to draw it at.
+  let sidebarDragged = null
+  let sentSidebar = null
+  const chosenSidebar = () => sidebarDragged ?? profile.settings.sidebarWidth
   // Whether pages are framed as a card (the Frame pages setting, and always
   // in split view, so the gap and the active page's ring have room), which
   // a full screen page never is.
@@ -1248,7 +1252,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (beside !== besideSidebar || panes !== shownPanes) hideLogins()
     const moved = beside !== besideSidebar
     if (moved) slideSidebar(beside, slides)
-    if (top !== pageTop || frame !== framed || moved || panes !== shownPanes) { pageTop = top; framed = frame; layout() }
+    if (top !== pageTop || frame !== framed || moved || panes !== shownPanes || chosenSidebar() !== sentSidebar) { pageTop = top; framed = frame; layout() }
     else reveal()
     const title = signInPage(current)?.url || current?.title || (current?.started ? current.url : '') || 'New Tab'
     const named = profiles.length > 1 ? `${title} — ${profile.name}` : title
@@ -1319,7 +1323,9 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function layout() {
     const { width, height } = win.getContentBounds()
     const inset = framed ? PAGE_INSET : 0
-    const pageLeft = Math.round(sidebarShown * (width >= SIDEBAR_FULL_FROM ? SIDEBAR_WIDTH : SIDEBAR_RAIL))
+    // The toolbar draws the sidebar this wide too, narrower in a narrow window.
+    if (chosenSidebar() !== sentSidebar) { sentSidebar = chosenSidebar(); win.webContents.send('sidebar-width', sentSidebar) }
+    const pageLeft = Math.round(sidebarShown * sidebarShowing(sentSidebar, width))
     area = { x: pageLeft + inset, width: Math.max(width - pageLeft - 2 * inset, 0) }
     const y = pageTop
     const pageHeight = Math.max(height - pageTop - inset, 0)
@@ -2727,6 +2733,38 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     if (!isPrivate) sessionChanged()
   }
 
+  // The sidebar's edge dragged to `x` in the window: the sidebar follows it
+  // in this window (see sidebarWidth), only as wide as it can show, and
+  // with `done`, on release, that is saved as the setting, for every window.
+  // `x` null resets it to the default.
+  function resizeSidebar(x, done) {
+    if (tabsPlace(profile.settings) !== 'side' || active()?.fullScreen === 'on') return
+    const fits = sidebarShowing(SIDEBAR.most, win.getContentBounds().width)
+    const width = x === null ? SIDEBAR.standard : sidebarWidth(Math.min(x, fits))
+    hideLogins()
+    if (!done) { sidebarDragged = width; layout(); return }
+    sidebarDragged = null
+    saveSidebar(width)
+  }
+
+  // ← or → on the sidebar's edge (`direction` -1 or 1), `big` with ⇧.
+  function nudgeSidebar(direction, big) {
+    if (tabsPlace(profile.settings) !== 'side' || active()?.fullScreen === 'on') return
+    const fits = sidebarShowing(SIDEBAR.most, win.getContentBounds().width)
+    const from = sidebarShowing(profile.settings.sidebarWidth, win.getContentBounds().width)
+    hideLogins()
+    saveSidebar(Math.min(sidebarNudged(from, direction, big ? SIDEBAR_BIG_STEP : SIDEBAR_STEP), fits))
+  }
+
+  // Saving lays out every window (see settingsChanged); a failed save puts
+  // this one back.
+  function saveSidebar(width) {
+    if (width !== profile.settings.sidebarWidth && changeSetting(profile, 'sidebarWidth', width)) {
+      dialog.showMessageBox({ type: 'warning', message: 'Couldn’t save settings' }).catch(() => {})
+    }
+    layout()
+  }
+
   // Muting belongs to the tab: it lasts across pages, until it closes.
   function toggleMute(id) {
     const tab = find(id)
@@ -3305,6 +3343,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     closeTabsToRight: () => closeTabsToRight(activeId),
     toggleSplit,
     resizeSplit,
+    resizeSidebar,
+    nudgeSidebar,
     pickForSplit,
     setRecording: (on, keys) => {
       recording = on
@@ -3402,7 +3442,8 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     closingWindow = histories.length ? closedWindow(histories, Math.max(tabs.indexOf(active()), 0)) : null
   })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
-  win.webContents.on('did-finish-load', () => { layout(); sync(); sendShortcuts(); sendQuickSearch(); sendBookmarks(); sendDownloads(); sendProfile() })
+  // What was sent before the toolbar loaded never reached it.
+  win.webContents.on('did-finish-load', () => { sentSidebar = null; layout(); sync(); sendShortcuts(); sendQuickSearch(); sendBookmarks(); sendDownloads(); sendProfile() })
   win.on('closed', () => {
     openWindows.delete(controls)
     dropShare()
@@ -3687,6 +3728,10 @@ ipcMain.on('reset-zoom', fromToolbar((c) => c.resetZoom()))
 // Split view's divider, dragged to x in the window or reset (null), and
 // the tab picked for a new split view's blank pane.
 ipcMain.on('split-resize', fromToolbar((c, x) => (x === null || Number.isFinite(x)) && c.resizeSplit(x)))
+// The tab sidebar's edge, dragged to x in the window (`done` on release) or
+// reset (null), or moved by ← or →.
+ipcMain.on('sidebar-resize', fromToolbar((c, x, done) => (x === null || Number.isFinite(x)) && c.resizeSidebar(x, done === true)))
+ipcMain.on('sidebar-nudge', fromToolbar((c, direction, big) => (direction === -1 || direction === 1) && c.nudgeSidebar(direction, big === true)))
 ipcMain.on('split-pick', fromToolbar((c, blankId, id) => Number.isInteger(blankId) && Number.isInteger(id) && c.pickForSplit(blankId, id)))
 // A prompt's answer: 'allow', 'block', or null to dismiss it, for the
 // kinds the row showed.

@@ -8,6 +8,7 @@ const { SEARCH_ENGINES } = require('./url')
 const zoom = require('./zoom')
 const shortcuts = require('./shortcuts')
 const quickSearch = require('./quicksearch')
+const { SIDEBAR } = require('./tabs')
 
 // A section is either for one profile (`scope: 'profile'`: each profile has
 // its own values, and the popup says whose) or shared by every profile. The
@@ -27,6 +28,9 @@ const quickSearch = require('./quicksearch')
 //   text      a string up to 2048 characters, `placeholder` while empty.
 //   shortcut  an accelerator from src/shortcuts.js, or '' for none; recorded
 //             by pressing it. Each one is a menu command (see buildMenu).
+//   size      a whole number of pixels from `min` to `max`, changed
+//             elsewhere (by dragging); the popup shows it, `minLabel` at
+//             `min`, with a button to reset it.
 const shortcut = (command, label, accelerator) => ({ key: `shortcuts.${command}`, label, type: 'shortcut', default: accelerator })
 const group = (name, settings) => settings.map((setting) => ({ ...setting, group: name }))
 
@@ -279,6 +283,16 @@ const SECTIONS = [
         default: true,
       },
       {
+        key: 'sidebarWidth',
+        label: 'Tab sidebar width',
+        description: 'Drag the sidebar’s right edge to change it. At its narrowest it shows only the tabs’ icons, as it does in a narrow window.',
+        type: 'size',
+        min: SIDEBAR.rail,
+        max: SIDEBAR.most,
+        minLabel: 'Icons only',
+        default: SIDEBAR.standard,
+      },
+      {
         key: 'sleepTabsAfter',
         label: 'Sleep tabs',
         description: 'Tabs you haven’t looked at for this long close their page to save memory, keeping their title, icon and back and forward history, and load again when you click them. Never a tab playing sound, using your camera, microphone or screen, or on a site allowed to show notifications.',
@@ -397,6 +411,8 @@ function problem(setting, value, values) {
       return typeof value === 'boolean' ? null : 'Not on or off.'
     case 'text':
       return typeof value === 'string' && value.length <= 2048 ? null : 'Too long.'
+    case 'size':
+      return Number.isInteger(value) && value >= setting.min && value <= setting.max ? null : `Not from ${setting.min} to ${setting.max}.`
     case 'shortcut': {
       if (value === '') return null
       const reason = shortcuts.problem(value)

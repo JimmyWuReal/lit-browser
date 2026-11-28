@@ -259,7 +259,8 @@
     .open-ads:not(.is-stopped) .ads-off,
     .open-ads.is-stopped .ads-on { opacity: 0; transform: scale(.6); }
 
-    /* Narrow tabs keep just the icon; the active one keeps its close button. */
+    /* Narrow tabs keep just the icon; the active one keeps its close button
+       (in the sidebar, only while pointed at). */
     @container (max-width: 72px) {
       .tab .tab-select,
       .tab.has-audio .tab-select { justify-content: center; padding: 0; }
@@ -275,21 +276,28 @@
       .tab.is-active.has-audio .tab-close { margin-left: 10px; }
       .tab.is-active .tab-close { left: 50%; right: auto; transform: translateX(-50%); }
       .tab.is-active .tab-close:active { transform: translateX(-50%) scale(.94); }
+      /* In the sidebar's rail of icons the active tab shows just its icon
+         (or speaker) too, until pointed at or focused. */
+      .vertical .tab.is-active:not(:hover, :focus-within) .tab-close { display: none; }
+      .vertical .tab.is-active:not(.has-audio, :hover, :focus-within) .tab-icon { display: grid; }
+      .vertical .tab.is-active:not(:hover, :focus-within) .tab-audio { margin-left: -10px; }
     }
 
     /* Vertical tabs: the tabs leave the strip for a sidebar down the
        window's left, under it, and the rows under the strip move right of
-       it. Its width matches SIDEBAR_WIDTH in main.js; in a window narrower
-       than SIDEBAR_FULL_FROM it is SIDEBAR_RAIL, a rail of the tabs' icons
-       (see the narrow tabs' container query), so the rows keep the room of
-       a window at its minimum width. The strip keeps the window buttons,
+       it. Its width is --sidebar-width, the Tab sidebar width setting from
+       main, leaving the rows SIDEBAR.room in src/tabs.js; in a window
+       narrower than SIDEBAR.fullFrom it is SIDEBAR.rail, a rail of the
+       tabs' icons (see the narrow tabs' container query), as it is set to
+       its narrowest, so the rows keep the room of a window at its minimum
+       width. The strip keeps the window buttons,
        New Tab and the buttons at its end. --rail is the sidebar's width and
        --side the room it takes: hidden (.no-tabs), none, the sidebar off
        the window's left. Showing and hiding it (.sliding) slides it and
        the rows right of it as main slides the pages: SIDEBAR_SLIDE_MS. */
     @property --side { syntax: '<length>'; inherits: true; initial-value: 0px; }
     body { --side: 0px; --rail: 0px; }
-    body.vertical { --rail: 220px; --side: var(--rail); padding-left: var(--side); }
+    body.vertical { --rail: min(var(--sidebar-width, 220px), 100vw - 480px); --side: var(--rail); padding-left: var(--side); }
     @media (max-width: 699px) { body.vertical { --rail: 48px; } }
     body.vertical.no-tabs { --side: 0px; }
     body.sliding { transition: --side 260ms var(--settle); }
@@ -326,6 +334,39 @@
     .vertical .tab::before, .vertical .tab::after { left: 6px; right: 6px; width: auto; height: 2px; }
     .vertical .tab::before { top: -2px; bottom: auto; }
     .vertical .tab::after { top: auto; bottom: -2px; }
+    /* The sidebar's right edge, to drag to resize it (see resizeSidebar in
+       main.js); a double-click resets it, and ← and → move it too. It
+       straddles the edge, into the framed page's gap. Its line shows, like
+       split view's divider's, only while it is pointed at or in use, and
+       it is not there while the sidebar is hidden or a narrow window keeps
+       it a rail. */
+    .sidebar-edge { display: none; }
+    .vertical:not(.no-tabs) .sidebar-edge {
+      position: fixed;
+      top: 38px;
+      bottom: 0;
+      left: calc(var(--side) - 4px);
+      width: 8px;
+      display: grid;
+      place-items: center;
+      cursor: col-resize;
+      outline: 0;
+      touch-action: none;
+      -webkit-app-region: no-drag;
+    }
+    @media (max-width: 699px) { .vertical .sidebar-edge { display: none; } }
+    .sidebar-edge::before {
+      content: '';
+      width: 2px;
+      height: 28px;
+      border-radius: 1px;
+      background: var(--line-live);
+      opacity: 0;
+      transition: opacity 200ms ease, height 240ms var(--settle);
+    }
+    .sidebar-edge:hover::before,
+    .sidebar-edge:focus-visible::before,
+    .sidebar-edge.is-dragging::before { opacity: 1; height: 44px; }
 
     /* The address row. With the strip, it matches BAR_HEIGHT in main.js. */
     .bar {
@@ -951,6 +992,7 @@
       </svg>
     </button>
   </div>
+  <div class="sidebar-edge" id="sidebar-edge" role="separator" aria-orientation="vertical" aria-label="Tab sidebar width" aria-valuemin="48" aria-valuemax="400" tabindex="0" title="Drag to resize, double-click to reset"></div>
   <!-- Two separate fields, so Enter in each does its own thing. -->
   <div class="bar">
     <div class="nav" id="nav" role="group" aria-label="Navigation">
@@ -1867,6 +1909,49 @@
       if (!direction || !panes || event.metaKey || event.ctrlKey || event.altKey) return
       event.preventDefault()
       window.lit.resizeSplit(dividerAt() + direction * (event.shiftKey ? 120 : 40))
+    })
+
+    // The tab sidebar's edge. Dragging it resizes the sidebar from where it
+    // was taken hold of, saved on release; main answers each move with the
+    // width (onSidebarWidth), which the sidebar and the rows beside it take
+    // at once. A double-click resets it, and ← and → move it.
+    const sidebarEdge = document.getElementById('sidebar-edge')
+    const sidebarAt = () => sidebarEdge.getBoundingClientRect().left + sidebarEdge.offsetWidth / 2
+    let edgeGrab = 0
+    let edgeAt = null
+    window.lit.onSidebarWidth((width) => {
+      document.body.style.setProperty('--sidebar-width', `${width}px`)
+      sidebarEdge.setAttribute('aria-valuenow', String(width))
+      placeThumb({ animate: false })
+      fitBookmarks()
+      closeSuggestions()
+    })
+    sidebarEdge.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return
+      event.preventDefault()
+      edgeGrab = event.clientX - sidebarAt()
+      edgeAt = null
+      sidebarEdge.setPointerCapture(event.pointerId)
+      sidebarEdge.classList.add('is-dragging')
+    })
+    sidebarEdge.addEventListener('pointermove', (event) => {
+      if (!sidebarEdge.hasPointerCapture(event.pointerId)) return
+      edgeAt = event.clientX - edgeGrab
+      window.lit.resizeSidebar(edgeAt)
+    })
+    // Only a drag is saved; a click leaves the width as it was.
+    sidebarEdge.addEventListener('lostpointercapture', () => {
+      sidebarEdge.classList.remove('is-dragging')
+      if (edgeAt !== null) window.lit.resizeSidebar(edgeAt, true)
+      edgeAt = null
+      window.lit.focusActive()
+    })
+    sidebarEdge.addEventListener('dblclick', () => window.lit.resizeSidebar(null, true))
+    sidebarEdge.addEventListener('keydown', (event) => {
+      const direction = { ArrowLeft: -1, ArrowRight: 1 }[event.key]
+      if (!direction || event.metaKey || event.ctrlKey || event.altKey) return
+      event.preventDefault()
+      window.lit.nudgeSidebar(direction, event.shiftKey)
     })
 
     // The find field shows the active tab's find. Its text comes from main

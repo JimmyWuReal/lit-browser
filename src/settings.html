@@ -350,6 +350,15 @@
     .keys.is-none { color: var(--dim); }
     .keys.is-recording { color: var(--dim); box-shadow: inset 0 0 0 1px var(--line-live); }
     .reset.is-hidden { opacity: 0; pointer-events: none; }
+    /* A size shows its value, changed elsewhere, beside its reset button. */
+    .size-value {
+      min-width: 96px;
+      color: #ededed;
+      font: 400 12px/1 'DM Mono', ui-monospace, monospace;
+      letter-spacing: .04em;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
 
     /* Site permissions: one box per site, a row per kind with its choice. */
     .site-permissions { display: flex; flex-direction: column; gap: 14px; }
@@ -800,6 +809,30 @@
         keys.addEventListener('blur', stop)
         reset.addEventListener('click', () => save(setting.key, setting.default))
         return { element: wrap, draw }
+      },
+
+      // Changed elsewhere (the tab sidebar's edge), so only shown here, with
+      // a button to reset it while it isn't the default.
+      size(setting) {
+        const wrap = el('div', 'control')
+        const value = el('span', 'size-value')
+        const reset = el('button', 'icon-button reset')
+        reset.type = 'button'
+        reset.setAttribute('aria-label', `Reset ${setting.label}`)
+        reset.title = 'Reset'
+        reset.append(document.getElementById('reset-icon').content.cloneNode(true))
+        reset.addEventListener('click', () => save(setting.key, setting.default))
+        wrap.append(reset, value)
+        return {
+          element: wrap,
+          draw() {
+            const current = state.values[setting.key]
+            value.textContent = current === setting.min && setting.minLabel ? setting.minLabel : `${current} px`
+            const changed = current !== setting.default
+            reset.classList.toggle('is-hidden', !changed)
+            reset.tabIndex = changed ? 0 : -1
+          },
+        }
       },
     }
     const lists = {

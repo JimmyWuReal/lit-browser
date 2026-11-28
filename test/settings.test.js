@@ -84,6 +84,11 @@ test('update checks each type', () => {
   assert.ok(update(defaults, 'nope', 'bing').error)
   assert.equal(update(defaults, 'defaultZoom', 1.25).values.defaultZoom, 1.25)
   assert.ok(update(defaults, 'defaultZoom', 1.23).error)
+  assert.equal(update(defaults, 'sidebarWidth', 48).values.sidebarWidth, 48)
+  assert.ok(update(defaults, 'sidebarWidth', 47).error)
+  assert.ok(update(defaults, 'sidebarWidth', 401).error)
+  assert.ok(update(defaults, 'sidebarWidth', 200.5).error)
+  assert.ok(update(defaults, 'sidebarWidth', '200').error)
 })
 
 test('update refuses shortcuts that are taken or reserved, and allows none', () => {
