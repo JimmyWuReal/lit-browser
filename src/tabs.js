@@ -323,8 +323,11 @@ function splitDropped(split, activeId, id, drop) {
   if (!ids.includes(drop.id)) return null
   if (drop.side === 'center') return isGroup(tree) ? splitSwap(tree, drop.id, id) : null
   if (!ids.includes(id) && ids.length >= SPLIT_MOST) return null
+  // Its own place again (the same panes, the same way) changes nothing,
+  // not even the shares splitting a pane would make.
+  const shape = (node) => (isGroup(node) ? [node.dir, ...node.panes.map(shape)] : node)
   const next = splitBeside(tree, drop.id, id, drop.side)
-  return JSON.stringify(next) === JSON.stringify(tree) ? null : next
+  return JSON.stringify(shape(next)) === JSON.stringify(shape(tree)) ? null : next
 }
 
 // The split once tab `id` goes beside the active one: a new pair, the active

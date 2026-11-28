@@ -288,6 +288,10 @@ test('splitDropped splits, moves, swaps, or refuses a full split', () => {
   assert.equal(splitDropped(split, 1, 2, { id: 1, side: 'right' }), null)
   assert.equal(splitDropped(split, 1, 2, { id: 2, side: 'left' }), null)
   assert.equal(splitDropped(split, 1, 2, { id: 9, side: 'left' }), null)
+  // Nor does the edge of a neighbor it already sits at, whatever the shares.
+  assert.equal(splitDropped(row([1, 2, 3]), 1, 2, { id: 3, side: 'left' }), null)
+  assert.equal(splitDropped(row([1, 2, 3]), 1, 2, { id: 1, side: 'right' }), null)
+  assert.deepEqual(splitDropped(row([1, 2, 3]), 1, 2, { id: 3, side: 'right' }), row([1, 3, 2], [0.5, 0.25, 0.25]))
   // A full split takes no more, but trades and moves within.
   const full = row([column([1, 2]), column([3, 4])])
   assert.equal(SPLIT_MOST, 4)
