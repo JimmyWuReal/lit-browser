@@ -56,10 +56,10 @@ function keepNewest(closed, limit) {
   const newest = closed.at(-1)
   if (newest?.tabs?.length > limit) {
     const start = Math.min(Math.max(newest.activeIndex - Math.floor(limit / 2), 0), newest.tabs.length - limit)
-    // Its split view stays only while both its tabs do.
+    // Its split view keeps the tabs that stay, while two or more do.
     const { split, ...rest } = newest
-    const indexes = split?.indexes.map((index) => index - start)
-    const kept = indexes?.every((index) => index >= 0 && index < limit) && { split: { ...split, indexes } }
+    const shifted = split && tidy(mapPanes(split, (index) => (index >= start && index < start + limit ? index - start : null)))
+    const kept = isGroup(shifted) && { split: shifted }
     closed[closed.length - 1] = { ...rest, tabs: newest.tabs.slice(start, start + limit), activeIndex: newest.activeIndex - start, ...kept }
   }
   let count = 0
@@ -129,41 +129,245 @@ function sidebarNudged(width, direction, step) {
 const sidebarShowing = (chosen, windowWidth) =>
   (windowWidth < SIDEBAR.fullFrom ? SIDEBAR.rail : Math.min(chosen, windowWidth - SIDEBAR.room))
 
-// Split view: two tabs of a window side by side, as { ids: [left, right],
-// ratio }, `ratio` being the left pane's share of the width. It shows while
-// either of its tabs is the active one.
+// Split view: up to SPLIT_MOST tabs of a window, laid out as a tree. A pane
+// is a tab's id (or, saved, its place among the window's tabs); a group
+// lays its `panes` side by side (`dir` 'row') or one above another
+// ('column'), each taking its share of the room from `sizes`, fractions
+// adding up to 1. A group always has two panes or more, and none of them is
+// a group going its own way, so three side by side are one row, not a row
+// in a row. It shows while any of its tabs is the active one.
+const SPLIT_MOST = 4
+const SIDES = ['left', 'right', 'top', 'bottom']
 
-// The two panes ({ x, width }) across `area` ({ x, width }), `gap` apart:
-// the left one `ratio` of the room, neither narrower than `min`, unless the
-// room is too small for that, when they share it evenly.
-function splitPanes(area, ratio, gap, min) {
-  const room = Math.max(area.width - gap, 0)
-  const least = Math.min(min, room / 2)
-  const left = Math.round(Math.min(Math.max(room * ratio, least), room - least))
-  return [{ x: area.x, width: left }, { x: area.x + left + gap, width: room - left }]
+const isGroup = (node) => typeof node === 'object' && node !== null
+
+// Its tabs, left to right and top to bottom.
+const splitIds = (node) => (isGroup(node) ? node.panes.flatMap(splitIds) : node === null || node === undefined ? [] : [node])
+
+// The same tree with each pane `fn(pane)`.
+const mapPanes = (node, fn) => (isGroup(node) ? { ...node, panes: node.panes.map((pane) => mapPanes(pane, fn)) } : fn(node))
+
+// The tree in the shape described above: groups of one pane give way to
+// it, a group inside one going its way joins it, keeping each pane's share,
+// and the shares add up to 1 again. Null when nothing is left.
+function tidy(node) {
+  if (!isGroup(node)) return node ?? null
+  const panes = []
+  const sizes = []
+  node.panes.forEach((pane, index) => {
+    const each = tidy(pane)
+    if (each === null) return
+    if (isGroup(each) && each.dir === node.dir) each.panes.forEach((inner, at) => { panes.push(inner); sizes.push(node.sizes[index] * each.sizes[at]) })
+    else { panes.push(each); sizes.push(node.sizes[index]) }
+  })
+  if (panes.length < 2) return panes[0] ?? null
+  const total = sizes.reduce((sum, size) => sum + size, 0)
+  return { dir: node.dir, sizes: sizes.map((size) => size / total), panes }
 }
 
-// The ratio that puts the middle of the gap at `x`, keeping both panes at
-// least `min` wide as splitPanes does.
-function splitRatio(area, x, gap, min) {
-  const room = Math.max(area.width - gap, 1)
-  const least = Math.min(min, room / 2)
-  return Math.min(Math.max(x - area.x - gap / 2, least), room - least) / room
+// The tree without tab `id`; the panes beside it share its room. Just the
+// one tab left (not a group) or null when that is all there was.
+const splitWithout = (node, id) => tidy(mapPanes(node, (pane) => (pane === id ? null : pane)))
+
+// The tree with tab `id` beside tab `target` on its `side` (one of SIDES),
+// moved there if it is in the tree already: `target`'s pane splits in two,
+// the panes around it keeping their room. `node` can be a lone tab.
+function splitBeside(node, target, id, side) {
+  if (target === id || !SIDES.includes(side)) return node
+  const dir = side === 'left' || side === 'right' ? 'row' : 'column'
+  const pair = side === 'right' || side === 'bottom' ? [target, id] : [id, target]
+  return tidy(mapPanes(splitWithout(node, id), (pane) => (pane === target ? { dir, sizes: [0.5, 0.5], panes: pair } : pane)))
+}
+
+// The tree with tabs `a` and `b` trading places, or `b` in place of `a`
+// when it is not in the tree.
+const splitSwap = (node, a, b) => mapPanes(node, (pane) => (pane === a ? b : pane === b ? a : pane))
+
+const sum = (values) => values.reduce((total, value) => total + value, 0)
+
+// How narrow (along a 'row') or short (along a 'column') a pane can be:
+// `min[dir]` for a tab (`min` being { row, column }), more for a group with
+// several going that way.
+function least(node, dir, gap, min) {
+  if (!isGroup(node)) return min[dir]
+  const each = node.panes.map((pane) => least(pane, dir, gap, min))
+  return node.dir === dir ? sum(each) + gap * (each.length - 1) : Math.max(...each)
+}
+
+// Each of a group's panes' minimum (see least) as a share of its `room`,
+// all made smaller alike when the room can't hold them, so they just fit.
+function leastShares(group, room, gap, min) {
+  const mins = group.panes.map((pane) => least(pane, group.dir, gap, min) / Math.max(room, 1))
+  const total = sum(mins)
+  return total > 1 ? mins.map((share) => share / total) : mins
+}
+
+// The room a group's panes take on screen, as shares of its `room`: their
+// own shares, but none under its minimum (see leastShares), the rest giving
+// up the room in proportion to their shares. A window narrowed after a pane
+// was made small keeps it usable, and the shares come back as the window
+// widens; narrower than all the minimums, the panes share it as those do.
+function shownShares(group, room, gap, min) {
+  const mins = leastShares(group, room, gap, min)
+  const held = new Set()
+  for (;;) {
+    const free = 1 - sum([...held].map((index) => mins[index]))
+    const rest = sum(group.sizes.filter((_, index) => !held.has(index)))
+    const shares = group.sizes.map((size, index) => (held.has(index) ? mins[index] : (size / rest) * free))
+    const under = shares.findIndex((share, index) => !held.has(index) && share < mins[index])
+    if (under === -1) return shares
+    held.add(under)
+  }
+}
+
+// Where a group's panes go in `rect` ({ x, y, width, height }), `gap` apart,
+// with their shownShares. Each edge is rounded from the shares before it,
+// so no pixel is lost.
+function groupParts(group, rect, gap, min) {
+  const across = group.dir === 'row'
+  const start = across ? rect.x : rect.y
+  const room = Math.max((across ? rect.width : rect.height) - gap * (group.panes.length - 1), 0)
+  const shares = shownShares(group, room, gap, min)
+  let share = 0
+  return group.panes.map((_, index) => {
+    const from = start + Math.round(share * room) + index * gap
+    share += shares[index]
+    const to = Math.max(start + Math.round(share * room) + index * gap, from)
+    return across ? { ...rect, x: from, width: to - from } : { ...rect, y: from, height: to - from }
+  })
+}
+
+// Where everything goes in `rect`, each pane at least `min` wide and tall
+// while there is room (see shownShares): `panes`, each tab's { id, x, y,
+// width, height }, in splitIds order, and the `dividers` in the gaps
+// between them, { path, index, dir, share, x, y, width, height }, `path`
+// being the places that lead from the top of the tree to its group,
+// `index` the pane it follows there, and `share` that pane's part of the
+// two beside it. A 'row' group's dividers stand up between its panes.
+function splitLayout(node, rect, gap, min) {
+  const out = { panes: [], dividers: [] }
+  const walk = (each, box, path) => {
+    if (!isGroup(each)) return out.panes.push({ id: each, ...box })
+    const parts = groupParts(each, box, gap, min)
+    const length = (part) => (each.dir === 'row' ? part.width : part.height)
+    parts.forEach((part, index) => {
+      walk(each.panes[index], part, [...path, index])
+      if (index === parts.length - 1) return
+      const end = each.dir === 'row' ? part.x + part.width : part.y + part.height
+      const share = length(part) / (length(part) + length(parts[index + 1]) || 1)
+      out.dividers.push({ path, index, dir: each.dir, share, ...(each.dir === 'row' ? { ...box, x: end, width: gap } : { ...box, y: end, height: gap }) })
+    })
+  }
+  walk(node, rect, [])
+  return out
+}
+
+// The tree with the divider after pane `index` of the group at `path` (see
+// splitLayout) moved so its gap's middle is at `at` across `rect`, as far
+// as keeping both panes beside it at their minimums (see leastShares)
+// allows. It moves from where it shows, the group's shares becoming its
+// shownShares. `at` null shares that group's room evenly. Unchanged when
+// there is no such divider, or it can't move, so a window too small for
+// the panes keeps the shares they had.
+function splitResize(node, path, index, at, rect, gap, min) {
+  let group = node
+  let box = rect
+  for (const place of path) {
+    if (!isGroup(group) || !(place in group.panes)) return node
+    box = groupParts(group, box, gap, min)[place]
+    group = group.panes[place]
+  }
+  if (!isGroup(group) || !Number.isInteger(index) || index < 0 || index >= group.panes.length - 1) return node
+  let sizes = group.sizes.map(() => 1 / group.sizes.length)
+  if (at !== null) {
+    const across = group.dir === 'row'
+    const room = Math.max((across ? box.width : box.height) - gap * (group.panes.length - 1), 1)
+    const shown = shownShares(group, room, gap, min)
+    const before = sum(shown.slice(0, index))
+    const pair = shown[index] + shown[index + 1]
+    const mins = leastShares(group, room, gap, min)
+    const low = mins[index]
+    const high = Math.max(pair - mins[index + 1], low)
+    const share = Math.min(Math.max((at - (across ? box.x : box.y) - index * gap - gap / 2) / room - before, low), high)
+    if (Math.abs(share - shown[index]) < 1e-9) return node
+    sizes = shown.map((size, at) => (at === index ? share : at === index + 1 ? pair - share : size))
+  }
+  const swap = (each, depth) => (depth === path.length ? { ...each, sizes } : { ...each, panes: each.panes.map((pane, at) => (at === path[depth] ? swap(pane, depth + 1) : pane)) })
+  return swap(node, 0)
+}
+
+// Where a tab dragged over the pages to `point` ({ x, y }) would go: the
+// pane under it, or the nearest one when it is in a gap, as { id, side },
+// `side` being the edge it is nearest (one of SIDES), or, with `center`,
+// 'center' while it is well inside the pane. Null with no panes.
+function splitDrop(panes, { x, y }, center) {
+  const distance = (pane) => Math.hypot(Math.max(pane.x - x, 0, x - pane.x - pane.width), Math.max(pane.y - y, 0, y - pane.y - pane.height))
+  const pane = panes.reduce((best, each) => (best && distance(best) <= distance(each) ? best : each), null)
+  if (!pane) return null
+  const u = Math.min(Math.max((x - pane.x) / (pane.width || 1), 0), 1)
+  const v = Math.min(Math.max((y - pane.y) / (pane.height || 1), 0), 1)
+  const [side, near] = Object.entries({ left: u, right: 1 - u, top: v, bottom: 1 - v }).reduce((best, each) => (each[1] < best[1] ? each : best))
+  return { id: pane.id, side: center && near > 0.25 ? 'center' : side }
+}
+
+// The split once tab `id` is dropped at `drop` (see splitDrop) on what
+// shows: the split, or, with none (null), the active tab alone. Beside a
+// tab, it goes there (moving, if it is in the split already, or making a
+// new split with the active tab); in the middle of one, the two trade
+// places, or it takes that tab's place. Null when that changes nothing or
+// the split is full.
+function splitDropped(split, activeId, id, drop) {
+  if (!drop || drop.id === id) return null
+  const tree = split ?? activeId
+  const ids = splitIds(tree)
+  if (!ids.includes(drop.id)) return null
+  if (drop.side === 'center') return isGroup(tree) ? splitSwap(tree, drop.id, id) : null
+  if (!ids.includes(id) && ids.length >= SPLIT_MOST) return null
+  // Its own place again (the same panes, the same way) changes nothing,
+  // not even the shares splitting a pane would make.
+  const shape = (node) => (isGroup(node) ? [node.dir, ...node.panes.map(shape)] : node)
+  const next = splitBeside(tree, drop.id, id, drop.side)
+  return JSON.stringify(shape(next)) === JSON.stringify(shape(tree)) ? null : next
 }
 
 // The split once tab `id` goes beside the active one: a new pair, the active
-// tab on the left, or, while the active tab is in one already, `id` in place
-// of the other tab. Pairing a tab with itself changes nothing.
-function splitWith(split, activeId, id) {
-  if (id === activeId) return split
-  if (split?.ids.includes(activeId)) return { ...split, ids: split.ids.map((each) => (each === activeId ? each : id)) }
-  return { ids: [activeId, id], ratio: 0.5 }
+// tab on the left, or, while the active tab is in a split with room, beside
+// it: right of its pane `pane` ({ width, height }) if that is wider than
+// tall, else under it. Null for no change: the tab is the active one or
+// already in its split, or the split is full.
+function splitWith(split, activeId, id, pane) {
+  if (id === activeId) return null
+  const ids = splitIds(split)
+  if (!ids.includes(activeId)) return { dir: 'row', sizes: [0.5, 0.5], panes: [activeId, id] }
+  if (ids.includes(id) || ids.length >= SPLIT_MOST) return null
+  return splitBeside(split, activeId, id, !pane || pane.width >= pane.height ? 'right' : 'bottom')
+}
+
+// A saved split (see src/session.js) as a tree of places among `length`
+// tabs, or undefined if it is not one: a well-formed tree of two to
+// SPLIT_MOST different places. A file from before (two places side by
+// side, { indexes, ratio }) is read as a row.
+function cleanSplit(saved, length) {
+  const old = Array.isArray(saved?.indexes) && saved.indexes.length === 2 && Number.isFinite(saved.ratio)
+  const node = old ? { dir: 'row', sizes: [saved.ratio, 1 - saved.ratio], panes: saved.indexes } : saved
+  const places = []
+  const valid = (each, parentDir) => {
+    if (!isGroup(each)) {
+      places.push(each)
+      return Number.isInteger(each) && each >= 0 && each < length
+    }
+    return ['row', 'column'].includes(each.dir) && each.dir !== parentDir && Array.isArray(each.panes) && each.panes.length >= 2 &&
+      Array.isArray(each.sizes) && each.sizes.length === each.panes.length && each.sizes.every((size) => Number.isFinite(size) && size > 0) &&
+      each.panes.every((pane) => valid(pane, each.dir))
+  }
+  if (!isGroup(node) || !valid(node, null) || places.length > SPLIT_MOST || new Set(places).size !== places.length) return undefined
+  return tidy(node)
 }
 
 // Whether a tab may go to sleep (the Sleep tabs setting): its page closes,
 // keeping its title, icon and back/forward list, and loads again when the
 // tab is shown. Only a tab out of sight (not `shown`: the active one, or
-// both in split view) for `minutes` (0 is never), whose page has settled
+// all of a split view's) for `minutes` (0 is never), whose page has settled
 // and can be loaded again from its address (not a blob: document a page
 // made, or an about:blank one its opener wrote into), and that is doing
 // nothing you would miss: playing sound, full screen, asking something,
@@ -175,4 +379,4 @@ const sleepy = (tab, now, minutes) => minutes > 0 && !tab.shown && !tab.asleep &
   !tab.loading && !tab.error && !tab.audible && !tab.fullScreen && !tab.asking && !tab.edited && !tab.inUse && !tab.keepAwake &&
   now - tab.seen >= minutes * 60_000
 
-module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, SIDEBAR, sidebarWidth, sidebarNudged, sidebarShowing, splitPanes, splitRatio, splitWith, sleepy }
+module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, SIDEBAR, sidebarWidth, sidebarNudged, sidebarShowing, SPLIT_MOST, splitIds, mapPanes, splitWithout, splitBeside, splitSwap, splitLayout, splitResize, splitDrop, splitDropped, splitWith, cleanSplit, sleepy }

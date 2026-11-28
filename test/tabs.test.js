@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, SIDEBAR, sidebarWidth, sidebarNudged, sidebarShowing, splitPanes, splitRatio, splitWith, sleepy } = require('../src/tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, SIDEBAR, sidebarWidth, sidebarNudged, sidebarShowing, SPLIT_MOST, splitIds, splitWithout, splitBeside, splitSwap, splitLayout, splitResize, splitDrop, splitDropped, splitWith, cleanSplit, sleepy } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -108,11 +108,15 @@ test('sidebarToggle hides a shown sidebar, else shows it, turning vertical tabs 
   assert.deepEqual(sidebarToggle({ verticalTabs: false, tabSidebar: false }), [['tabSidebar', true], ['verticalTabs', true]])
 })
 
-test('a split window bigger than the limit keeps its split only with both its tabs', () => {
-  const kept = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 4, split: { indexes: [3, 4], ratio: 0.4 } }]
+test('a split window bigger than the limit keeps its split with the tabs that stay', () => {
+  const kept = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 4, split: { dir: 'row', sizes: [0.4, 0.6], panes: [3, 4] } }]
   keepNewest(kept, 2)
-  assert.deepEqual(kept, [{ tabs: [3, 4], activeIndex: 1, split: { indexes: [0, 1], ratio: 0.4 } }])
-  const dropped = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 4, split: { indexes: [0, 4], ratio: 0.5 } }]
+  assert.deepEqual(kept, [{ tabs: [3, 4], activeIndex: 1, split: { dir: 'row', sizes: [0.4, 0.6], panes: [0, 1] } }])
+  // Of three, the two kept stay split.
+  const three = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 4, split: { dir: 'row', sizes: [0.5, 0.25, 0.25], panes: [0, 3, 4] } }]
+  keepNewest(three, 2)
+  assert.deepEqual(three[0].split, { dir: 'row', sizes: [0.5, 0.5], panes: [0, 1] })
+  const dropped = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 4, split: { dir: 'row', sizes: [0.5, 0.5], panes: [0, 4] } }]
   keepNewest(dropped, 2)
   assert.deepEqual(dropped, [{ tabs: [3, 4], activeIndex: 1 }])
 })
@@ -143,33 +147,185 @@ test('sidebarShowing leaves the toolbar its room, and is the rail in a narrow wi
   assert.equal(sidebarShowing(SIDEBAR.rail, 1400), SIDEBAR.rail)
 })
 
-test('splitPanes shares the width at the ratio, gap apart', () => {
-  assert.deepEqual(splitPanes({ x: 10, width: 1008 }, 0.5, 8, 200), [{ x: 10, width: 500 }, { x: 518, width: 500 }])
-  assert.deepEqual(splitPanes({ x: 0, width: 1008 }, 0.25, 8, 200), [{ x: 0, width: 250 }, { x: 258, width: 750 }])
+// The same minimum both ways.
+const mins = (size) => ({ row: size, column: size })
+const row = (panes, sizes = panes.map(() => 1 / panes.length)) => ({ dir: 'row', sizes, panes })
+const column = (panes, sizes = panes.map(() => 1 / panes.length)) => ({ dir: 'column', sizes, panes })
+
+test('splitIds lists a split\'s tabs left to right, top to bottom', () => {
+  assert.deepEqual(splitIds(row([1, column([2, 3])])), [1, 2, 3])
+  assert.deepEqual(splitIds(null), [])
+  assert.deepEqual(splitIds(5), [5])
 })
 
-test('splitPanes keeps both panes at least the minimum, or even when there is no room', () => {
-  assert.deepEqual(splitPanes({ x: 0, width: 1008 }, 0.05, 8, 200), [{ x: 0, width: 200 }, { x: 208, width: 800 }])
-  assert.deepEqual(splitPanes({ x: 0, width: 1008 }, 0.99, 8, 200), [{ x: 0, width: 800 }, { x: 808, width: 200 }])
-  assert.deepEqual(splitPanes({ x: 0, width: 308 }, 0.1, 8, 200), [{ x: 0, width: 150 }, { x: 158, width: 150 }])
-  assert.deepEqual(splitPanes({ x: 0, width: 0 }, 0.5, 8, 200), [{ x: 0, width: 0 }, { x: 8, width: 0 }])
+test('splitBeside splits a pane on the side asked, keeping the rest', () => {
+  assert.deepEqual(splitBeside(1, 1, 2, 'right'), row([1, 2]))
+  assert.deepEqual(splitBeside(1, 1, 2, 'top'), column([2, 1]))
+  // The same way as its group: the pane's room is shared, the others keep theirs.
+  assert.deepEqual(splitBeside(row([1, 2]), 2, 3, 'right'), row([1, 2, 3], [0.5, 0.25, 0.25]))
+  // Across it: a group of its own.
+  assert.deepEqual(splitBeside(row([1, 2]), 2, 3, 'bottom'), row([1, column([2, 3])]))
+  // A grid.
+  assert.deepEqual(splitBeside(row([1, column([2, 3])]), 1, 4, 'bottom'), row([column([1, 4]), column([2, 3])]))
+  // A tab already there moves.
+  assert.deepEqual(splitBeside(row([1, 2]), 2, 1, 'bottom'), column([2, 1]))
+  assert.deepEqual(splitBeside(row([1, 2, 3]), 1, 3, 'left'), row([3, 1, 2], [0.25, 0.25, 0.5]))
+  const split = row([1, 2])
+  assert.equal(splitBeside(split, 1, 1, 'left'), split)
+  assert.equal(splitBeside(split, 1, 3, 'middle'), split)
 })
 
-test('splitRatio puts the gap under the pointer, within the minimum', () => {
-  const area = { x: 100, width: 1008 }
-  assert.equal(splitRatio(area, 354, 8, 200), 0.25)
-  assert.deepEqual(splitPanes(area, splitRatio(area, 354, 8, 200), 8, 200)[0], { x: 100, width: 250 })
-  assert.equal(splitRatio(area, 0, 8, 200), 0.2)
-  assert.equal(splitRatio(area, 5000, 8, 200), 0.8)
+test('splitWithout gives a tab\'s room to the panes beside it, ending at one tab', () => {
+  assert.deepEqual(splitWithout(row([1, 2, 3], [0.5, 0.25, 0.25]), 3), row([1, 2], [2 / 3, 1 / 3]))
+  // A group of one gives way to its tab, and one going the same way joins.
+  assert.deepEqual(splitWithout(row([1, column([2, 3])]), 2), row([1, 3]))
+  assert.deepEqual(splitWithout(column([row([1, 2]), 3]), 3), row([1, 2]))
+  assert.equal(splitWithout(row([1, 2]), 1), 2)
+  assert.equal(splitWithout(row([1, 2]), 9).panes.length, 2)
 })
 
-test('splitWith pairs a tab with the active one, or swaps in the other side', () => {
-  assert.deepEqual(splitWith(null, 1, 2), { ids: [1, 2], ratio: 0.5 })
-  assert.deepEqual(splitWith({ ids: [3, 1], ratio: 0.3 }, 1, 2), { ids: [2, 1], ratio: 0.3 })
+test('splitSwap trades two tabs, or puts one in another\'s place', () => {
+  assert.deepEqual(splitSwap(row([1, column([2, 3])]), 1, 3), row([3, column([2, 1])]))
+  assert.deepEqual(splitSwap(row([1, 2]), 2, 7), row([1, 7]))
+})
+
+test('splitLayout places panes and the dividers between them, gap apart', () => {
+  const rect = { x: 10, y: 50, width: 1008, height: 608 }
+  const { panes, dividers } = splitLayout(row([1, column([2, 3], [0.25, 0.75])]), rect, 8, mins(100))
+  assert.deepEqual(panes, [
+    { id: 1, x: 10, y: 50, width: 500, height: 608 },
+    { id: 2, x: 518, y: 50, width: 500, height: 150 },
+    { id: 3, x: 518, y: 208, width: 500, height: 450 },
+  ])
+  assert.deepEqual(dividers, [
+    { path: [], index: 0, dir: 'row', share: 0.5, x: 510, y: 50, width: 8, height: 608 },
+    { path: [1], index: 0, dir: 'column', share: 0.25, x: 518, y: 200, width: 500, height: 8 },
+  ])
+  // Rounded edges still fill the room exactly.
+  const thirds = splitLayout(row([1, 2, 3]), { x: 0, y: 0, width: 1000, height: 10 }, 8, mins(100)).panes
+  assert.equal(thirds.at(-1).x + thirds.at(-1).width, 1000)
+  assert.deepEqual(splitLayout(row([1, 2]), { x: 0, y: 0, width: 0, height: 0 }, 8, mins(100)).panes.map((pane) => pane.width), [0, 0])
+})
+
+test('splitLayout keeps a small pane at the minimum while the room holds them all', () => {
+  const widths = (width, split) => splitLayout(split, { x: 0, y: 0, width, height: 600 }, 8, mins(240)).panes.map((pane) => pane.width)
+  // A pane made 240 wide in a wide window stays so in a narrower one, the
+  // others giving up room in proportion to their shares.
+  const split = row([1, 2, 3], [0.1, 0.3, 0.6])
+  assert.deepEqual(widths(2416, split), [240, 720, 1440])
+  assert.deepEqual(widths(1216, split), [240, 320, 640])
+  // Then a second one needs holding too.
+  assert.deepEqual(widths(816, split), [240, 240, 320])
+  // Too narrow for every minimum: the panes share it as their minimums do,
+  // which they reach smoothly as the window narrows.
+  assert.deepEqual(widths(416, split), [133, 134, 133])
+  assert.deepEqual(widths(752, split), [240, 240, 256])
+  assert.deepEqual(widths(736, split), [240, 240, 240])
+  assert.deepEqual(widths(735, split), [240, 239, 240])
+  // Groups across hold their own minimums: a column of two stacked needs
+  // only one pane's width, a row of two two panes' and the gap.
+  const nested = splitLayout(column([row([1, 2], [0.9, 0.1]), 3]), { x: 0, y: 0, width: 1008, height: 600 }, 8, { row: 240, column: 120 })
+  assert.deepEqual(nested.panes.map((pane) => [pane.width, pane.height]), [[760, 296], [240, 296], [1008, 296]])
+  // A divider dragged from a held pane moves from where it shows.
+  const moved = splitResize(split, [], 1, 248 + 300 + 4, { x: 0, y: 0, width: 1216, height: 600 }, 8, mins(240))
+  assert.deepEqual(widths(1216, moved), [240, 300, 660])
+})
+
+test('splitResize moves a divider under the pointer, keeping panes at least the minimum', () => {
+  const rect = { x: 100, y: 0, width: 1008, height: 600 }
+  const split = row([1, 2])
+  const sizes = (node) => node.sizes.map((size) => Math.round(size * 1000) / 1000)
+  assert.deepEqual(splitResize(split, [], 0, 354, rect, 8, mins(200)), row([1, 2], [0.25, 0.75]))
+  assert.deepEqual(sizes(splitResize(split, [], 0, 0, rect, 8, mins(200))), [0.2, 0.8])
+  assert.deepEqual(sizes(splitResize(split, [], 0, 5000, rect, 8, mins(200))), [0.8, 0.2])
+  // Only the two panes beside it change.
+  assert.deepEqual(sizes(splitResize(row([1, 2, 3]), [], 1, 100 + 992 * 0.5 + 8 + 4, rect, 8, mins(100))), [0.333, 0.167, 0.5])
+  // A divider lying down, in a group inside the split.
+  const nested = splitResize(row([1, column([2, 3])]), [1], 0, 152, rect, 8, mins(100))
+  assert.deepEqual(nested.panes[1].sizes, [0.25, 0.75])
+  assert.deepEqual(nested.sizes, [0.5, 0.5])
+  // A pane with two side by side in it needs room for both.
+  const wide = splitResize(row([1, column([row([2, 3]), 4])]), [], 0, 5000, rect, 8, mins(200))
+  assert.equal(Math.round(wide.sizes[1] * 1000), 408)
+  // Too little room for the minimums: the panes share it as those do, and
+  // the divider stays, keeping the shares for a wider window.
+  const kept = row([1, 2], [0.7, 0.3])
+  assert.equal(splitResize(kept, [], 0, 0, { ...rect, width: 308 }, 8, mins(200)), kept)
+  // A drag that ends where the divider already is changes nothing.
+  assert.equal(splitResize(kept, [], 0, 100 + 1000 * 0.7 + 4, rect, 8, mins(200)), kept)
+  // Three stacked in a short window still move, pages needing less height than width.
+  const stacked = splitResize(column([1, 2, 3]), [], 0, 50, { ...rect, height: 616 }, 8, { row: 240, column: 120 })
+  assert.deepEqual(sizes(stacked), [0.2, 0.467, 0.333])
+  // Even again, and no such divider.
+  assert.deepEqual(sizes(splitResize(row([1, 2, 3], [0.5, 0.25, 0.25]), [], 1, null, rect, 8, mins(200))), [0.333, 0.333, 0.333])
+  assert.equal(splitResize(split, [], 1, 300, rect, 8, mins(200)), split)
+  assert.equal(splitResize(split, [0], 0, 300, rect, 8, mins(200)), split)
+})
+
+test('splitDrop picks the pane and the edge nearest the pointer', () => {
+  const panes = [{ id: 1, x: 0, y: 0, width: 400, height: 400 }, { id: 2, x: 408, y: 0, width: 400, height: 400 }]
+  assert.deepEqual(splitDrop(panes, { x: 10, y: 200 }, true), { id: 1, side: 'left' })
+  assert.deepEqual(splitDrop(panes, { x: 600, y: 390 }, true), { id: 2, side: 'bottom' })
+  assert.deepEqual(splitDrop(panes, { x: 200, y: 200 }, true), { id: 1, side: 'center' })
+  assert.deepEqual(splitDrop(panes, { x: 200, y: 200 }, false), { id: 1, side: 'left' })
+  // In the gap, or off the panes, the nearest one.
+  assert.deepEqual(splitDrop(panes, { x: 406, y: 100 }, true), { id: 2, side: 'left' })
+  assert.deepEqual(splitDrop(panes, { x: -20, y: 100 }, true), { id: 1, side: 'left' })
+  assert.equal(splitDrop([], { x: 0, y: 0 }, true), null)
+})
+
+test('splitDropped splits, moves, swaps, or refuses a full split', () => {
+  // Over the active tab alone: a new split.
+  assert.deepEqual(splitDropped(null, 1, 2, { id: 1, side: 'bottom' }), column([1, 2]))
+  assert.equal(splitDropped(null, 1, 1, { id: 1, side: 'left' }), null)
+  assert.equal(splitDropped(null, 1, 2, { id: 1, side: 'center' }), null)
+  const split = row([1, 2])
+  assert.deepEqual(splitDropped(split, 1, 3, { id: 2, side: 'bottom' }), row([1, column([2, 3])]))
+  assert.deepEqual(splitDropped(split, 1, 2, { id: 1, side: 'top' }), column([2, 1]))
+  assert.deepEqual(splitDropped(split, 1, 3, { id: 2, side: 'center' }), row([1, 3]))
+  assert.deepEqual(splitDropped(split, 1, 2, { id: 1, side: 'center' }), row([2, 1]))
+  // Where it already is changes nothing.
+  assert.equal(splitDropped(split, 1, 2, { id: 1, side: 'right' }), null)
+  assert.equal(splitDropped(split, 1, 2, { id: 2, side: 'left' }), null)
+  assert.equal(splitDropped(split, 1, 2, { id: 9, side: 'left' }), null)
+  // Nor does the edge of a neighbor it already sits at, whatever the shares.
+  assert.equal(splitDropped(row([1, 2, 3]), 1, 2, { id: 3, side: 'left' }), null)
+  assert.equal(splitDropped(row([1, 2, 3]), 1, 2, { id: 1, side: 'right' }), null)
+  assert.deepEqual(splitDropped(row([1, 2, 3]), 1, 2, { id: 3, side: 'right' }), row([1, 3, 2], [0.5, 0.25, 0.25]))
+  // A full split takes no more, but trades and moves within.
+  const full = row([column([1, 2]), column([3, 4])])
+  assert.equal(SPLIT_MOST, 4)
+  assert.equal(splitDropped(full, 1, 5, { id: 2, side: 'right' }), null)
+  assert.deepEqual(splitDropped(full, 1, 5, { id: 2, side: 'center' }), row([column([1, 5]), column([3, 4])]))
+  assert.deepEqual(splitDropped(full, 1, 4, { id: 1, side: 'left' }), row([column([row([4, 1]), 2]), 3]))
+})
+
+test('splitWith pairs a tab with the active one, or adds it beside it the way its pane is longer', () => {
+  assert.deepEqual(splitWith(null, 1, 2), row([1, 2]))
   // A split the active tab is not in gives way to a new one.
-  assert.deepEqual(splitWith({ ids: [3, 4], ratio: 0.3 }, 1, 2), { ids: [1, 2], ratio: 0.5 })
-  const split = { ids: [1, 2], ratio: 0.5 }
-  assert.equal(splitWith(split, 1, 1), split)
+  assert.deepEqual(splitWith(row([3, 4]), 1, 2), row([1, 2]))
+  assert.deepEqual(splitWith(row([1, 3]), 1, 2, { width: 800, height: 600 }), row([1, 2, 3], [0.25, 0.25, 0.5]))
+  assert.deepEqual(splitWith(row([1, 3]), 3, 2, { width: 400, height: 600 }), row([1, column([3, 2])]))
+  assert.equal(splitWith(row([1, 2]), 1, 1), null)
+  assert.equal(splitWith(row([1, 2]), 1, 2), null)
+  assert.equal(splitWith(row([column([1, 2]), column([3, 4])]), 1, 5), null)
+})
+
+test('cleanSplit keeps a well-formed split of different places, reading the old pair as a row', () => {
+  assert.deepEqual(cleanSplit(row([0, column([1, 2])]), 3), row([0, column([1, 2])]))
+  assert.deepEqual(cleanSplit({ indexes: [2, 0], ratio: 0.4 }, 3), row([2, 0], [0.4, 0.6]))
+  assert.equal(cleanSplit(undefined, 3), undefined)
+  assert.equal(cleanSplit(row([0, 0]), 3), undefined)
+  assert.equal(cleanSplit(row([0, 3]), 3), undefined)
+  assert.equal(cleanSplit(row([0]), 3), undefined)
+  assert.equal(cleanSplit(row([0, 1, 2, 3, 4]), 5), undefined)
+  assert.equal(cleanSplit(row([0, row([1, 2])]), 3), undefined)
+  assert.equal(cleanSplit({ dir: 'diagonal', sizes: [0.5, 0.5], panes: [0, 1] }, 3), undefined)
+  assert.equal(cleanSplit(row([0, 1], [1, 0]), 3), undefined)
+  assert.equal(cleanSplit(row([0, 1], [0.5]), 3), undefined)
+  assert.equal(cleanSplit({ indexes: [0, 1], ratio: 1 }, 3), undefined)
+  // Shares are made to add up.
+  assert.deepEqual(cleanSplit(row([0, 1], [1, 3]), 3).sizes, [0.25, 0.75])
 })
 
 // A background tab on a settled page, last on show at 0.

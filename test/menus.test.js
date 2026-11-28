@@ -117,10 +117,13 @@ test('tab menu enables what fits the tab', () => {
   assert.deepEqual(tabMenu({ index: 0, count: 1, started: true, active: true, keys }).map((item) => item.accelerator), ['R', 'D', 'M', undefined, 'S', undefined, 'W', 'O', 'T'])
 })
 
-test('a tab opens in split view, or closes the split it is in', () => {
-  const splitItem = (options) => tabMenu({ index: 0, count: 2, started: true, keys: { splitView: 'S' }, ...options })[4]
-  assert.deepEqual(splitItem({}), { label: 'Open in Split View', command: 'split', accelerator: undefined })
-  assert.deepEqual(splitItem({ split: true, active: true }), { label: 'Close Split View', command: 'unsplit', accelerator: 'S' })
+test('a tab opens in split view, or leaves or closes the split it is in', () => {
+  const splitItems = (options) => tabMenu({ index: 0, count: 2, started: true, keys: { splitView: 'S' }, ...options }).slice(4, -4)
+  assert.deepEqual(splitItems({}), [{ label: 'Open in Split View', command: 'split', enabled: true, accelerator: undefined }])
+  assert.equal(splitItems({ full: true })[0].enabled, false)
+  assert.deepEqual(splitItems({ split: 2, active: true }), [{ label: 'Close Split View', command: 'unsplit', accelerator: 'S' }])
+  assert.deepEqual(splitItems({ split: 3 }).map((item) => item.command), ['leaveSplit', 'unsplit'])
+  assert.deepEqual(splitItems({ split: 3, active: true, keys: { splitView: 'S', leaveSplit: 'L' } }).map((item) => item.accelerator), ['L', 'S'])
 })
 
 test('a private window offers no Add to Dictionary or Inspect Element', () => {

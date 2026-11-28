@@ -100,8 +100,8 @@
     }
     .tab:not(.is-active):hover .tab-select { color: #e6e6e6; background: rgba(255, 255, 255, .05); }
     .tab.is-active .tab-select { color: #ededed; }
-    /* Split view's two tabs keep a hairline; while they show, the one beside
-       the active tab has a faint fill too. */
+    /* Split view's tabs keep a hairline; while they show, the ones beside
+       the active tab have a faint fill too. */
     .tab.is-split .tab-select { box-shadow: inset 0 0 0 1px var(--line); }
     .tab.is-beside .tab-select { color: #e6e6e6; background: rgba(255, 255, 255, .05); }
     /* A tab being dragged, and the edge of the one it would land at. */
@@ -823,8 +823,10 @@
     .outline-button:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
     .outline-button:active { transform: scale(.97); transition-duration: 55ms; }
 
-    /* Split view: the cards main lays its two pages over, at the places it
-       sends (SPLIT_GAP in main.js), and the divider in the gap between them.
+    /* Split view: the cards main lays its pages over, at the places it
+       sends (SPLIT_GAP in main.js), and the dividers in the gaps between
+       them: standing up between panes side by side, lying down between
+       panes one above another.
        The active page has a ring around it, in the gap. A page not on show
        (a blank tab, one that failed) leaves its card showing: the active
        one's holds the error page, or, blank, a list of tabs to show there;
@@ -893,6 +895,7 @@
       outline: 0;
       touch-action: none;
     }
+    .divider.is-column { cursor: row-resize; }
     .divider::before {
       content: '';
       width: 2px;
@@ -904,6 +907,10 @@
     .divider:hover::before,
     .divider:focus-visible::before,
     .divider.is-dragging::before { height: 44px; background: var(--line-live); }
+    .divider.is-column::before { width: 28px; height: 2px; transition: background-color 200ms ease, width 240ms var(--settle); }
+    .divider.is-column:hover::before,
+    .divider.is-column:focus-visible::before,
+    .divider.is-column.is-dragging::before { width: 44px; height: 2px; }
 
     /* A private window (?private in its address, from main) is a shade of
        violet instead of grey, with a Private badge in the strip and a note
@@ -1111,12 +1118,9 @@
     </div>
   </form>
 
+  <!-- Split view's cards and dividers (see drawPanes). -->
+  <div class="panes" id="panes" hidden></div>
   <!-- The active tab's error page (see errors.js). -->
-  <div class="panes" id="panes" hidden>
-    <div class="pane"></div>
-    <div class="pane"></div>
-    <div class="divider" id="divider" role="separator" aria-orientation="vertical" aria-label="Split view divider" tabindex="0" title="Drag to resize, double-click to make even"></div>
-  </div>
   <main class="error" id="error" tabindex="-1" aria-labelledby="error-title" aria-describedby="error-detail">
     <div class="error-box">
       <h1 id="error-title"></h1>
@@ -1226,11 +1230,14 @@
         // A type of Lit's own, so a page or a field it is dropped on gets nothing.
         event.dataTransfer.setData('application/x-lit-tab', String(id))
         root.classList.add('is-dragged')
+        // Main lays a view over the pages to drop it on, to split them.
+        window.lit.dragTab(id)
       })
       // The press of a drag takes focus, so it goes back to the toolbar's
       // control that had it, or else the page (or its search box).
       root.addEventListener('pointerdown', () => { pressedFrom = document.hasFocus() && performance.now() - focusedAt > 100 ? document.activeElement : null })
       root.addEventListener('dragend', () => {
+        window.lit.dragTab(null)
         endTabDrag()
         if (pressedFrom?.isConnected && pressedFrom !== document.body) pressedFrom.focus({ preventScroll: true })
         else window.lit.focusActive()
@@ -1821,11 +1828,13 @@
 
     // Split view, while it shows (see onPanes in preload.js), drawn around
     // and between its pages. Each pane's card is drawn again only when what
-    // it shows changes, so a hovered row stays hovered.
+    // it shows changes, so a hovered row stays hovered. Cards are kept by
+    // tab and dividers by where they are in the split, so one being dragged
+    // stays the same element.
     let panes = null
     const panesLayer = document.getElementById('panes')
-    const paneBoxes = [...panesLayer.querySelectorAll('.pane')]
-    const divider = document.getElementById('divider')
+    const paneBoxes = new Map()
+    const dividers = new Map()
     const place = (element, { x, y, width, height }) => Object.assign(element.style, { left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px` })
     // Whether main shows the tab's page, rather than its card.
     const onShow = (tab) => tab.started && !tab.error && !tab.signIn?.main
@@ -1835,10 +1844,21 @@
       // A blank tab fills the window with the search box, but not in a pane.
       document.body.classList.toggle('home', !activeTab()?.started && !shown)
       panesLayer.hidden = !shown
+      const ids = shown?.ids ?? []
+      for (const [id, box] of paneBoxes) if (!ids.includes(id)) { box.remove(); paneBoxes.delete(id) }
+      const keys = new Set((shown?.dividers ?? []).map(dividerKey))
+      for (const [key, element] of dividers) if (!keys.has(key)) { element.remove(); dividers.delete(key) }
       if (!shown) return
-      shown.ids.forEach((id, side) => {
-        const box = paneBoxes[side]
-        const rect = shown.rects[side]
+      shown.ids.forEach((id, at) => {
+        let box = paneBoxes.get(id)
+        if (!box) {
+          box = document.createElement('div')
+          box.className = 'pane'
+          paneBoxes.set(id, box)
+        }
+        // Cards before dividers, so a divider is never under one.
+        if (panesLayer.children[at] !== box) panesLayer.insertBefore(box, panesLayer.children[at] || null)
+        const rect = shown.rects[at]
         const tab = state.tabs.find((each) => each.id === id)
         const isActive = id === state.activeId
         place(box, rect)
@@ -1867,9 +1887,23 @@
           drawPick(pick, id, others)
         } else box.replaceChildren()
       })
-      const [left, right] = shown.rects
-      place(divider, { x: left.x + left.width, y: left.y, width: shown.gap, height: left.height })
-      divider.setAttribute('aria-valuenow', String(Math.round(left.width / (left.width + right.width) * 100)))
+      for (const divider of shown.dividers) {
+        const key = dividerKey(divider)
+        let element = dividers.get(key)
+        if (!element) {
+          element = makeDivider()
+          dividers.set(key, element)
+          panesLayer.append(element)
+        }
+        // Its look and name follow the way it goes, which a drop can change.
+        element.divider = divider
+        const across = divider.dir === 'row'
+        element.classList.toggle('is-column', !across)
+        element.setAttribute('aria-orientation', across ? 'vertical' : 'horizontal')
+        element.setAttribute('aria-label', across ? 'Split view divider between panes side by side' : 'Split view divider between panes one above another')
+        element.setAttribute('aria-valuenow', String(Math.round(divider.share * 100)))
+        place(element, divider)
+      }
     }
     // A new split view's blank pane (`pick`): type an address, or pick a tab
     // for it. Each tab's row is made once and then kept up to date, in order.
@@ -1900,32 +1934,47 @@
     }
     window.lit.onPanes((next) => { panes = next; drawPanes() })
 
-    // Dragging the divider resizes the panes, from where it was taken hold
-    // of; a double-click makes them even again, and ← and → move it too.
-    // The page keeps focus, as after a click on the toolbar's buttons.
-    let grab = 0
-    const dividerAt = () => panes.rects[0].x + panes.rects[0].width + panes.gap / 2
-    divider.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || !panes) return
-      event.preventDefault()
-      grab = event.clientX - dividerAt()
-      divider.setPointerCapture(event.pointerId)
-      divider.classList.add('is-dragging')
-    })
-    divider.addEventListener('pointermove', (event) => {
-      if (divider.hasPointerCapture(event.pointerId)) window.lit.resizeSplit(event.clientX - grab)
-    })
-    divider.addEventListener('lostpointercapture', () => {
-      divider.classList.remove('is-dragging')
-      window.lit.focusActive()
-    })
-    divider.addEventListener('dblclick', () => window.lit.resizeSplit(null))
-    divider.addEventListener('keydown', (event) => {
-      const direction = { ArrowLeft: -1, ArrowRight: 1 }[event.key]
-      if (!direction || !panes || event.metaKey || event.ctrlKey || event.altKey) return
-      event.preventDefault()
-      window.lit.resizeSplit(dividerAt() + direction * (event.shiftKey ? 120 : 40))
-    })
+    // Dragging a divider resizes the panes beside it, from where it was
+    // taken hold of; a double-click makes its group even again, and the
+    // arrow keys across it move it too (← and → standing up, ↑ and ↓ lying
+    // down). The page keeps focus, as after a click on the toolbar's buttons.
+    const dividerKey = ({ path, index }) => `${path.join('.')}/${index}`
+    // The middle of a divider's gap across the window: x standing up, y lying down.
+    const dividerAt = ({ dir, x, y, width, height }) => (dir === 'row' ? x + width / 2 : y + height / 2)
+    // `element.divider` is the one it is now (see drawPanes).
+    function makeDivider() {
+      const element = document.createElement('div')
+      element.className = 'divider'
+      element.setAttribute('role', 'separator')
+      element.tabIndex = 0
+      element.title = 'Drag to resize, double-click to make even'
+      const resize = (at) => window.lit.resizeSplit(element.divider.path, element.divider.index, at)
+      const across = () => element.divider.dir === 'row'
+      let grab = 0
+      element.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0 || !panes) return
+        event.preventDefault()
+        grab = (across() ? event.clientX : event.clientY) - dividerAt(element.divider)
+        element.setPointerCapture(event.pointerId)
+        element.classList.add('is-dragging')
+      })
+      element.addEventListener('pointermove', (event) => {
+        if (element.hasPointerCapture(event.pointerId)) resize((across() ? event.clientX : event.clientY) - grab)
+      })
+      element.addEventListener('lostpointercapture', () => {
+        element.classList.remove('is-dragging')
+        window.lit.focusActive()
+      })
+      element.addEventListener('dblclick', () => resize(null))
+      element.addEventListener('keydown', (event) => {
+        const keys = across() ? { ArrowLeft: -1, ArrowRight: 1 } : { ArrowUp: -1, ArrowDown: 1 }
+        const direction = keys[event.key]
+        if (!direction || !panes || event.metaKey || event.ctrlKey || event.altKey) return
+        event.preventDefault()
+        resize(dividerAt(element.divider) + direction * (event.shiftKey ? 120 : 40))
+      })
+      return element
+    }
 
     // The tab sidebar's edge. Dragging it resizes the sidebar from where it
     // was taken hold of, saved on release; main answers each move with the
@@ -2050,7 +2099,8 @@
     }
 
     // Dragging a tab along the strip moves it there. Near an end, Chromium
-    // scrolls a strip with more past it.
+    // scrolls a strip with more past it. Dragged over the pages, it splits
+    // them (see dragTab in main.js).
     const strip = document.getElementById('strip')
     let draggedTab = null
     // The tab it would land before at the pointer, null for last, or

@@ -31,13 +31,22 @@ contextBridge.exposeInMainWorld('lit', {
   // what to show instead of a page that failed, { title, detail, code,
   // action }, or null.
   onTabs: (callback) => on('tabs', callback),
-  // Split view while it shows: { ids: [left, right], rects: [{ x, y, width,
-  // height }], gap }, the two pages' places in the window, or null. Comes
-  // before the tabs it goes with. The tabs say both its tabs as `split`,
-  // shown or not.
+  // Split view while it shows: { ids, rects: [{ x, y, width, height }],
+  // dividers: [{ path, index, dir, share, x, y, width, height }], gap }, its pages'
+  // places in the window and the dividers between them (see splitLayout in
+  // src/tabs.js), or null. Comes before the tabs it goes with. The tabs say
+  // all its tabs as `split`, shown or not.
   onPanes: (callback) => on('panes', callback),
-  // Drags split view's divider to x in the window, or back to the middle (null).
-  resizeSplit: (x) => ipcRenderer.send('split-resize', x),
+  // Drags a split view divider to `at` across the window (x for a 'row'
+  // group's, y for a 'column''s), or makes its group even (null).
+  resizeSplit: (path, index, at) => ipcRenderer.send('split-resize', path, index, at),
+  // A tab dragged from the strip, or null once the drag is over.
+  dragTab: (id) => ipcRenderer.send('tab-drag', id),
+  // The drop view (src/drop.html): the rect the dragged tab would fill at
+  // { x, y }, or null; dropping it there; and the drag being over.
+  dropPreview: (point) => ipcRenderer.invoke('drop-preview', point),
+  dropTab: (point) => ipcRenderer.send('drop-tab', point),
+  onDropClear: (callback) => ipcRenderer.on('drop-clear', () => callback()),
   // The tab sidebar's width, as chosen; narrow windows show it narrower.
   onSidebarWidth: (callback) => on('sidebar-width', callback),
   // Drags the tab sidebar's edge to x in the window, saving it on release
