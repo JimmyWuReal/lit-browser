@@ -7,11 +7,12 @@
 // last one opened is the one that was in front. A window is { tabs:
 // [history | null], activeIndex, bounds, maximized, fullScreen, profile,
 // split? }, `profile` being its profile's id (none in a file from before
-// profiles) and `split` its split view, { indexes: [left, right], ratio }, by
-// the tabs' places; otherwise the same shape Reopen Closed Tab uses; a null history is a tab on the search
+// profiles) and `split` its split view, a tree of the tabs' places (see
+// cleanSplit in src/tabs.js); otherwise the same shape Reopen Closed Tab uses; a null history is a tab on the search
 // box. A history is { entries: [{ url, title, pageState? }], index }.
 const fs = require('node:fs')
 const { save: write } = require('./settings')
+const { cleanSplit } = require('./tabs')
 
 const isIndex = (value, length) => Number.isInteger(value) && value >= 0 && value < length
 
@@ -42,13 +43,6 @@ function cleanHistory(history) {
 
 const cleanBounds = (bounds) => (bounds && ['x', 'y', 'width', 'height'].every((key) => Number.isFinite(bounds[key])) && bounds.width > 0 && bounds.height > 0
   ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
-  : undefined)
-
-// Two different tabs of the window, and a ratio a pane can have.
-const cleanSplit = (split, length) => (Array.isArray(split?.indexes) && split.indexes.length === 2 &&
-  split.indexes.every((index) => isIndex(index, length)) && split.indexes[0] !== split.indexes[1] &&
-  Number.isFinite(split.ratio) && split.ratio > 0 && split.ratio < 1
-  ? { indexes: [...split.indexes], ratio: split.ratio }
   : undefined)
 
 // Only well-formed windows survive a hand-edited or older file.

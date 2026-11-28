@@ -74,10 +74,12 @@ test('the current page stays current when entries are dropped', () => {
   assert.deepEqual(clean({ windows: [{ tabs: [{ entries: [a, { url: 1 }, b], index: 1 }] }] })[0].tabs[0], { entries: [a, b], index: 0 })
 })
 
-test('a split view loads back only with two different tabs and a usable ratio', () => {
+test('a split view loads back only when well formed (see cleanSplit)', () => {
   const tabs = [null, null, null]
   const splitOf = (split) => clean({ windows: [{ tabs, split }] })[0].split
-  assert.deepEqual(splitOf({ indexes: [0, 2], ratio: 0.4 }), { indexes: [0, 2], ratio: 0.4 })
+  const split = { dir: 'row', sizes: [0.5, 0.5], panes: [0, { dir: 'column', sizes: [0.4, 0.6], panes: [1, 2] }] }
+  assert.deepEqual(splitOf(split), split)
+  assert.deepEqual(splitOf({ indexes: [0, 2], ratio: 0.4 }), { dir: 'row', sizes: [0.4, 0.6], panes: [0, 2] })
   assert.equal(splitOf(undefined), undefined)
   assert.equal(splitOf({ indexes: [1, 1], ratio: 0.5 }), undefined)
   assert.equal(splitOf({ indexes: [0, 3], ratio: 0.5 }), undefined)
