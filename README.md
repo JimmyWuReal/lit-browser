@@ -21,7 +21,7 @@ Each window has tabs; every new tab starts on the same search box. Links that op
 | ⇧⌘M | Manage profiles |
 | ⌃Tab, ⇧⌘] / ⌃⇧Tab, ⇧⌘[ | Next / previous tab |
 | ⌘1–⌘8, ⌘9 | That tab, last tab |
-| ⇧⌘L | Show or hide the tab sidebar |
+| ⌘B | Show or hide the tab sidebar |
 | ⌥⌘S | Split view, or back to one tab |
 | ⌘R, ⌘[, ⌘] | Reload, back, forward |
 | ⌘= or ⌘+, ⌘-, ⌘0 | Zoom in, zoom out, reset zoom |
@@ -45,7 +45,7 @@ A tab playing sound shows a speaker. Click it to mute the tab, and again to unmu
 
 Drag a tab to move it along the strip. Middle-click closes a tab. In the tab strip, arrow keys move between tabs, ⇧← and ⇧→ move the tab itself, and Delete closes one.
 
-Turn on Vertical tabs in Settings › Tabs to list the tabs down a sidebar on the window's left instead, each with its full title; the address bar and the page sit to its right. In a window under 700 points wide, the sidebar narrows to the tabs' icons. There ↑ and ↓ move between tabs, ⇧↑ and ⇧↓ move one, and dragging works up and down. ⇧⌘L (View › Show Tab Sidebar) hides the sidebar, giving pages the whole width, and shows it again; the tab shortcuts still work while it is hidden. With tabs across the top, ⇧⌘L turns vertical tabs on.
+Turn on Vertical tabs in Settings › Tabs to list the tabs down a sidebar on the window's left instead, each with its full title; the address bar and the page sit to its right. In a window under 700 points wide, the sidebar narrows to the tabs' icons. There ↑ and ↓ move between tabs, ⇧↑ and ⇧↓ move one, and dragging works up and down. ⌘B (View › Show Tab Sidebar) slides the sidebar away, giving pages the whole width, and back again; the tab shortcuts still work while it is hidden. With tabs across the top, ⌘B turns vertical tabs on.
 
 Split view shows two tabs side by side. ⌥⌘S (View › Split View) opens a blank tab beside the one you are on, whatever new tabs open: type an address in it, or pick one of your other tabs to go there instead. Right-click a tab and choose Open in Split View to put it beside the tab you are on (in place of the other one, if you are already in split view). The toolbar is for the page with the ring around it; click the other page to switch to it. Drag the divider between them to resize them, or double-click it to make them even; when it has focus, ← and → move it. Switching to another tab shows that tab alone, and either of the pair brings the split back; the strip outlines the two tabs. ⌥⌘S again, Close Split View in either tab's menu, or closing one of them goes back to one tab at a time. Pages in split view are always framed, so there is room for the divider and the ring. A page that goes full screen takes the whole window. The split comes back with its window, after Reopen Closed Tab or the next launch.
 
@@ -205,7 +205,7 @@ General, Downloads, Passwords, Privacy and Cookies are the profile's own; the re
 - **Default Browser:** whether links from other apps open in a new tab or a new window, and a button to make Lit the default browser.
 - **Quick Search:** turn quick search shortcuts on or off, and the character that starts them (`!`, `@`, `#`, `:` or `/`). Also lists every site and its shortcuts.
 - **Security Keys:** let sites ask for a USB security key (off by default, from the next time Lit opens; see [Passkeys](#passkeys)).
-- **Tabs:** where new tabs go, whether ⌘-clicked links come to the front, whether tabs show a speaker while they play sound or are muted, vertical tabs (off by default: tabs in a sidebar down the window's left instead of across the top) and whether that sidebar shows (on by default; ⇧⌘L), when tabs out of sight go to sleep (after 15 or 30 minutes, the default, 1 or 2 hours, or never), whether closing the last tab closes the window, whether Lit reopens the windows and tabs from last time, and how many closed tabs Reopen Closed Tab remembers (10, 25, 50 or 100; a closed window counts each of its tabs, and one bigger than the limit keeps the tabs around its active one).
+- **Tabs:** where new tabs go, whether ⌘-clicked links come to the front, whether tabs show a speaker while they play sound or are muted, vertical tabs (off by default: tabs in a sidebar down the window's left instead of across the top) and whether that sidebar shows (on by default; ⌘B), when tabs out of sight go to sleep (after 15 or 30 minutes, the default, 1 or 2 hours, or never), whether closing the last tab closes the window, whether Lit reopens the windows and tabs from last time, and how many closed tabs Reopen Closed Tab remembers (10, 25, 50 or 100; a closed window counts each of its tabs, and one bigger than the limit keeps the tabs around its active one).
 - **Profiles:** add, rename, recolor, open and delete profiles.
 - **Keyboard Shortcuts:** every shortcut in the table above except ⌘1–9 and the ⇧⌘[ / ⇧⌘] and ⌘+ alternates, plus Duplicate Tab, Mute or Unmute Tab, Close Tabs to the Right and New Profile, which have none until you set one. Click a shortcut and press the new keys; Escape cancels and Delete removes it. Lit refuses a shortcut another command already uses.
 

@@ -274,19 +274,28 @@
        than SIDEBAR_FULL_FROM it is SIDEBAR_RAIL, a rail of the tabs' icons
        (see the narrow tabs' container query), so the rows keep the room of
        a window at its minimum width. The strip keeps the window buttons,
-       New Tab and the buttons at its end. With the sidebar hidden, no tabs
-       show (.no-tabs). */
-    body { --side: 0px; }
-    body.vertical { --side: 220px; padding-left: var(--side); }
-    @media (max-width: 699px) { body.vertical { --side: 48px; } }
+       New Tab and the buttons at its end. --rail is the sidebar's width and
+       --side the room it takes: hidden (.no-tabs), none, the sidebar off
+       the window's left. Showing and hiding it (.sliding) slides it and
+       the rows right of it as main slides the pages: SIDEBAR_SLIDE_MS. */
+    @property --side { syntax: '<length>'; inherits: true; initial-value: 0px; }
+    body { --side: 0px; --rail: 0px; }
+    body.vertical { --rail: 220px; --side: var(--rail); padding-left: var(--side); }
+    @media (max-width: 699px) { body.vertical { --rail: 48px; } }
+    body.vertical.no-tabs { --side: 0px; }
+    body.sliding { transition: --side 260ms var(--settle); }
     .vertical .strip { margin-left: calc(-1 * var(--side)); }
     .no-tabs .tabs { display: none; }
+    /* Hidden, not gone, so it can slide out; it hides once it has. */
+    .vertical.no-tabs .tabs { display: flex; visibility: hidden; }
+    .sliding.no-tabs .tabs { transition: visibility 0s 260ms; }
     .vertical .tabs {
       position: fixed;
       top: 38px;
       bottom: 0;
       left: 0;
-      width: var(--side);
+      width: var(--rail);
+      transform: translateX(calc(var(--side) - var(--rail)));
       flex-direction: column;
       /* Level with the address field; framed, the page's card keeps its
          own inset from the tabs, unframed they keep it themselves. */
@@ -1209,10 +1218,14 @@
       // Across the top, in the sidebar, or hidden (the Tabs settings).
       const tabsAt = next.tabsAt ?? 'top'
       const relaid = tabsAt !== shownTabsAt
+      const slides = relaid && tabsAt !== 'top' && shownTabsAt !== 'top'
       shownTabsAt = tabsAt
-      document.body.classList.toggle('vertical', tabsAt === 'side')
+      // Hidden is still vertical tabs, the sidebar slid off the window's
+      // left; showing or hiding it slides it (see .sliding).
+      if (slides) slideSidebar()
+      document.body.classList.toggle('vertical', tabsAt !== 'top')
       document.body.classList.toggle('no-tabs', tabsAt === 'none')
-      tabList.setAttribute('aria-orientation', tabsAt === 'side' ? 'vertical' : 'horizontal')
+      tabList.setAttribute('aria-orientation', tabsAt === 'top' ? 'horizontal' : 'vertical')
       // Hiding the sidebar takes focus from a tab in it; the page gets it.
       if (tabsAt === 'none' && focused) window.lit.focusActive()
       // The address field moves, so its list would be left where it was.
@@ -1840,7 +1853,16 @@
     // strip's height and follows the tab's left and width; in the sidebar it
     // also follows its top and height.
     let shownTabsAt = 'top'
-    const vertical = () => shownTabsAt === 'side'
+    // Marks the body .sliding for the sidebar's slide, so only showing and
+    // hiding it animate, not a window resized narrow or tabs moving to the top.
+    let slidingTimer
+    function slideSidebar() {
+      document.body.classList.add('sliding')
+      clearTimeout(slidingTimer)
+      slidingTimer = setTimeout(() => document.body.classList.remove('sliding'), 300)
+    }
+    // Hidden, the sidebar keeps its layout, ready to slide back in.
+    const vertical = () => shownTabsAt !== 'top'
     function placeThumb({ animate = true } = {}) {
       const elements = tabElements.get(state.activeId)
       thumb.style.opacity = elements ? '1' : '0'

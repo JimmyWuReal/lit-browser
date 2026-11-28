@@ -66,6 +66,11 @@ const PAGE_RADIUS = 10
 const SIDEBAR_WIDTH = 220
 const SIDEBAR_RAIL = 48
 const SIDEBAR_FULL_FROM = 700
+// Showing or hiding the sidebar slides it, and the pages with it, this long,
+// easing out as --settle in index.html does (cubic-bezier(.22, 1, .36, 1)
+// is the ease-out quint below). Keep the time in sync with .sliding there.
+const SIDEBAR_SLIDE_MS = 260
+const easeOut = (t) => 1 - (1 - t) ** 5
 // Split view: the gap between its two pages, where the toolbar draws the
 // divider to drag, and how narrow dragging it can make a page.
 const SPLIT_GAP = 8
@@ -1179,8 +1184,13 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // active page is full screen.
   let pageTop = BAR_HEIGHT
   // Whether the pages start right of the tab sidebar: while it shows, and
-  // not while the active page is full screen.
+  // not while the active page is full screen. `sidebarShown` is how much of
+  // the sidebar's width they start right of, 0 to 1, between the two while
+  // it slides (see slideSidebar), and where the tabs were, to tell a slide.
   let besideSidebar = false
+  let sidebarShown = 0
+  let slideTimer = null
+  let lastTabsAt = tabsPlace(profile.settings)
   // Whether pages are framed as a card (the Frame pages setting, and always
   // in split view, so the gap and the active page's ring have room), which
   // a full screen page never is.
@@ -1225,11 +1235,17 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     const frame = current?.fullScreen !== 'on' && (profile.settings.framePages || Boolean(pair))
     const tabsAt = tabsPlace(profile.settings)
     const beside = current?.fullScreen !== 'on' && tabsAt === 'side'
+    // Only showing or hiding the sidebar slides it; tabs moving to or from
+    // the top, or a page going full screen, are at once, as the toolbar's are.
+    const slides = tabsAt !== lastTabsAt && tabsAt !== 'top' && lastTabsAt !== 'top'
+    lastTabsAt = tabsAt
     // The page moves sideways with the sidebar, or into a pane, and a list
     // of logins over it would be left where it was, as when the window is
     // resized.
     if (beside !== besideSidebar || panes !== shownPanes) hideLogins()
-    if (top !== pageTop || frame !== framed || beside !== besideSidebar || panes !== shownPanes) { pageTop = top; framed = frame; besideSidebar = beside; layout() }
+    const moved = beside !== besideSidebar
+    if (moved) slideSidebar(beside, slides)
+    if (top !== pageTop || frame !== framed || moved || panes !== shownPanes) { pageTop = top; framed = frame; layout() }
     else reveal()
     const title = signInPage(current)?.url || current?.title || (current?.started ? current.url : '') || 'New Tab'
     const named = profiles.length > 1 ? `${title} — ${profile.name}` : title
@@ -1295,7 +1311,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function layout() {
     const { width, height } = win.getContentBounds()
     const inset = framed ? PAGE_INSET : 0
-    const pageLeft = !besideSidebar ? 0 : width >= SIDEBAR_FULL_FROM ? SIDEBAR_WIDTH : SIDEBAR_RAIL
+    const pageLeft = Math.round(sidebarShown * (width >= SIDEBAR_FULL_FROM ? SIDEBAR_WIDTH : SIDEBAR_RAIL))
     area = { x: pageLeft + inset, width: Math.max(width - pageLeft - 2 * inset, 0) }
     const y = pageTop
     const pageHeight = Math.max(height - pageTop - inset, 0)
@@ -1310,6 +1326,28 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     for (const view of Object.values(popups)) view.setBounds({ x: 0, y: 0, width, height })
     reveal()
     win.webContents.send('panes', pair && { ids: split.ids, rects: rects.map((rect) => ({ ...rect, y, height: pageHeight })), gap: SPLIT_GAP })
+  }
+
+  // Starts the pages right of the sidebar (`beside`) or at the window's
+  // left. With `slides` they get there over SIDEBAR_SLIDE_MS, laid out each
+  // frame, from wherever they are, so showing it again mid-slide turns back;
+  // otherwise, or when the system asks for reduced motion, at once (the
+  // caller lays them out).
+  function slideSidebar(beside, slides) {
+    besideSidebar = beside
+    clearInterval(slideTimer)
+    slideTimer = null
+    const from = sidebarShown
+    const to = beside ? 1 : 0
+    if (!slides || systemPreferences.getAnimationSettings?.().prefersReducedMotion) { sidebarShown = to; return }
+    const start = Date.now()
+    slideTimer = setInterval(() => {
+      if (win.isDestroyed()) { clearInterval(slideTimer); return }
+      const t = Math.min((Date.now() - start) / SIDEBAR_SLIDE_MS, 1)
+      sidebarShown = from + (to - from) * easeOut(t)
+      if (t === 1) { clearInterval(slideTimer); slideTimer = null }
+      layout()
+    }, 1000 / 60)
   }
 
   // Shows the pages on show, and hides the rest: the active tab's, or both

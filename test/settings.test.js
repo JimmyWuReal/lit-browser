@@ -65,6 +65,15 @@ test('clean keeps a chosen shortcut over a newer default', () => {
   assert.equal(values['shortcuts.reopenTab'], '')
 })
 
+test('clean moves a former default to the new one, keeping a chosen shortcut', () => {
+  assert.equal(clean({ 'shortcuts.tabSidebar': 'Shift+CmdOrCtrl+L' })['shortcuts.tabSidebar'], 'CmdOrCtrl+B')
+  assert.equal(clean({ 'shortcuts.tabSidebar': 'Alt+CmdOrCtrl+B' })['shortcuts.tabSidebar'], 'Alt+CmdOrCtrl+B')
+  // Someone who put another command on ⌘B keeps it, and the sidebar gets none.
+  const taken = clean({ 'shortcuts.tabSidebar': 'Shift+CmdOrCtrl+L', 'shortcuts.history': 'CmdOrCtrl+B' })
+  assert.equal(taken['shortcuts.history'], 'CmdOrCtrl+B')
+  assert.equal(taken['shortcuts.tabSidebar'], '')
+})
+
 test('update checks each type', () => {
   assert.equal(update(defaults, 'searchEngine', 'duckduckgo').values.searchEngine, 'duckduckgo')
   assert.ok(update(defaults, 'searchEngine', 'nope').error)
