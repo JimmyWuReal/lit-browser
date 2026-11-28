@@ -42,6 +42,7 @@ const { pageMenu, tabMenu, navigationMenu, bookmarkMenu, adsMenu } = require('./
 const commandStore = require('./commands')
 const { createAdblock } = require('./adblock')
 const background = require('./background')
+const chrome = require('./chrome')
 
 // Keep in sync with .strip and .bar heights in index.html.
 const STRIP_HEIGHT = 38
@@ -967,6 +968,109 @@ function makeDefaultBrowser() {
     checkDefaultBrowser()
     if (!--left || lastDefaultBrowser === 'yes') clearInterval(defaultBrowserTimer)
   }, 1000)
+}
+
+// Import from Chrome (src/chrome.js), for Settings' Others section. What
+// there is: { profiles: [{ id, name, bookmarks, history: { week, month,
+// quarter, all }, passwords: { logins, never } }], ranges, limit, room },
+// each count null when it can't be read, `ranges` the history choices,
+// `limit` how many pages Lit keeps and `room` how many more `profile`'s
+// history can take; or { error }.
+function chromeSources(profile) {
+  const found = chrome.profiles()
+  if (!found.length) return { error: 'Chrome isn’t on this Mac, or has nothing to import.' }
+  const count = (read) => {
+    try {
+      return read()
+    } catch {
+      return null
+    }
+  }
+  return {
+    ranges: chrome.RANGES.map(({ value, label }) => ({ value, label })),
+    limit: historyStore.LIMIT,
+    room: Math.max(0, historyStore.LIMIT - profile.visited.length),
+    profiles: found.map(({ id, name }) => {
+      const folder = path.join(chrome.ROOT, id)
+      return {
+        id,
+        name,
+        bookmarks: count(() => chrome.countBookmarks(chrome.readBookmarks(folder))),
+        history: count(() => chrome.countHistory(folder)),
+        passwords: count(() => chrome.countLogins(folder)),
+      }
+    }),
+  }
+}
+
+// Imports what `choice` asks for, { profile, bookmarks, history, passwords }
+// (a Chrome profile's id, true for bookmarks and passwords, a RANGES value or
+// null for history), into `profile`. Passwords go first, as the Keychain asks
+// about them. Answers with the Settings state, plus `imported`: { bookmarks,
+// history, passwords }, how many of each were added, for those asked for and
+// imported. Each kind that fails says why in `error`; the rest still import.
+let importingChrome = false
+async function importFromChrome(profile, choice) {
+  const id = choice?.profile
+  const range = chrome.RANGES.some((item) => item.value === choice?.history) ? choice.history : null
+  if (!chrome.profiles().some((each) => each.id === id)) return settingsState(profile, 'That Chrome profile is gone.')
+  if (importingChrome) return settingsState(profile, 'Already importing.')
+  importingChrome = true
+  try {
+    const folder = path.join(chrome.ROOT, id)
+    const imported = {}
+    const errors = []
+    if (choice.passwords === true) {
+      try {
+        const found = chrome.readLogins(folder)
+        // Only logins Lit doesn't have yet need the key; sites never to save
+        // on don't, so they come either way.
+        const fresh = chrome.newLogins(profile.passwords, found.logins)
+        let key = null
+        if (fresh.length) {
+          try {
+            key = await chrome.chromeKey()
+          } catch {
+            errors.push('Passwords weren’t imported, as the Keychain didn’t give Lit Chrome’s key.')
+          }
+        }
+        if (!profile.deleted) {
+          const result = chrome.mergeLogins(profile.passwords, { logins: key ? fresh : [], never: found.never }, key, encrypt)
+          if (result.error) errors.push(result.error)
+          else if (!setPasswords(profile, result.store)) errors.push('Couldn’t save passwords.')
+          else {
+            // Not counted when the logins couldn't be.
+            if (key || !fresh.length) imported.passwords = result.added
+            if (result.unreadable) errors.push(`${result.unreadable === 1 ? 'One password' : `${result.unreadable} passwords`} couldn’t be read.`)
+          }
+        }
+      } catch {
+        errors.push('Couldn’t read Chrome’s passwords.')
+      }
+    }
+    if (choice.bookmarks === true) {
+      try {
+        const { list, added } = chrome.mergeBookmarks(profile.bookmarks, chrome.readBookmarks(folder))
+        if (setBookmarks(profile, list)) imported.bookmarks = added
+        else errors.push('Couldn’t save bookmarks.')
+      } catch {
+        errors.push('Couldn’t read Chrome’s bookmarks.')
+      }
+    }
+    // Only while history is saved, as Settings offers it.
+    if (range && profile.settings.saveHistory) {
+      try {
+        const { entries, added } = chrome.mergeHistory(profile.visited, chrome.readHistory(folder, chrome.since(range, Date.now())))
+        if (setVisited(profile, entries, { now: true })) imported.history = added
+        else errors.push('Couldn’t save history.')
+      } catch {
+        errors.push('Couldn’t read Chrome’s history.')
+      }
+    }
+    return { ...settingsState(profile, errors.join(' ') || undefined), imported }
+  } finally {
+    importingChrome = false
+  }
 }
 
 // Links and files other apps open in Lit. Those that arrive before Lit is
@@ -3943,6 +4047,9 @@ ipcMain.on('page-edited', (event) => { for (const controls of openWindows) contr
 ipcMain.on('login-field-left', fromPage('left', () => true))
 ipcMain.on('logins-pick', fromPopup('logins', (c, id, generation) => c.pickLogin(id, generation)))
 ipcMain.handle('default-browser-make', fromSettings((c) => settingsState(c.profile, makeDefaultBrowser())))
+// Import from Chrome: what there is, and importing it into the window's profile.
+ipcMain.handle('chrome-sources', fromSettings((c) => chromeSources(c.profile)))
+ipcMain.handle('chrome-import', fromSettings((c, choice) => importFromChrome(c.profile, choice)))
 ipcMain.on('settings-record', fromSettings((c, on, keys) => c.setRecording(on === true, keys)))
 ipcMain.on('settings-close', fromSettings((c) => c.closePopup()))
 

@@ -18,7 +18,7 @@ const background = require('./background')
 // shortcuts) in a shared one. The profile ones come first.
 // A section can also name a `list` the popup draws after its settings, from
 // state main sends with them (sitePermissions, passwords, quickSearchSites, profiles, defaultBrowser)
-// or, for cookies, asked for on their own,
+// or, for cookies and importing from Chrome, asked for on their own,
 // with `listWords`, the words that find it in Settings' search.
 // Each setting: { key, label, description?, group?, type, default, ...type
 // fields }. Settings next to each other with the same `group` get it as a
@@ -398,6 +398,14 @@ const SECTIONS = [
         shortcut('newProfile', 'New Profile', ''),
       ]),
     ],
+  },
+  {
+    id: 'others',
+    title: 'Others',
+    // Only importing from Chrome (src/chrome.js), into the window's profile.
+    list: 'importChrome',
+    listWords: 'Import from Chrome Google bookmarks history passwords browser',
+    settings: [],
   },
 ]
 

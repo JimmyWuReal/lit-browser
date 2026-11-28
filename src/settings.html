@@ -466,6 +466,65 @@
     .swatch:hover { transform: scale(1.1); }
     .swatch.is-active { box-shadow: 0 0 0 2px #1c1c1c, 0 0 0 3.5px #fff; }
 
+    /* Import from Chrome: the row, then, once asked, a box of what to
+       import, each kind with its switch, and the buttons under a line. */
+    .import-chrome { display: flex; flex-direction: column; gap: 14px; }
+    .import-chrome .control-text .import-done { color: #ededed; }
+    .import-chrome .control-text .import-done:empty { display: none; }
+    .import-box { display: flex; flex-direction: column; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line); animation: panel-enter 260ms var(--settle); }
+    .import-box[hidden] { display: none; }
+    .import-lines { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; }
+    .import-line { display: flex; align-items: center; gap: 16px; padding: 8px 14px; }
+    .import-line .control-text { flex: 1; }
+    .import-profile { font-size: 12.5px; color: var(--sub); }
+    .import-range { padding: 0 14px 8px; }
+    .import-range[hidden] { display: none; }
+    .import-range .segmented { display: inline-grid; }
+    .import-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 14px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08); }
+    .import-box .toggle:disabled { opacity: .35; cursor: default; }
+
+    /* A select, drawn like the outline button with a chevron. */
+    .select {
+      height: 32px;
+      max-width: 220px;
+      padding: 0 30px 0 12px;
+      border: 0;
+      border-radius: 10px;
+      appearance: none;
+      color: #fff;
+      background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23bdbdbd' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 11px center;
+      box-shadow: inset 0 0 0 1px var(--line);
+      font: inherit;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      text-overflow: ellipsis;
+      cursor: pointer;
+      transition: box-shadow 200ms ease;
+    }
+    .select:hover { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .select:focus-visible { outline: 2px solid rgba(255, 255, 255, .8); outline-offset: 3px; }
+    .select:disabled { opacity: .5; cursor: default; }
+
+    /* The kit's primary button: the one action a box is for. */
+    .primary-button {
+      height: 32px;
+      padding: 0 14px;
+      border: 0;
+      border-radius: 10px;
+      color: #0a0a0a;
+      background: #fff;
+      cursor: pointer;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: -.01em;
+      white-space: nowrap;
+      transition: opacity 200ms ease, transform 140ms var(--settle);
+    }
+    .primary-button:hover { opacity: .9; }
+    .primary-button:active { transform: scale(.97); transition-duration: 55ms; }
+    .primary-button:disabled, .outline-button:disabled { opacity: .4; cursor: default; transform: none; }
+
     /* The kit's outline button, small. */
     .outline-button {
       height: 32px;
@@ -1366,6 +1425,222 @@
       }
     }
 
+    // Import from Chrome, into the window's profile. Import… asks main what
+    // Chrome has, then shows a box to pick a Chrome profile, what to import
+    // (each kind with how much there is) and how far back to go in history.
+    // Main answers the import with the state and the counts added, which
+    // replace the box.
+    lists.importChrome = () => {
+      const element = el('div', 'import-chrome')
+      const head = el('div', 'control-row')
+      const text = el('div', 'control-text')
+      const note = el('span')
+      const done = el('span', 'import-done')
+      done.setAttribute('role', 'status')
+      const error = el('span', 'error')
+      error.setAttribute('role', 'alert')
+      text.append(el('strong', '', 'Import from Chrome'), note, done, error)
+      const start = el('button', 'outline-button', 'Import…')
+      start.type = 'button'
+      start.setAttribute('aria-label', 'Import from Chrome')
+      head.append(text, start)
+      const box = el('div', 'import-box')
+      box.hidden = true
+      element.append(head, box)
+
+      const number = (count) => count.toLocaleString()
+      const plural = (count, one, many) => `${number(count)} ${count === 1 ? one : many}`
+      // { profiles, limit } from main while the box is open, else null.
+      let sources = null
+      let busy = false
+      // What is chosen: the Chrome profile's index, each kind on or off, and
+      // the history range.
+      let picked = 0
+      let chosen = {}
+      let range = 'all'
+      let parts = []
+
+      const source = () => sources.profiles[picked]
+      const historyOn = () => state.values.saveHistory
+      // Each kind can be chosen only when there is some of it to import.
+      const available = (kind) => {
+        const count = source()[kind]
+        if (kind === 'history') return Boolean(count?.all) && historyOn()
+        if (kind === 'passwords') return Boolean(count?.logins || count?.never)
+        return Boolean(count)
+      }
+      const pick = (index) => {
+        picked = index
+        chosen = Object.fromEntries(['bookmarks', 'history', 'passwords'].map((kind) => [kind, available(kind)]))
+        draw()
+      }
+
+      function close() {
+        for (const part of parts) part.stop?.()
+        parts = []
+        sources = null
+        box.hidden = true
+        box.replaceChildren()
+        start.hidden = false
+      }
+
+      // One kind to import: its switch, name and how much there is.
+      function kindLine(kind, label, describe) {
+        const line = el('div', 'import-line')
+        const words = el('div', 'control-text')
+        const detail = el('span')
+        words.append(el('strong', '', label), detail)
+        const toggle = el('button', 'toggle')
+        toggle.type = 'button'
+        toggle.setAttribute('role', 'switch')
+        toggle.setAttribute('aria-label', `Import ${label.toLowerCase()}`)
+        toggle.append(el('span', 'toggle-knob'))
+        toggle.addEventListener('click', () => { chosen[kind] = !chosen[kind]; draw() })
+        line.append(words, toggle)
+        return {
+          element: line,
+          draw() {
+            const can = available(kind)
+            if (!can) chosen[kind] = false
+            toggle.disabled = !can || busy
+            toggle.classList.toggle('is-on', chosen[kind])
+            toggle.setAttribute('aria-checked', String(chosen[kind]))
+            detail.textContent = describe(source()[kind])
+          },
+        }
+      }
+
+      function open(answer) {
+        sources = answer
+        start.hidden = true
+        const lines = el('div', 'import-lines')
+        const from = el('div', 'import-line')
+        const fromWords = el('div', 'control-text')
+        fromWords.append(el('strong', '', 'From'))
+        from.append(fromWords)
+        if (sources.profiles.length > 1) {
+          const select = el('select', 'select')
+          select.setAttribute('aria-label', 'Chrome profile to import from')
+          select.append(...sources.profiles.map(({ name }, i) => {
+            const option = el('option', '', name)
+            option.value = String(i)
+            return option
+          }))
+          select.addEventListener('change', () => pick(Number(select.value)))
+          from.append(select)
+          parts.push({ draw() { select.value = String(picked); select.disabled = busy } })
+        } else {
+          from.append(el('span', 'import-profile', sources.profiles[0].name))
+        }
+        const bookmarks = kindLine('bookmarks', 'Bookmarks', (count) => count === null
+          ? 'Couldn’t read them.'
+          : count ? `${plural(count, 'bookmark', 'bookmarks')}. The bookmark bar’s go on yours, and each folder into one with its name.` : 'None.')
+        const history = kindLine('history', 'History', (counts) => {
+          if (counts === null) return 'Couldn’t read it.'
+          if (!historyOn()) return 'Turn on Save history in Privacy to import it.'
+          const count = counts[range]
+          if (!counts.all) return 'None.'
+          if (!count) return 'No pages from then.'
+          // Lit's own history always stays, so only `room` new pages fit.
+          const fit = count <= sources.room ? ''
+            : sources.room ? `. Lit keeps ${number(sources.limit)} pages and all of yours stay, so only the newest ${number(sources.room)} new ones fit`
+              : `. Lit’s history is full (${number(sources.limit)} pages), so only pages already in it are updated`
+          return `${plural(count, 'page', 'pages')}${fit}. A page you have visited in Lit too keeps your latest visit.`
+        })
+        const ranges = segmented('History to import', sources.ranges.map((item) => item.label),
+          () => sources.ranges.findIndex((item) => item.value === range),
+          (i) => { range = sources.ranges[i].value; draw() }, 'is-small')
+        const rangeLine = el('div', 'import-range')
+        rangeLine.append(ranges.element)
+        const passwordLine = kindLine('passwords', 'Passwords', (count) => {
+          if (count === null) return 'Couldn’t read them.'
+          const { logins, never } = count
+          const neverText = never ? plural(never, 'site', 'sites') + ' never to save on' : ''
+          if (!logins) return never ? `No passwords; ${neverText}.` : 'None.'
+          return `${plural(logins, 'password', 'passwords')}${never ? `, and ${neverText}` : ''}. macOS asks first whether Lit may use Chrome’s key in the Keychain. Passwords you have saved in Lit stay as they are.`
+        })
+        const actions = el('div', 'import-actions')
+        const cancel = el('button', 'outline-button', 'Cancel')
+        cancel.type = 'button'
+        cancel.addEventListener('click', () => { close(); start.focus() })
+        const go = el('button', 'primary-button', 'Import')
+        go.type = 'button'
+        go.addEventListener('click', run)
+        actions.append(cancel, go)
+        lines.append(from, bookmarks.element, history.element, rangeLine, passwordLine.element)
+        box.replaceChildren(lines, actions)
+        box.hidden = false
+        parts.push(bookmarks, history, passwordLine, ranges, {
+          draw() {
+            rangeLine.hidden = !chosen.history
+            cancel.disabled = busy
+            go.disabled = busy || !Object.values(chosen).some(Boolean)
+            go.textContent = busy ? 'Importing…' : 'Import'
+          },
+        })
+        pick(0)
+        box.querySelector('select, button:not(:disabled)')?.focus()
+      }
+
+      function draw() {
+        if (sources) parts.forEach((part) => part.draw())
+      }
+
+      start.addEventListener('click', async () => {
+        if (busy) return
+        error.textContent = ''
+        done.textContent = ''
+        busy = true
+        start.disabled = true
+        const answer = await settings.chromeSources()
+        busy = false
+        start.disabled = false
+        if (!element.isConnected) return
+        if (answer.error) error.textContent = answer.error
+        else open(answer)
+      })
+
+      async function run() {
+        const choice = { profile: source().id, bookmarks: chosen.bookmarks, history: chosen.history ? range : null, passwords: chosen.passwords }
+        busy = true
+        error.textContent = ''
+        draw()
+        const id = ++saves
+        const next = await settings.importChrome(choice)
+        busy = false
+        if (id === saves) state = next
+        if (!element.isConnected) return
+        const { bookmarks = null, history = null, passwords = null } = next.imported || {}
+        const added = [
+          bookmarks !== null && plural(bookmarks, 'bookmark', 'bookmarks'),
+          history !== null && `${plural(history, 'page', 'pages')} of history`,
+          passwords !== null && plural(passwords, 'password', 'passwords'),
+        ].filter(Boolean)
+        if (added.length) {
+          close()
+          done.textContent = `Added ${added.length > 1 ? `${added.slice(0, -1).join(', ')} and ${added.at(-1)}` : added[0]}.`
+          start.focus()
+        } else {
+          draw()
+        }
+        redraw({ importChrome: next.error || '' })
+      }
+
+      return {
+        key: 'importChrome',
+        error,
+        element,
+        stop: () => parts.forEach((part) => part.stop?.()),
+        // Settings closing or opening again: Chrome may have changed meanwhile.
+        hide() { if (!busy) close() },
+        draw() {
+          const name = state.profiles.length > 1 ? state.profiles.find((profile) => profile.id === state.profileId)?.name : ''
+          note.textContent = `Bookmarks, history and saved passwords from one of Chrome’s profiles, into ${name ? `the ${name} profile` : 'Lit'}. Importing again adds only what is new.`
+          draw()
+        },
+      }
+    }
+
     // The shortcut control waiting for keys, if any.
     let recorder = null
     // The keyboard layout, so main can name keys that ⌥ or ⇧ change.
@@ -1532,6 +1807,7 @@
       securityKeys: '<circle cx="10" cy="7" r="1"/><circle cx="4" cy="20" r="1"/><path d="M4.7 19.3 19 5"/><path d="m21 3-3 1 2 2Z"/><path d="M9.26 7.68 5 12l2 5"/><path d="m10 14 5 2 3.5-3.5"/><path d="m18 12 1-1 1 1-1 1Z"/>',
       tabs: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>',
       profiles: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+      others: '<circle cx="12" cy="12" r="10"/><path d="M17 12h.01"/><path d="M12 12h.01"/><path d="M7 12h.01"/>',
       shortcuts: '<path d="M10 8h.01"/><path d="M12 12h.01"/><path d="M14 8h.01"/><path d="M16 12h.01"/><path d="M18 8h.01"/><path d="M6 8h.01"/><path d="M7 16h10"/><path d="M8 12h.01"/><rect x="2" y="4" width="20" height="16" rx="2"/>',
     }
     function sectionIcon(id) {
