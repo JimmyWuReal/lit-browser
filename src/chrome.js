@@ -63,25 +63,41 @@ function profiles(root = ROOT) {
     .map((id) => ({ id, name: typeof names[id]?.name === 'string' && names[id].name.trim() ? names[id].name.trim() : id }))
 }
 
-// Runs `read` on a copy of an SQLite file (and its journal, so a write Chrome
-// was in the middle of is rolled back), then deletes the copy. Returns
-// `empty` when there is no such file.
+function readDatabase(file, read, options = {}) {
+  const { DatabaseSync } = require('node:sqlite')
+  const db = new DatabaseSync(file, options)
+  try {
+    return read(db)
+  } finally {
+    db.close()
+  }
+}
+
+// Runs `read` on an SQLite file of Chrome's. Returns `empty` when there is no
+// such file. With Chrome closed it reads the file itself, read-only. A running
+// Chrome locks it, so then it reads a copy (with its journal, so a write Chrome
+// was in the middle of is rolled back), deleted after. Copying while Chrome
+// writes can catch the two files apart, so a copy that won't read is made
+// once more.
 function withCopy(file, empty, read) {
   if (!fs.existsSync(file)) return empty
-  const { DatabaseSync } = require('node:sqlite')
+  try {
+    return readDatabase(file, read, { readOnly: true })
+  } catch {}
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'lit-chrome-'))
   try {
     const copy = path.join(folder, 'db')
-    // A clone on APFS: instant, whatever the size.
-    fs.copyFileSync(file, copy, fs.constants.COPYFILE_FICLONE)
-    for (const suffix of ['-journal', '-wal']) {
-      if (fs.existsSync(file + suffix)) fs.copyFileSync(file + suffix, copy + suffix, fs.constants.COPYFILE_FICLONE)
-    }
-    const db = new DatabaseSync(copy)
-    try {
-      return read(db)
-    } finally {
-      db.close()
+    for (let tries = 2; ; tries--) {
+      for (const suffix of ['', '-journal', '-wal']) {
+        fs.rmSync(copy + suffix, { force: true })
+        // A clone on APFS: instant, whatever the size.
+        if (fs.existsSync(file + suffix)) fs.copyFileSync(file + suffix, copy + suffix, fs.constants.COPYFILE_FICLONE)
+      }
+      try {
+        return readDatabase(copy, read)
+      } catch (error) {
+        if (tries === 1) throw error
+      }
     }
   } finally {
     fs.rmSync(folder, { recursive: true, force: true })

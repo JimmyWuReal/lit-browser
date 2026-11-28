@@ -143,6 +143,20 @@ test('readHistory reads pages since a time, newest first, from a copy', () => {
   assert.ok(!fs.readdirSync(os.tmpdir()).some((name) => name.startsWith('lit-chrome-') && fs.existsSync(path.join(os.tmpdir(), name, 'db'))))
 })
 
+test('readHistory reads a copy while Chrome holds the file locked', () => {
+  const folder = fakeChrome()
+  makeHistory(folder, [{ url: 'https://a.com/', title: 'A', time: NOW - DAY }])
+  // As a running Chrome does: an exclusive lock, kept after a write.
+  const chromeOpen = new DatabaseSync(path.join(folder, 'History'))
+  chromeOpen.exec('PRAGMA locking_mode = EXCLUSIVE; UPDATE urls SET title = title')
+  try {
+    assert.throws(() => new DatabaseSync(path.join(folder, 'History'), { readOnly: true }).prepare('SELECT 1 FROM urls').get(), /locked/)
+    assert.deepEqual(chrome.readHistory(folder).map((entry) => entry.url), ['https://a.com/'])
+  } finally {
+    chromeOpen.close()
+  }
+})
+
 test('readHistory and countHistory: nothing without a History file', () => {
   const folder = fakeChrome()
   assert.deepEqual(chrome.readHistory(folder), [])
