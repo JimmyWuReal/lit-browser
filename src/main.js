@@ -73,9 +73,10 @@ const SIDEBAR_BIG_STEP = 60
 const SIDEBAR_SLIDE_MS = 260
 const easeOut = (t) => 1 - (1 - t) ** 5
 // Split view: the gap between its pages, where the toolbar draws the
-// dividers to drag, and how narrow or short dragging one can make a page.
+// dividers to drag, and how narrow (`row`) or short (`column`) a page can
+// be while the window has room; pages stay usable shorter than narrower.
 const SPLIT_GAP = 8
-const SPLIT_MIN = 240
+const SPLIT_MIN = { row: 240, column: 120 }
 const PRELOAD = path.join(__dirname, 'preload.js')
 // What runs in web pages.
 const PAGE_PRELOAD = path.join(__dirname, 'page.js')

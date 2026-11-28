@@ -186,21 +186,29 @@ const splitSwap = (node, a, b) => mapPanes(node, (pane) => (pane === a ? b : pan
 const sum = (values) => values.reduce((total, value) => total + value, 0)
 
 // How narrow (along a 'row') or short (along a 'column') a pane can be:
-// `min` for a tab, more for a group with several going that way.
+// `min[dir]` for a tab (`min` being { row, column }), more for a group with
+// several going that way.
 function least(node, dir, gap, min) {
-  if (!isGroup(node)) return min
+  if (!isGroup(node)) return min[dir]
   const each = node.panes.map((pane) => least(pane, dir, gap, min))
   return node.dir === dir ? sum(each) + gap * (each.length - 1) : Math.max(...each)
 }
 
-// The room a group's panes take on screen, as shares of its `room`: their
-// own shares, but, while the room holds every pane's minimum (see least),
-// none under it, the rest giving up the room in proportion to their shares.
-// A window narrowed after a pane was made small keeps it usable, and the
-// shares come back as the window widens.
-function shownShares(group, room, gap, min) {
+// Each of a group's panes' minimum (see least) as a share of its `room`,
+// all made smaller alike when the room can't hold them, so they just fit.
+function leastShares(group, room, gap, min) {
   const mins = group.panes.map((pane) => least(pane, group.dir, gap, min) / Math.max(room, 1))
-  if (sum(mins) > 1) return group.sizes
+  const total = sum(mins)
+  return total > 1 ? mins.map((share) => share / total) : mins
+}
+
+// The room a group's panes take on screen, as shares of its `room`: their
+// own shares, but none under its minimum (see leastShares), the rest giving
+// up the room in proportion to their shares. A window narrowed after a pane
+// was made small keeps it usable, and the shares come back as the window
+// widens; narrower than all the minimums, the panes share it as those do.
+function shownShares(group, room, gap, min) {
+  const mins = leastShares(group, room, gap, min)
   const held = new Set()
   for (;;) {
     const free = 1 - sum([...held].map((index) => mins[index]))
@@ -256,11 +264,10 @@ function splitLayout(node, rect, gap, min) {
 
 // The tree with the divider after pane `index` of the group at `path` (see
 // splitLayout) moved so its gap's middle is at `at` across `rect`, as far
-// as keeping both panes beside it at least `min` allows. Short of room for
-// that, the minimums give way, so the divider always has half the two
-// panes' room to move in. It moves from where it shows, the group's shares
-// becoming its shownShares. `at` null shares that group's room evenly.
-// Unchanged when there is no such divider.
+// as keeping both panes beside it at their minimums (see leastShares)
+// allows. It moves from where it shows, the group's shares becoming its
+// shownShares. `at` null shares that group's room evenly. Unchanged when
+// there is no such divider.
 function splitResize(node, path, index, at, rect, gap, min) {
   let group = node
   let box = rect
@@ -277,11 +284,9 @@ function splitResize(node, path, index, at, rect, gap, min) {
     const shown = shownShares(group, room, gap, min)
     const before = sum(shown.slice(0, index))
     const pair = shown[index] + shown[index + 1]
-    const first = least(group.panes[index], group.dir, gap, min)
-    const second = least(group.panes[index + 1], group.dir, gap, min)
-    const give = pair * room >= first + second ? 1 : (pair * room) / (2 * (first + second))
-    const low = (first * give) / room
-    const high = pair - (second * give) / room
+    const mins = leastShares(group, room, gap, min)
+    const low = mins[index]
+    const high = Math.max(pair - mins[index + 1], low)
     const share = Math.min(Math.max((at - (across ? box.x : box.y) - index * gap - gap / 2) / room - before, low), high)
     sizes = shown.map((size, at) => (at === index ? share : at === index + 1 ? pair - share : size))
   }

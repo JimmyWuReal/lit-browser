@@ -147,6 +147,8 @@ test('sidebarShowing leaves the toolbar its room, and is the rail in a narrow wi
   assert.equal(sidebarShowing(SIDEBAR.rail, 1400), SIDEBAR.rail)
 })
 
+// The same minimum both ways.
+const mins = (size) => ({ row: size, column: size })
 const row = (panes, sizes = panes.map(() => 1 / panes.length)) => ({ dir: 'row', sizes, panes })
 const column = (panes, sizes = panes.map(() => 1 / panes.length)) => ({ dir: 'column', sizes, panes })
 
@@ -189,7 +191,7 @@ test('splitSwap trades two tabs, or puts one in another\'s place', () => {
 
 test('splitLayout places panes and the dividers between them, gap apart', () => {
   const rect = { x: 10, y: 50, width: 1008, height: 608 }
-  const { panes, dividers } = splitLayout(row([1, column([2, 3], [0.25, 0.75])]), rect, 8, 100)
+  const { panes, dividers } = splitLayout(row([1, column([2, 3], [0.25, 0.75])]), rect, 8, mins(100))
   assert.deepEqual(panes, [
     { id: 1, x: 10, y: 50, width: 500, height: 608 },
     { id: 2, x: 518, y: 50, width: 500, height: 150 },
@@ -200,13 +202,13 @@ test('splitLayout places panes and the dividers between them, gap apart', () => 
     { path: [1], index: 0, dir: 'column', share: 0.25, x: 518, y: 200, width: 500, height: 8 },
   ])
   // Rounded edges still fill the room exactly.
-  const thirds = splitLayout(row([1, 2, 3]), { x: 0, y: 0, width: 1000, height: 10 }, 8, 100).panes
+  const thirds = splitLayout(row([1, 2, 3]), { x: 0, y: 0, width: 1000, height: 10 }, 8, mins(100)).panes
   assert.equal(thirds.at(-1).x + thirds.at(-1).width, 1000)
-  assert.deepEqual(splitLayout(row([1, 2]), { x: 0, y: 0, width: 0, height: 0 }, 8, 100).panes.map((pane) => pane.width), [0, 0])
+  assert.deepEqual(splitLayout(row([1, 2]), { x: 0, y: 0, width: 0, height: 0 }, 8, mins(100)).panes.map((pane) => pane.width), [0, 0])
 })
 
 test('splitLayout keeps a small pane at the minimum while the room holds them all', () => {
-  const widths = (width, split) => splitLayout(split, { x: 0, y: 0, width, height: 600 }, 8, 240).panes.map((pane) => pane.width)
+  const widths = (width, split) => splitLayout(split, { x: 0, y: 0, width, height: 600 }, 8, mins(240)).panes.map((pane) => pane.width)
   // A pane made 240 wide in a wide window stays so in a narrower one, the
   // others giving up room in proportion to their shares.
   const split = row([1, 2, 3], [0.1, 0.3, 0.6])
@@ -214,10 +216,18 @@ test('splitLayout keeps a small pane at the minimum while the room holds them al
   assert.deepEqual(widths(1216, split), [240, 320, 640])
   // Then a second one needs holding too.
   assert.deepEqual(widths(816, split), [240, 240, 320])
-  // Too narrow for every minimum: the shares as they are.
-  assert.deepEqual(widths(416, split), [40, 120, 240])
+  // Too narrow for every minimum: the panes share it as their minimums do,
+  // which they reach smoothly as the window narrows.
+  assert.deepEqual(widths(416, split), [133, 134, 133])
+  assert.deepEqual(widths(752, split), [240, 240, 256])
+  assert.deepEqual(widths(736, split), [240, 240, 240])
+  assert.deepEqual(widths(735, split), [240, 239, 240])
+  // Groups across hold their own minimums: a column of two stacked needs
+  // only one pane's width, a row of two two panes' and the gap.
+  const nested = splitLayout(column([row([1, 2], [0.9, 0.1]), 3]), { x: 0, y: 0, width: 1008, height: 600 }, 8, { row: 240, column: 120 })
+  assert.deepEqual(nested.panes.map((pane) => [pane.width, pane.height]), [[760, 296], [240, 296], [1008, 296]])
   // A divider dragged from a held pane moves from where it shows.
-  const moved = splitResize(split, [], 1, 248 + 300 + 4, { x: 0, y: 0, width: 1216, height: 600 }, 8, 240)
+  const moved = splitResize(split, [], 1, 248 + 300 + 4, { x: 0, y: 0, width: 1216, height: 600 }, 8, mins(240))
   assert.deepEqual(widths(1216, moved), [240, 300, 660])
 })
 
@@ -225,28 +235,27 @@ test('splitResize moves a divider under the pointer, keeping panes at least the 
   const rect = { x: 100, y: 0, width: 1008, height: 600 }
   const split = row([1, 2])
   const sizes = (node) => node.sizes.map((size) => Math.round(size * 1000) / 1000)
-  assert.deepEqual(splitResize(split, [], 0, 354, rect, 8, 200), row([1, 2], [0.25, 0.75]))
-  assert.deepEqual(sizes(splitResize(split, [], 0, 0, rect, 8, 200)), [0.2, 0.8])
-  assert.deepEqual(sizes(splitResize(split, [], 0, 5000, rect, 8, 200)), [0.8, 0.2])
+  assert.deepEqual(splitResize(split, [], 0, 354, rect, 8, mins(200)), row([1, 2], [0.25, 0.75]))
+  assert.deepEqual(sizes(splitResize(split, [], 0, 0, rect, 8, mins(200))), [0.2, 0.8])
+  assert.deepEqual(sizes(splitResize(split, [], 0, 5000, rect, 8, mins(200))), [0.8, 0.2])
   // Only the two panes beside it change.
-  assert.deepEqual(sizes(splitResize(row([1, 2, 3]), [], 1, 100 + 992 * 0.5 + 8 + 4, rect, 8, 100)), [0.333, 0.167, 0.5])
+  assert.deepEqual(sizes(splitResize(row([1, 2, 3]), [], 1, 100 + 992 * 0.5 + 8 + 4, rect, 8, mins(100))), [0.333, 0.167, 0.5])
   // A divider lying down, in a group inside the split.
-  const nested = splitResize(row([1, column([2, 3])]), [1], 0, 152, rect, 8, 100)
+  const nested = splitResize(row([1, column([2, 3])]), [1], 0, 152, rect, 8, mins(100))
   assert.deepEqual(nested.panes[1].sizes, [0.25, 0.75])
   assert.deepEqual(nested.sizes, [0.5, 0.5])
   // A pane with two side by side in it needs room for both.
-  const wide = splitResize(row([1, column([row([2, 3]), 4])]), [], 0, 5000, rect, 8, 200)
+  const wide = splitResize(row([1, column([row([2, 3]), 4])]), [], 0, 5000, rect, 8, mins(200))
   assert.equal(Math.round(wide.sizes[1] * 1000), 408)
-  // Too little room for the minimums: they give way, leaving half the room to move in.
-  assert.deepEqual(sizes(splitResize(split, [], 0, 0, { ...rect, width: 308 }, 8, 200)), [0.25, 0.75])
-  assert.deepEqual(sizes(splitResize(split, [], 0, 5000, { ...rect, width: 308 }, 8, 200)), [0.75, 0.25])
-  // Three stacked in a short window still move.
-  const stacked = splitResize(column([1, 2, 3]), [], 0, 50, { ...rect, height: 616 }, 8, 240)
-  assert.ok(stacked.sizes[0] < 1 / 3 - 0.05, String(stacked.sizes))
+  // Too little room for the minimums: the panes share it as those do, and the divider stays.
+  assert.deepEqual(sizes(splitResize(split, [], 0, 0, { ...rect, width: 308 }, 8, mins(200))), [0.5, 0.5])
+  // Three stacked in a short window still move, pages needing less height than width.
+  const stacked = splitResize(column([1, 2, 3]), [], 0, 50, { ...rect, height: 616 }, 8, { row: 240, column: 120 })
+  assert.deepEqual(sizes(stacked), [0.2, 0.467, 0.333])
   // Even again, and no such divider.
-  assert.deepEqual(sizes(splitResize(row([1, 2, 3], [0.5, 0.25, 0.25]), [], 1, null, rect, 8, 200)), [0.333, 0.333, 0.333])
-  assert.equal(splitResize(split, [], 1, 300, rect, 8, 200), split)
-  assert.equal(splitResize(split, [0], 0, 300, rect, 8, 200), split)
+  assert.deepEqual(sizes(splitResize(row([1, 2, 3], [0.5, 0.25, 0.25]), [], 1, null, rect, 8, mins(200))), [0.333, 0.333, 0.333])
+  assert.equal(splitResize(split, [], 1, 300, rect, 8, mins(200)), split)
+  assert.equal(splitResize(split, [0], 0, 300, rect, 8, mins(200)), split)
 })
 
 test('splitDrop picks the pane and the edge nearest the pointer', () => {
