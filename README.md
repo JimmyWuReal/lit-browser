@@ -242,7 +242,7 @@ The app is ad-hoc signed, which is enough to run it on this Mac. Sharing it with
 
 ## Icon
 
-The icon is `build/icon.png` (1024×1024, a placeholder for now). Replace that file and run `npm run app`; electron-builder turns it into the `.icns` file. `npm start` shows the same icon in the Dock.
+The icon is a small white-hot flame whose glow lights its tile. Its source is `build/icon.svg`; after editing it, render `build/icon.png` (1024×1024) with `npx electron scripts/render-icon.js build/icon.svg build/icon.png`, which draws it in a hidden window. Then run `npm run app`; electron-builder turns the PNG into the `.icns` file. `npm start` shows the same icon in the Dock.
 
 ## How it works
 
