@@ -167,3 +167,18 @@ test('a private window goes by its own choices, under the saved Blocks', () => {
   assert.deepEqual(saved.get('https://a.com'), { camera: 'allow', location: 'block' })
   assert.deepEqual(own.get('https://a.com'), { location: 'allow', camera: 'allow' })
 })
+
+test('ads is a kind Lit never asks about, saved and listed like the rest', () => {
+  assert.ok(isKind('ads'))
+  for (const permission of ['ads', 'notifications', 'geolocation']) assert.notDeepEqual(kindsOf(permission), ['ads'])
+  const sites = choose(new Map([['https://a.com', { camera: 'allow' }]]), 'https://a.com', ['ads'], 'allow')
+  assert.equal(status(sites, 'https://a.com', ['ads']), 'allow')
+  assert.equal(status(sites, 'https://b.com', ['ads']), 'ask')
+  // Listed after the kinds a site asks for.
+  assert.deepEqual(list(sites)[0].kinds.map((entry) => entry.label), ['Camera', 'Ads and trackers'])
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lit-permissions-'))
+  const file = path.join(dir, 'permissions.json')
+  save(file, sites)
+  assert.deepEqual(load(file), sites)
+  fs.rmSync(dir, { recursive: true })
+})

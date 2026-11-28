@@ -193,4 +193,27 @@ function bookmarkMenu({ kind, count = 0, key } = {}) {
   return joinGroups([create, bar])
 }
 
-module.exports = { pageMenu, tabMenu, navigationMenu, bookmarkMenu }
+// The menu of the toolbar's ad blocking button, for the site `label`
+// (example.com) of the page shown, by what blocking does there (`ads`):
+//   'block'  blocking, as everywhere
+//   'site'   stopped on the site (Stop on This Site, saved)
+//   'once'   stopped in this tab until it leaves the site (Stop on This
+//            Site Once)
+// Its first item, grayed out, says which.
+function adsMenu({ ads, label }) {
+  const stopSite = { label: 'Stop on This Site', command: 'stopSite' }
+  const resume = { label: 'Block Ads on This Site', command: 'resume' }
+  const states = {
+    block: [`Blocking ads on ${label}`, [stopSite, { label: 'Stop on This Site Once', command: 'stopOnce' }]],
+    site: [`Not blocking ads on ${label}`, [resume]],
+    once: [`Not blocking ads on ${label} until you leave it`, [stopSite, resume]],
+  }
+  const [title, items] = states[ads]
+  return joinGroups([
+    [{ label: title, enabled: false }],
+    items,
+    [{ label: 'Ad Blocking Settings…', command: 'settings' }],
+  ])
+}
+
+module.exports = { pageMenu, tabMenu, navigationMenu, bookmarkMenu, adsMenu }

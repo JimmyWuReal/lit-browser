@@ -17,6 +17,9 @@ const KINDS = {
   notifications: { label: 'Notifications', does: 'show notifications' },
   // Chromium asks one permission for reading and for some writing.
   clipboard: { label: 'Clipboard', does: 'read and change your clipboard' },
+  // Never asked: the toolbar's ad blocking button's Stop on This Site saves
+  // Allow, and blocking skips the site's pages (see src/adblock.js).
+  ads: { label: 'Ads and trackers', does: 'show ads and trackers' },
 }
 const CHOICES = ['allow', 'block']
 

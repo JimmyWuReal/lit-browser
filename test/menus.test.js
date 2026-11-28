@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { pageMenu, tabMenu, navigationMenu, bookmarkMenu } = require('../src/menus')
+const { pageMenu, tabMenu, navigationMenu, bookmarkMenu, adsMenu } = require('../src/menus')
 
 const labels = (items) => items.map((item) => item.label || '—')
 const commands = (items) => items.filter((item) => item.command).map((item) => item.command)
@@ -154,4 +154,18 @@ test('the back and forward menus list the pages that way, nearest first', () => 
   assert.equal(named[1].label, 'https://x.test/')
   const many = { entries: Array.from({ length: 40 }, (_, i) => page(`p${i}`)), index: 39 }
   assert.deepEqual([navigationMenu(many, -1).length, navigationMenu(many, -1)[0].arg], [15, 38])
+})
+
+test('the ad blocking menu stops blocking on a site, for good or once, and starts it again', () => {
+  const blocking = adsMenu({ ads: 'block', label: 'example.com' })
+  assert.deepEqual(labels(blocking), ['Blocking ads on example.com', '—', 'Stop on This Site', 'Stop on This Site Once', '—', 'Ad Blocking Settings…'])
+  assert.equal(blocking[0].enabled, false)
+  assert.deepEqual(commands(blocking), ['stopSite', 'stopOnce', 'settings'])
+  const stopped = adsMenu({ ads: 'site', label: 'example.com' })
+  assert.deepEqual(labels(stopped), ['Not blocking ads on example.com', '—', 'Block Ads on This Site', '—', 'Ad Blocking Settings…'])
+  assert.deepEqual(commands(stopped), ['resume', 'settings'])
+  // Once can still become for good.
+  const once = adsMenu({ ads: 'once', label: 'example.com' })
+  assert.equal(once[0].label, 'Not blocking ads on example.com until you leave it')
+  assert.deepEqual(commands(once), ['stopSite', 'resume', 'settings'])
 })
