@@ -341,7 +341,7 @@ const SECTIONS = [
         shortcut('closeTabsToRight', 'Close Tabs to the Right', ''),
         shortcut('nextTab', 'Show Next Tab', 'Ctrl+Tab'),
         shortcut('previousTab', 'Show Previous Tab', 'Ctrl+Shift+Tab'),
-        shortcut('tabSidebar', 'Show Tab Sidebar', 'Shift+CmdOrCtrl+L'),
+        shortcut('tabSidebar', 'Show Tab Sidebar', 'CmdOrCtrl+B'),
         shortcut('splitView', 'Split View', 'Alt+CmdOrCtrl+S'),
       ]),
       ...group('Page', [
@@ -409,9 +409,16 @@ function problem(setting, value, values) {
   }
 }
 
+// Defaults settings once had. A saved file keeps every value, so for anyone
+// who never changed one it still holds the old default; they get the new one.
+// Show Tab Sidebar was ⇧⌘L before ⌘B.
+const FORMER_DEFAULTS = { 'shortcuts.tabSidebar': ['Shift+CmdOrCtrl+L'] }
+
 // The defaults, overlaid with every saved value that is still a known
-// setting and still valid (settings get renamed, options get removed).
-function clean(saved = {}) {
+// setting, still valid (settings get renamed, options get removed) and not
+// a former default.
+function clean(given = {}) {
+  const saved = Object.fromEntries(Object.entries(given).filter(([key, value]) => !FORMER_DEFAULTS[key]?.includes(value)))
   const values = {}
   for (const setting of SETTINGS) {
     const value = Object.hasOwn(saved, setting.key) ? saved[setting.key] : setting.default
