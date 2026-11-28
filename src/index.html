@@ -527,9 +527,24 @@
     /* Above the middle, where it looks centered and its suggestions fit. */
     .home .bar { height: calc(100vh - 38px); justify-content: center; padding: 0 16px 20vh; }
     /* Framed, home is the card a page would be, with the search box in it. */
-    .home.framed .bar { height: calc(100vh - 38px - 6px); margin: 0 6px; border-radius: 10px; background: #111; }
+    .home.framed .bar { height: calc(100vh - 38px - 6px); margin: 0 6px; border-radius: 10px; background-color: #111; }
     .home.framed:has(.bookmarks.is-open) .bar { height: calc(100vh - 38px - 34px - 6px); margin-top: 34px; }
-    .private.home.framed .bar { background: #14111c; }
+    .private.home.framed .bar { background-color: #14111c; }
+    /* The New tab background setting's image (--home-image, from main) fills
+       the card, or unframed the window below the strip and bookmark bar,
+       under a shade so the search box and the note under it read on any
+       image. The search box gets a frosted fill of its own. */
+    .home.has-background .bar {
+      background-image: linear-gradient(rgba(0, 0, 0, .3), rgba(0, 0, 0, .3)), var(--home-image);
+      background-position: center;
+      background-size: cover;
+    }
+    .home.has-background:not(.framed):has(.bookmarks.is-open) .bar { height: calc(100vh - 38px - 34px); margin-top: 34px; }
+    .home.has-background .address input { background: rgba(9, 9, 9, .62); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); }
+    /* The blur paints the field over what comes before it, so lift those. */
+    .home.has-background .address > svg,
+    .home.has-background .chip { z-index: 1; }
+    .home.has-background .private-note { color: #ddd6fe; text-shadow: 0 1px 12px rgba(0, 0, 0, .9); }
     .home .address { flex: 0 1 600px; }
     .home .address input { height: 52px; padding: 0 18px 0 46px; border-radius: 12px; font-size: 15px; }
     .home .address svg { left: 18px; width: 16px; height: 16px; }
@@ -2133,6 +2148,13 @@
       profileButton.setAttribute('aria-label', `Profile: ${name}`)
       profileButton.style.setProperty('--profile', color)
       document.getElementById('profile-mark').textContent = [...name][0].toUpperCase()
+    })
+
+    // The new tab background: a data: URL from main, or null for none.
+    window.lit.onBackground((url) => {
+      document.body.classList.toggle('has-background', Boolean(url))
+      if (url) document.body.style.setProperty('--home-image', `url("${url}")`)
+      else document.body.style.removeProperty('--home-image')
     })
 
     // The downloads indicator ({ count, active, progress } from main).

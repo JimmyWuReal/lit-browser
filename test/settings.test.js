@@ -89,6 +89,10 @@ test('update checks each type', () => {
   assert.ok(update(defaults, 'sidebarWidth', 401).error)
   assert.ok(update(defaults, 'sidebarWidth', 200.5).error)
   assert.ok(update(defaults, 'sidebarWidth', '200').error)
+  assert.equal(update(defaults, 'newTabBackground', 'background-0123456789ab.jpg').values.newTabBackground, 'background-0123456789ab.jpg')
+  assert.equal(update(defaults, 'newTabBackground', '').values.newTabBackground, '')
+  assert.ok(update(defaults, 'newTabBackground', '../settings.json').error)
+  assert.ok(update(defaults, 'newTabBackground', '/Users/me/cat.jpg').error)
 })
 
 test('update refuses shortcuts that are taken or reserved, and allows none', () => {
