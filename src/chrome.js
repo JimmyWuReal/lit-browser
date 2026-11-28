@@ -209,9 +209,10 @@ function mergeHistory(entries, imported) {
   return { entries: merged, added: merged.filter((entry) => !had.has(entry.url)).length }
 }
 
-// Saved passwords from both of Chrome's stores, the Google account's first:
-// { logins: [{ site, username, encrypted }], never: [site] }. Only logins for
-// web forms that Lit could fill; `encrypted` is still Chrome's (a Buffer).
+// Saved passwords from both of Chrome's stores: { logins: [{ site, username,
+// copies }], never: [site] }. Only logins for web forms that Lit could fill.
+// A login in both stores comes once, with each store's copy of its password,
+// still encrypted by Chrome (Buffers), the Google account's first.
 function readLogins(folder) {
   const read = (file) => withCopy(path.join(folder, file), [], (db) => db
     .prepare('SELECT origin_url, username_value, password_value, blacklisted_by_user FROM logins WHERE scheme = 0')
@@ -229,8 +230,9 @@ function readLogins(folder) {
     const username = typeof row.username_value === 'string' ? row.username_value : ''
     const encrypted = row.password_value ? Buffer.from(row.password_value) : null
     if (!encrypted?.length || !passwords.isText(username)) continue
-    if (logins.some((login) => login.site === site && login.username === username)) continue
-    logins.push({ site, username, encrypted })
+    const login = logins.find((each) => each.site === site && each.username === username)
+    if (login) login.copies.push(encrypted)
+    else logins.push({ site, username, copies: [encrypted] })
   }
   return { logins, never: [...never] }
 }
@@ -265,16 +267,16 @@ function chromeKey() {
 }
 
 // Adds imported logins to Lit's password `store`: each decrypted with
-// Chrome's `key` and encrypted again with Lit's `encrypt` (null when it
+// Chrome's `key` (its first copy that can be) and encrypted again with Lit's `encrypt` (null when it
 // can't). A login Lit already has for the site and username keeps Lit's
 // password, and sites Chrome never saves for are never saved for here either.
 // Returns { store, added, unreadable }, or { error } when Lit can't encrypt.
 function mergeLogins(store, imported, key, encrypt) {
   let added = 0
   let unreadable = 0
-  for (const { site, username, encrypted } of imported.logins) {
+  for (const { site, username, copies } of imported.logins) {
     if (store.logins.some((login) => login.site === site && login.username === username)) continue
-    const password = decrypt(encrypted, key)
+    const password = copies.map((copy) => decrypt(copy, key)).find(Boolean)
     if (!password) {
       unreadable++
       continue

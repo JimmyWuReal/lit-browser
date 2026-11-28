@@ -223,8 +223,8 @@ test('readLogins reads both stores, the account’s first, without duplicates', 
     { url: 'https://never.com/', never: 1 },
   ])
   const { logins, never } = chrome.readLogins(folder)
-  assert.deepEqual(logins.map(({ site, username, encrypted }) => [site, username, chrome.decrypt(encrypted, KEY)]), [
-    ['https://a.com', 'me', 'account'],
+  assert.deepEqual(logins.map(({ site, username, copies }) => [site, username, ...copies.map((copy) => chrome.decrypt(copy, KEY))]), [
+    ['https://a.com', 'me', 'account', 'local'],
     ['https://a.com', '', 'nameless'],
     ['http://b.com:8080', 'b', 'b'],
   ])
@@ -233,23 +233,25 @@ test('readLogins reads both stores, the account’s first, without duplicates', 
   assert.deepEqual(chrome.readLogins(fakeChrome()), { logins: [], never: [] })
 })
 
-test('mergeLogins re-encrypts new logins and keeps Lit’s own', () => {
+test('mergeLogins re-encrypts new logins from a copy that reads, and keeps Lit’s own', () => {
   const hide = (text) => `lit:${text}`
   const store = { logins: [{ id: 'x', site: 'https://a.com', username: 'me', secret: hide('mine') }], never: [] }
   const imported = {
     logins: [
-      { site: 'https://a.com', username: 'me', encrypted: encrypt('theirs') },
-      { site: 'https://a.com', username: 'other', encrypted: encrypt('other') },
-      { site: 'https://c.com', username: '', encrypted: Buffer.from('v10garbage') },
+      { site: 'https://a.com', username: 'me', copies: [encrypt('theirs')] },
+      { site: 'https://a.com', username: 'other', copies: [encrypt('other')] },
+      { site: 'https://b.com', username: 'b', copies: [Buffer.from('v10garbage'), encrypt('local copy')] },
+      { site: 'https://c.com', username: '', copies: [Buffer.from('v10garbage')] },
     ],
     never: ['https://never.com'],
   }
   const result = chrome.mergeLogins(store, imported, KEY, hide)
-  assert.equal(result.added, 1)
+  assert.equal(result.added, 2)
   assert.equal(result.unreadable, 1)
   assert.deepEqual(result.store.logins.map(({ site, username, secret }) => [site, username, secret]), [
     ['https://a.com', 'me', 'lit:mine'],
     ['https://a.com', 'other', 'lit:other'],
+    ['https://b.com', 'b', 'lit:local copy'],
   ])
   assert.deepEqual(result.store.never, ['https://never.com'])
   assert.deepEqual(chrome.mergeLogins(store, imported, KEY, () => null), { error: 'Couldn’t encrypt passwords with the Keychain.' })
