@@ -106,6 +106,8 @@ contextBridge.exposeInMainWorld('lit', {
   toggleMute: (id) => ipcRenderer.send('mute-tab', id),
   // The right-click menu for a tab.
   showTabMenu: (id) => ipcRenderer.send('tab-menu', id),
+  // The new tab background as a data: URL, or null for none.
+  onBackground: (callback) => on('background', callback),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
   onShortcuts: (callback) => on('shortcuts', callback),
   // The bookmark bar: { visible, items } (see src/bookmarks.js).
@@ -134,7 +136,7 @@ contextBridge.exposeInMainWorld('lit', {
     onChanged: (callback) => on('bookmarks-changed', callback),
   },
   // For the Settings popup only; main ignores these from anywhere else.
-  // State is { sections, values, labels, sitePermissions, passwords, quickSearchSites,
+  // State is { sections, values, labels, previews, sitePermissions, passwords, quickSearchSites,
   // profileId, profiles, profileColors, defaultBrowser, error? } (see settingsState in main),
   // for the window's profile, with the `section` to show as it opens, if any.
   settings: {
@@ -163,6 +165,10 @@ contextBridge.exposeInMainWorld('lit', {
     openProfile: (id) => ipcRenderer.send('profiles-open', id),
     // Asks macOS to make Lit the default browser; answers with the state.
     makeDefaultBrowser: () => ipcRenderer.invoke('default-browser-make'),
+    // The new tab background: choosing asks for an image first. Both
+    // answer with the state.
+    chooseBackground: () => ipcRenderer.invoke('background-choose'),
+    removeBackground: () => ipcRenderer.invoke('background-remove'),
     close: () => ipcRenderer.send('settings-close'),
     // While on, key presses come back through onShortcutPressed as
     // { accelerator } ('' clears) or { cancel: true }, not to the menu.

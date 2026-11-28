@@ -9,6 +9,7 @@ const zoom = require('./zoom')
 const shortcuts = require('./shortcuts')
 const quickSearch = require('./quicksearch')
 const { SIDEBAR } = require('./tabs')
+const background = require('./background')
 
 // A section is either for one profile (`scope: 'profile'`: each profile has
 // its own values, and the popup says whose) or shared by every profile. The
@@ -31,6 +32,9 @@ const { SIDEBAR } = require('./tabs')
 //   size      a whole number of pixels from `min` to `max`, changed
 //             elsewhere (by dragging); the popup shows it, `minLabel` at
 //             `min`, with a button to reset it.
+//   image     '' for none, or the name of a picture chosen from disk and
+//             copied into the profile's folder (src/background.js); main
+//             picks it and sends the popup a small preview.
 const shortcut = (command, label, accelerator) => ({ key: `shortcuts.${command}`, label, type: 'shortcut', default: accelerator })
 const group = (name, settings) => settings.map((setting) => ({ ...setting, group: name }))
 
@@ -54,6 +58,13 @@ const SECTIONS = [
         description: 'An address or search. Leave empty for the search box.',
         type: 'text',
         placeholder: 'Search box',
+        default: '',
+      },
+      {
+        key: 'newTabBackground',
+        label: 'New tab background',
+        description: 'An image behind the search box on new tabs. Lit keeps a copy, so the original can move.',
+        type: 'image',
         default: '',
       },
       {
@@ -411,6 +422,8 @@ function problem(setting, value, values) {
       return typeof value === 'boolean' ? null : 'Not on or off.'
     case 'text':
       return typeof value === 'string' && value.length <= 2048 ? null : 'Too long.'
+    case 'image':
+      return value === '' || background.isName(value) ? null : 'Not a background image.'
     case 'size':
       return Number.isInteger(value) && value >= setting.min && value <= setting.max ? null : `Not from ${setting.min} to ${setting.max}.`
     case 'shortcut': {

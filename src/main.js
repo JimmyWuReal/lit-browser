@@ -41,6 +41,7 @@ const findState = require('./find')
 const { pageMenu, tabMenu, navigationMenu, bookmarkMenu, adsMenu } = require('./menus')
 const commandStore = require('./commands')
 const { createAdblock } = require('./adblock')
+const background = require('./background')
 
 // Keep in sync with .strip and .bar heights in index.html.
 const STRIP_HEIGHT = 38
@@ -134,6 +135,8 @@ let currentProfile
 // - bookmarks (src/bookmarks.js), which its private windows share.
 // - closed: recently closed tabs and windows, newest last, for Reopen Closed
 //   Tab (see rememberClosed).
+// - folder: where its files are, its new tab background among them; and
+//   background, that image as read last (see backgroundOf).
 // `deleted` is set once it is deleted, when nothing of it is saved any more.
 // Its id never changes; its name and color follow the saved list.
 function openProfile({ id, name, color }) {
@@ -142,7 +145,7 @@ function openProfile({ id, name, color }) {
   const files = Object.fromEntries(['settings', 'zoom', 'permissions', 'passwords', 'history', 'bookmarks'].map((file) => [file, path.join(folder, `${file}.json`)]))
   const own = settingsStore.load(files.settings)
   const profile = {
-    id, name, color, files,
+    id, name, color, files, folder,
     session: partition ? session.fromPartition(partition) : session.defaultSession,
     // The default profile's file holds the shared settings too.
     settings: profiles.length ? settingsStore.combine(own, profiles[0].settings) : own,
@@ -153,6 +156,7 @@ function openProfile({ id, name, color }) {
     passwords: passwords.load(files.passwords),
     bookmarks: bookmarkStore.load(files.bookmarks),
     closed: [],
+    background: null,
     deleted: false,
   }
   profile.permissionStore = {
@@ -921,7 +925,9 @@ function settingsState(profile, error) {
   for (const setting of settingsStore.SETTINGS) {
     if (setting.type === 'shortcut') labels[setting.key] = settings[setting.key] ? shortcuts.label(settings[setting.key]) : ''
   }
-  return { sections: settingsStore.SECTIONS, values: settings, labels, sitePermissions: permissions.list(sitePermissions), passwords: passwords.list(profile.passwords), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, defaultBrowser: defaultBrowser(), ...(error && { error }) }
+  // Each image setting's preview (only the new tab background so far).
+  const previews = { newTabBackground: backgroundOf(profile).preview }
+  return { sections: settingsStore.SECTIONS, values: settings, labels, previews, sitePermissions: permissions.list(sitePermissions), passwords: passwords.list(profile.passwords), quickSearchSites: quickSearch.list(), profileId: profile.id, profiles: profileList.profiles, profileColors: profileStore.COLORS, defaultBrowser: defaultBrowser(), ...(error && { error }) }
 }
 
 // Whether Lit is the Mac's default browser: 'yes', 'no', or 'unavailable' when
@@ -1078,6 +1084,48 @@ function changeSetting(profile, key, value) {
   target.settings = next
   for (const each of profiles) each.settings = settingsStore.combine(each.settings, profiles[0].settings)
   applySettings()
+}
+
+// The profile's new tab background as { name, url, preview }: the image as a
+// data: URL for the toolbar and a small one for Settings, both null when
+// there is none or its file is gone. Read once per image.
+function backgroundOf(profile) {
+  const name = profile.settings.newTabBackground
+  if (profile.background?.name === name) return profile.background
+  const url = background.dataUrl(profile.folder, name)
+  let preview = null
+  if (url) {
+    const image = nativeImage.createFromDataURL(url)
+    if (!image.isEmpty()) preview = image.resize({ height: 80, quality: 'good' }).toDataURL()
+  }
+  profile.background = { name, url, preview }
+  return profile.background
+}
+
+// Sets the new tab background to a copy of the image at `source`, or none
+// for null, deleting the one it replaces; returns why it couldn't, if so.
+function setBackground(profile, source) {
+  if (profile.deleted) return 'This profile was deleted.'
+  let name = ''
+  if (source) {
+    const copied = background.adopt(profile.folder, source)
+    if (copied.error) return copied.error
+    name = copied.name
+  }
+  const error = changeSetting(profile, 'newTabBackground', name)
+  background.sweep(profile.folder, profile.settings.newTabBackground)
+  return error
+}
+
+// Settings' Choose button: asks for an image, then sets it.
+async function chooseBackground(c) {
+  const { canceled, filePaths } = await dialog.showOpenDialog(c.win, {
+    title: 'Choose a New Tab Background',
+    buttonLabel: 'Choose',
+    properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: background.EXTENSIONS }],
+  })
+  return canceled || !filePaths[0] ? undefined : setBackground(c.profile, filePaths[0])
 }
 
 // Applying the settings rebuilds the menu, so its checkbox follows; after
@@ -1312,6 +1360,15 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   const sendBookmarks = () => { if (!win.isDestroyed()) win.webContents.send('bookmarks', { visible: showsBookmarks(), items: profile.bookmarks }) }
   // The toolbar's profile button, shown while there is more than one.
   const sendProfile = () => { if (!win.isDestroyed()) win.webContents.send('profile', { name: profile.name, color: profileStore.colorOf(profile.color).value, shown: profiles.length > 1 }) }
+  // The new tab background, sent again only when it changes, as it can be
+  // megabytes; null for none.
+  let sentBackground
+  const sendBackground = () => {
+    const { name, url } = backgroundOf(profile)
+    if (win.isDestroyed() || name === sentBackground) return
+    sentBackground = name
+    win.webContents.send('background', url)
+  }
   // The toolbar's downloads indicator.
   const sendDownloads = () => { if (!win.isDestroyed()) win.webContents.send('downloads', downloadsSummary(ses)) }
 
@@ -3370,6 +3427,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
       sendShortcuts()
       sync()
       sendQuickSearch()
+      sendBackground()
       sendBookmarks()
       // Sharing turned off refuses what is being asked.
       if (share && !profile.settings.screenSharing) closePopup()
@@ -3455,7 +3513,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   })
   // The toolbar asks for the tabs once it has loaded (and again if reloaded).
   // What was sent before the toolbar loaded never reached it.
-  win.webContents.on('did-finish-load', () => { sentSidebar = null; layout(); sync(); sendShortcuts(); sendQuickSearch(); sendBookmarks(); sendDownloads(); sendProfile() })
+  win.webContents.on('did-finish-load', () => { sentSidebar = null; sentBackground = undefined; layout(); sync(); sendShortcuts(); sendQuickSearch(); sendBackground(); sendBookmarks(); sendDownloads(); sendProfile() })
   win.on('closed', () => {
     openWindows.delete(controls)
     dropShare()
@@ -3773,6 +3831,8 @@ ipcMain.on('bookmarks-close', fromPopup('bookmarks', (c) => c.closePopup()))
 ipcMain.on('suggestions-pick', fromPopup('suggestions', (c, index, generation) => Number.isInteger(index) && c.pickSuggestion(index, generation)))
 ipcMain.handle('settings-get', fromSettings((c) => popupState('settings', c)))
 ipcMain.handle('settings-set', fromSettings((c, key, value) => settingsState(c.profile, changeSetting(c.profile, key, value))))
+ipcMain.handle('background-choose', fromSettings(async (c) => settingsState(c.profile, await chooseBackground(c))))
+ipcMain.handle('background-remove', fromSettings((c) => settingsState(c.profile, setBackground(c.profile, null))))
 // Profiles: adding, changing and deleting answer with the state.
 ipcMain.handle('profiles-add', fromSettings(async (c) => settingsState(c.profile, await addProfile())))
 ipcMain.handle('profiles-update', fromSettings((c, id, changes) => settingsState(c.profile, updateProfile(id, { name: changes?.name, color: changes?.color }))))
