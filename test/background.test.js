@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { MAX_BYTES, isName, adopt, dataUrl, sweep } = require('../src/background')
+const { MAX_BYTES, isName, adopt, read, sweep } = require('../src/background')
 
 const temporary = () => fs.mkdtempSync(path.join(os.tmpdir(), 'lit-background-'))
 
@@ -18,7 +18,7 @@ test('isName takes only names adopt makes', () => {
   assert.ok(!isName(null))
 })
 
-test('adopt copies an image into the folder, and dataUrl reads it back', () => {
+test('adopt copies an image into the folder, and read reads it back', () => {
   const dir = temporary()
   const source = path.join(dir, 'Cat Photo.JPG')
   fs.writeFileSync(source, Buffer.from([1, 2, 3]))
@@ -29,7 +29,7 @@ test('adopt copies an image into the folder, and dataUrl reads it back', () => {
   assert.ok(name.endsWith('.jpg'))
   // A copy, so the original can go.
   fs.rmSync(source)
-  assert.equal(dataUrl(folder, name), 'data:image/jpeg;base64,AQID')
+  assert.deepEqual(read(folder, name), { type: 'image/jpeg', bytes: Buffer.from([1, 2, 3]) })
 })
 
 test('adopt refuses other files, missing ones and huge ones', () => {
@@ -44,12 +44,12 @@ test('adopt refuses other files, missing ones and huge ones', () => {
   assert.deepEqual(fs.readdirSync(dir).filter(isName), [])
 })
 
-test('dataUrl is null for no image, a gone one, or a name adopt never made', () => {
+test('read is null for no image, a gone one, or a name adopt never made', () => {
   const dir = temporary()
   fs.writeFileSync(path.join(dir, 'settings.json'), '{}')
-  assert.equal(dataUrl(dir, ''), null)
-  assert.equal(dataUrl(dir, 'background-0123456789ab.png'), null)
-  assert.equal(dataUrl(dir, 'settings.json'), null)
+  assert.equal(read(dir, ''), null)
+  assert.equal(read(dir, 'background-0123456789ab.png'), null)
+  assert.equal(read(dir, 'settings.json'), null)
 })
 
 test('sweep deletes every background but the one kept, and nothing else', () => {

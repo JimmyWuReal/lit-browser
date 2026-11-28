@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <!-- img-src allows the pages' favicons, which load from anywhere. -->
+  <!-- img-src allows the pages' favicons, which load from anywhere, and the
+       new tab background's blob: URL. -->
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src https: http: data:; script-src 'self' 'unsafe-inline'">
+    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src https: http: data: blob:; script-src 'self' 'unsafe-inline'">
   <title>Lit</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400&family=Inter:wght@400;500;600&display=swap">
   <style>
@@ -2150,10 +2151,15 @@
       document.getElementById('profile-mark').textContent = [...name][0].toUpperCase()
     })
 
-    // The new tab background: a data: URL from main, or null for none.
-    window.lit.onBackground((url) => {
-      document.body.classList.toggle('has-background', Boolean(url))
-      if (url) document.body.style.setProperty('--home-image', `url("${url}")`)
+    // The new tab background: { type, bytes } from main, or null for none.
+    // Drawn from a blob: URL, as Chromium drops a CSS variable over 2 MB,
+    // which a big image's data: URL would be; the one it replaces is freed.
+    let backgroundUrl
+    window.lit.onBackground((image) => {
+      if (backgroundUrl) URL.revokeObjectURL(backgroundUrl)
+      backgroundUrl = image && URL.createObjectURL(new Blob([image.bytes], { type: image.type }))
+      document.body.classList.toggle('has-background', Boolean(backgroundUrl))
+      if (backgroundUrl) document.body.style.setProperty('--home-image', `url("${backgroundUrl}")`)
       else document.body.style.removeProperty('--home-image')
     })
 

@@ -1086,19 +1086,19 @@ function changeSetting(profile, key, value) {
   applySettings()
 }
 
-// The profile's new tab background as { name, url, preview }: the image as a
-// data: URL for the toolbar and a small one for Settings, both null when
-// there is none or its file is gone. Read once per image.
+// The profile's new tab background as { name, image, preview }: the image as
+// { type, bytes } for the toolbar and a small data: URL for Settings, both
+// null when there is none or its file is gone. Read once per image.
 function backgroundOf(profile) {
   const name = profile.settings.newTabBackground
   if (profile.background?.name === name) return profile.background
-  const url = background.dataUrl(profile.folder, name)
+  const image = background.read(profile.folder, name)
   let preview = null
-  if (url) {
-    const image = nativeImage.createFromDataURL(url)
-    if (!image.isEmpty()) preview = image.resize({ height: 80, quality: 'good' }).toDataURL()
+  if (image) {
+    const decoded = nativeImage.createFromBuffer(image.bytes)
+    if (!decoded.isEmpty()) preview = decoded.resize({ height: 80, quality: 'good' }).toDataURL()
   }
-  profile.background = { name, url, preview }
+  profile.background = { name, image, preview }
   return profile.background
 }
 
@@ -1364,10 +1364,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // megabytes; null for none.
   let sentBackground
   const sendBackground = () => {
-    const { name, url } = backgroundOf(profile)
+    const { name, image } = backgroundOf(profile)
     if (win.isDestroyed() || name === sentBackground) return
     sentBackground = name
-    win.webContents.send('background', url)
+    win.webContents.send('background', image)
   }
   // The toolbar's downloads indicator.
   const sendDownloads = () => { if (!win.isDestroyed()) win.webContents.send('downloads', downloadsSummary(ses)) }

@@ -41,11 +41,13 @@ function adopt(folder, source) {
   return { name }
 }
 
-// The image as a data: URL, or null when there is none or it is gone.
-function dataUrl(folder, name) {
+// The image as { type, bytes }, or null when there is none or it is gone.
+// Bytes, not a data: URL: the toolbar makes a blob: URL of them, as Chromium
+// drops a CSS variable over 2 MB, which a big image's data: URL is.
+function read(folder, name) {
   if (!isName(name)) return null
   try {
-    return `data:${TYPES[extensionOf(name)]};base64,${fs.readFileSync(path.join(folder, name)).toString('base64')}`
+    return { type: TYPES[extensionOf(name)], bytes: fs.readFileSync(path.join(folder, name)) }
   } catch {
     return null
   }
@@ -65,4 +67,4 @@ function sweep(folder, keep) {
   }
 }
 
-module.exports = { EXTENSIONS, MAX_BYTES, isName, adopt, dataUrl, sweep }
+module.exports = { EXTENSIONS, MAX_BYTES, isName, adopt, read, sweep }

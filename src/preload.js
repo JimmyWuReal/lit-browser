@@ -106,7 +106,7 @@ contextBridge.exposeInMainWorld('lit', {
   toggleMute: (id) => ipcRenderer.send('mute-tab', id),
   // The right-click menu for a tab.
   showTabMenu: (id) => ipcRenderer.send('tab-menu', id),
-  // The new tab background as a data: URL, or null for none.
+  // The new tab background as { type, bytes }, or null for none.
   onBackground: (callback) => on('background', callback),
   // { 'shortcuts.newTab': '⌘T', ... }, '' for a command without one.
   onShortcuts: (callback) => on('shortcuts', callback),
