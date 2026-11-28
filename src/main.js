@@ -972,10 +972,11 @@ function makeDefaultBrowser() {
 
 // Import from Chrome (src/chrome.js), for Settings' Others section. What
 // there is: { profiles: [{ id, name, bookmarks, history: { week, month,
-// quarter, all }, passwords: { logins, never } }], ranges, limit }, each
-// count null when it can't be read, `ranges` the history choices and `limit`
-// how many pages Lit keeps; or { error }.
-function chromeSources() {
+// quarter, all }, passwords: { logins, never } }], ranges, limit, room },
+// each count null when it can't be read, `ranges` the history choices,
+// `limit` how many pages Lit keeps and `room` how many more `profile`'s
+// history can take; or { error }.
+function chromeSources(profile) {
   const found = chrome.profiles()
   if (!found.length) return { error: 'Chrome isn’t on this Mac, or has nothing to import.' }
   const count = (read) => {
@@ -988,6 +989,7 @@ function chromeSources() {
   return {
     ranges: chrome.RANGES.map(({ value, label }) => ({ value, label })),
     limit: historyStore.LIMIT,
+    room: Math.max(0, historyStore.LIMIT - profile.visited.length),
     profiles: found.map(({ id, name }) => {
       const folder = path.join(chrome.ROOT, id)
       return {
@@ -4046,7 +4048,7 @@ ipcMain.on('login-field-left', fromPage('left', () => true))
 ipcMain.on('logins-pick', fromPopup('logins', (c, id, generation) => c.pickLogin(id, generation)))
 ipcMain.handle('default-browser-make', fromSettings((c) => settingsState(c.profile, makeDefaultBrowser())))
 // Import from Chrome: what there is, and importing it into the window's profile.
-ipcMain.handle('chrome-sources', fromSettings(() => chromeSources()))
+ipcMain.handle('chrome-sources', fromSettings((c) => chromeSources(c.profile)))
 ipcMain.handle('chrome-import', fromSettings((c, choice) => importFromChrome(c.profile, choice)))
 ipcMain.on('settings-record', fromSettings((c, on, keys) => c.setRecording(on === true, keys)))
 ipcMain.on('settings-close', fromSettings((c) => c.closePopup()))

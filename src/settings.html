@@ -1541,7 +1541,11 @@
           const count = counts[range]
           if (!counts.all) return 'None.'
           if (!count) return 'No pages from then.'
-          return `${plural(count, 'page', 'pages')}${count > sources.limit ? `; Lit keeps the newest ${number(sources.limit)}` : ''}. A page you have visited in Lit too keeps your latest visit.`
+          // Lit's own history always stays, so only `room` new pages fit.
+          const fit = count <= sources.room ? ''
+            : sources.room ? `. Lit keeps ${number(sources.limit)} pages and all of yours stay, so only the newest ${number(sources.room)} new ones fit`
+              : `. Lit’s history is full (${number(sources.limit)} pages), so only pages already in it are updated`
+          return `${plural(count, 'page', 'pages')}${fit}. A page you have visited in Lit too keeps your latest visit.`
         })
         const ranges = segmented('History to import', sources.ranges.map((item) => item.label),
           () => sources.ranges.findIndex((item) => item.value === range),

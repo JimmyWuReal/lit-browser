@@ -199,21 +199,27 @@ function countHistory(folder, now = Date.now()) {
   })
 }
 
-// Imported pages join Lit's history: a page Lit has too keeps the later visit,
-// and its title if the other has none. Returns { entries, added }, `added`
-// being the pages new to Lit that fit in its limit.
+// Imported pages join Lit's history. Lit's own pages all stay: a page Lit
+// has too keeps the later visit, and its title if the other has none, and
+// new pages, newest first, fill only the room left under Lit's limit.
+// Returns { entries, added }, `added` being the pages new to Lit.
 function mergeHistory(entries, imported) {
   const byUrl = new Map(entries.map((entry) => [entry.url, entry]))
-  for (const entry of imported) {
+  let room = historyStore.LIMIT - entries.length
+  let added = 0
+  for (const entry of [...imported].sort((a, b) => b.time - a.time)) {
     if (!historyStore.recordable(entry.url)) continue
     const old = byUrl.get(entry.url)
+    if (!old) {
+      if (room <= 0) continue
+      room--
+      added++
+    }
     const newer = !old || entry.time > old.time ? entry : old
     const older = newer === entry ? old : entry
     byUrl.set(entry.url, { url: entry.url, title: newer.title || older?.title || '', time: newer.time })
   }
-  const merged = [...byUrl.values()].sort((a, b) => b.time - a.time).slice(0, historyStore.LIMIT)
-  const had = new Set(entries.map((entry) => entry.url))
-  return { entries: merged, added: merged.filter((entry) => !had.has(entry.url)).length }
+  return { entries: [...byUrl.values()].sort((a, b) => b.time - a.time), added }
 }
 
 // Saved passwords from both of Chrome's stores: { logins: [{ site, username,

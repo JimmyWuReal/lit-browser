@@ -203,13 +203,22 @@ test('mergeHistory keeps the later visit and a title, within the limit', () => {
   assert.deepEqual(chrome.mergeHistory(entries, [{ url: 'https://lit.com/', title: '', time: 99 }]).entries[0], { url: 'https://lit.com/', title: 'Lit', time: 99 })
 })
 
-test('mergeHistory counts only added pages that fit in the limit', () => {
-  const entries = Array.from({ length: historyStore.LIMIT }, (_, i) => ({ url: `https://lit.com/${i}`, title: '', time: 1000 + i }))
-  const imported = [{ url: 'https://new.com/', title: '', time: 99999 }, { url: 'https://old.com/', title: '', time: 1 }]
-  const { entries: merged, added } = chrome.mergeHistory(entries, imported)
+test('mergeHistory never pushes out Lit’s own pages: new ones fill only the room left', () => {
+  const full = Array.from({ length: historyStore.LIMIT }, (_, i) => ({ url: `https://lit.com/${i}`, title: '', time: 1000 + i }))
+  const imported = [{ url: 'https://new.com/', title: '', time: 99999 }, { url: 'https://lit.com/0', title: 'Zero', time: 99998 }]
+  const { entries: merged, added } = chrome.mergeHistory(full, imported)
+  assert.equal(added, 0)
   assert.equal(merged.length, historyStore.LIMIT)
-  assert.equal(added, 1)
-  assert.equal(merged[0].url, 'https://new.com/')
+  // A page in both still takes Chrome's later visit.
+  assert.deepEqual(merged[0], { url: 'https://lit.com/0', title: 'Zero', time: 99998 })
+  // Room for two: the newest two new pages come.
+  const most = full.slice(2)
+  const newer = [1, 2, 3].map((i) => ({ url: `https://new.com/${i}`, title: '', time: 100 * i }))
+  const next = chrome.mergeHistory(most, newer)
+  assert.equal(next.added, 2)
+  assert.equal(next.entries.length, historyStore.LIMIT)
+  assert.deepEqual(next.entries.filter((entry) => entry.url.startsWith('https://new.com/')).map((entry) => entry.url), ['https://new.com/3', 'https://new.com/2'])
+  assert.ok(most.every((entry) => next.entries.some((each) => each.url === entry.url)))
 })
 
 test('decrypt reads Chrome’s v10 passwords with its key', () => {
