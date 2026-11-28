@@ -55,6 +55,16 @@ test('profiles: Chrome’s own folders with data, named from Local State', () =>
   ])
 })
 
+test('profiles: names two profiles share get their folders', () => {
+  const root = fakeChrome()
+  for (const id of ['Default', 'Profile 1', 'Profile 2']) {
+    fs.mkdirSync(path.join(root, id))
+    fs.writeFileSync(path.join(root, id, 'Bookmarks'), '{}')
+  }
+  fs.writeFileSync(path.join(root, 'Local State'), JSON.stringify({ profile: { info_cache: { Default: { name: 'Me' }, 'Profile 1': { name: 'Me' }, 'Profile 2': { name: 'Work' } } } }))
+  assert.deepEqual(chrome.profiles(root).map((profile) => profile.name), ['Me (Default)', 'Me (Profile 1)', 'Work'])
+})
+
 test('profiles: none without Chrome, folder names without Local State', () => {
   assert.deepEqual(chrome.profiles(path.join(os.tmpdir(), 'no-such-chrome')), [])
   const root = fakeChrome()

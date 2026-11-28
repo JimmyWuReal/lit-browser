@@ -45,7 +45,8 @@ const hasData = (folder) => ['Bookmarks', 'AccountBookmarks', 'History', 'Login 
 
 // Chrome's profiles that hold anything, as [{ id, name }]: Default first, then
 // in the order Chrome made them. Names come from Chrome's Local State; a
-// profile it doesn't name is called by its folder.
+// profile it doesn't name is called by its folder, and one whose name another
+// has too gets its folder after it, so the two can be told apart.
 function profiles(root = ROOT) {
   let names = {}
   try {
@@ -58,10 +59,12 @@ function profiles(root = ROOT) {
     return []
   }
   const order = (id) => (id === 'Default' ? 0 : Number(id.slice('Profile '.length)))
-  return folders
+  const found = folders
     .filter((id) => hasData(path.join(root, id)))
     .sort((a, b) => order(a) - order(b))
     .map((id) => ({ id, name: typeof names[id]?.name === 'string' && names[id].name.trim() ? names[id].name.trim() : id }))
+  const shared = (name) => found.filter((each) => each.name === name).length > 1
+  return found.map(({ id, name }) => ({ id, name: shared(name) ? `${name} (${id})` : name }))
 }
 
 function readDatabase(file, read, options = {}) {
