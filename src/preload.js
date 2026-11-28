@@ -165,6 +165,12 @@ contextBridge.exposeInMainWorld('lit', {
     openProfile: (id) => ipcRenderer.send('profiles-open', id),
     // Asks macOS to make Lit the default browser; answers with the state.
     makeDefaultBrowser: () => ipcRenderer.invoke('default-browser-make'),
+    // Import from Chrome: the profiles it has, with how much each holds
+    // (see chromeSources in main), and importing { profile, bookmarks,
+    // history, passwords } from one, which answers with the state and
+    // `imported`, the counts added.
+    chromeSources: () => ipcRenderer.invoke('chrome-sources'),
+    importChrome: (choice) => ipcRenderer.invoke('chrome-import', choice),
     // The new tab background: choosing asks for an image first. Both
     // answer with the state.
     chooseBackground: () => ipcRenderer.invoke('background-choose'),
