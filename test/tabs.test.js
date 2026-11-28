@@ -247,8 +247,12 @@ test('splitResize moves a divider under the pointer, keeping panes at least the 
   // A pane with two side by side in it needs room for both.
   const wide = splitResize(row([1, column([row([2, 3]), 4])]), [], 0, 5000, rect, 8, mins(200))
   assert.equal(Math.round(wide.sizes[1] * 1000), 408)
-  // Too little room for the minimums: the panes share it as those do, and the divider stays.
-  assert.deepEqual(sizes(splitResize(split, [], 0, 0, { ...rect, width: 308 }, 8, mins(200))), [0.5, 0.5])
+  // Too little room for the minimums: the panes share it as those do, and
+  // the divider stays, keeping the shares for a wider window.
+  const kept = row([1, 2], [0.7, 0.3])
+  assert.equal(splitResize(kept, [], 0, 0, { ...rect, width: 308 }, 8, mins(200)), kept)
+  // A drag that ends where the divider already is changes nothing.
+  assert.equal(splitResize(kept, [], 0, 100 + 1000 * 0.7 + 4, rect, 8, mins(200)), kept)
   // Three stacked in a short window still move, pages needing less height than width.
   const stacked = splitResize(column([1, 2, 3]), [], 0, 50, { ...rect, height: 616 }, 8, { row: 240, column: 120 })
   assert.deepEqual(sizes(stacked), [0.2, 0.467, 0.333])

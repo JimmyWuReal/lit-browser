@@ -267,7 +267,8 @@ function splitLayout(node, rect, gap, min) {
 // as keeping both panes beside it at their minimums (see leastShares)
 // allows. It moves from where it shows, the group's shares becoming its
 // shownShares. `at` null shares that group's room evenly. Unchanged when
-// there is no such divider.
+// there is no such divider, or it can't move, so a window too small for
+// the panes keeps the shares they had.
 function splitResize(node, path, index, at, rect, gap, min) {
   let group = node
   let box = rect
@@ -288,6 +289,7 @@ function splitResize(node, path, index, at, rect, gap, min) {
     const low = mins[index]
     const high = Math.max(pair - mins[index + 1], low)
     const share = Math.min(Math.max((at - (across ? box.x : box.y) - index * gap - gap / 2) / room - before, low), high)
+    if (Math.abs(share - shown[index]) < 1e-9) return node
     sizes = shown.map((size, at) => (at === index ? share : at === index + 1 ? pair - share : size))
   }
   const swap = (each, depth) => (depth === path.length ? { ...each, sizes } : { ...each, panes: each.panes.map((pane, at) => (at === path[depth] ? swap(pane, depth + 1) : pane)) })
