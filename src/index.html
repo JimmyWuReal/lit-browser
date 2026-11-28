@@ -2199,9 +2199,14 @@
         address.select()
       }
     })
+    // Focus moving into a page leaves the field the toolbar's active element,
+    // and Chromium keeps painting its selected text, in its inactive colours,
+    // over the drawn address. Dropping the selection (and scrolling back to
+    // the start) stops that; focusing the field selects it again.
     address.addEventListener('blur', () => {
       closeSuggestions(true)
       if (editing) { editing = false; setChip(null); address.value = currentUrl() }
+      address.setSelectionRange(0, 0)
       drawAddress()
     })
     // Focusing the field selects its address. A click would then put the
