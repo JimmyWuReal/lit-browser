@@ -131,10 +131,10 @@ function pageMenu(params, context = {}) {
 // many tabs the window's split view has if the tab is in it, which it can
 // then close, or, with three or more, leave; else 0, and it can open beside
 // the active tab (`active`: beside a new tab), unless the active tab's split
-// is `full`. `keys` ({ reload, duplicateTab, muteTab, splitView, closeTab,
-// closeOtherTabs, closeTabsToRight }) are the current accelerators, shown
-// next to their items; Split View's only on the active tab, the one its
-// shortcut acts on.
+// is `full`. `keys` ({ reload, duplicateTab, muteTab, splitView,
+// leaveSplit, closeTab, closeOtherTabs, closeTabsToRight }) are the current
+// accelerators, shown next to their items; the split ones only on the
+// active tab, the one their shortcuts act on.
 function tabMenu({ index, count, started, muted = false, split = 0, full = false, active = false, keys = {} }) {
   const splitKey = active ? keys.splitView : undefined
   return joinGroups([
@@ -145,7 +145,7 @@ function tabMenu({ index, count, started, muted = false, split = 0, full = false
     ],
     split
       ? [
-          ...(split > 2 ? [{ label: 'Remove from Split View', command: 'leaveSplit' }] : []),
+          ...(split > 2 ? [{ label: 'Remove from Split View', command: 'leaveSplit', accelerator: active ? keys.leaveSplit : undefined }] : []),
           { label: 'Close Split View', command: 'unsplit', accelerator: splitKey },
         ]
       : [{ label: 'Open in Split View', command: 'split', enabled: !full, accelerator: splitKey }],

@@ -123,6 +123,7 @@ test('a tab opens in split view, or leaves or closes the split it is in', () => 
   assert.equal(splitItems({ full: true })[0].enabled, false)
   assert.deepEqual(splitItems({ split: 2, active: true }), [{ label: 'Close Split View', command: 'unsplit', accelerator: 'S' }])
   assert.deepEqual(splitItems({ split: 3 }).map((item) => item.command), ['leaveSplit', 'unsplit'])
+  assert.deepEqual(splitItems({ split: 3, active: true, keys: { splitView: 'S', leaveSplit: 'L' } }).map((item) => item.accelerator), ['L', 'S'])
 })
 
 test('a private window offers no Add to Dictionary or Inspect Element', () => {

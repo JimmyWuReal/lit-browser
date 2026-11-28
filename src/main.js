@@ -1497,7 +1497,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     area = { x: pageLeft + inset, y: pageTop, width: Math.max(width - pageLeft - 2 * inset, 0), height: Math.max(height - pageTop - inset, 0) }
     below = { x: pageLeft, y: pageTop, width: Math.max(width - pageLeft, 0), height: Math.max(height - pageTop, 0) }
     const pair = paneTabs()
-    const placed = pair && splitLayout(split, area, SPLIT_GAP)
+    const placed = pair && splitLayout(split, area, SPLIT_GAP, SPLIT_MIN)
     shownPanes = pair ? JSON.stringify(split) : ''
     for (const tab of tabs) {
       const { x, y, width: pageWidth, height: pageHeight } = placed?.panes[pair.indexOf(tab)] ?? area
@@ -2954,10 +2954,10 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function dropAt(point) {
     const tab = find(draggedTab)
     if (!tab || !active() || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return null
-    const shown = paneTabs() ? splitLayout(split, area, SPLIT_GAP).panes : [{ id: activeId, ...area }]
+    const shown = paneTabs() ? splitLayout(split, area, SPLIT_GAP, SPLIT_MIN).panes : [{ id: activeId, ...area }]
     const drop = splitDrop(shown, { x: point.x + below.x, y: point.y + below.y }, Boolean(paneTabs()))
     const next = drop && splitDropped(paneTabs() ? split : null, activeId, tab.id, drop)
-    return next && { next, rect: splitLayout(next, area, SPLIT_GAP).panes.find((pane) => pane.id === tab.id) }
+    return next && { next, rect: splitLayout(next, area, SPLIT_GAP, SPLIT_MIN).panes.find((pane) => pane.id === tab.id) }
   }
 
   // The rect, in the drop view, the tab would fill, or null.
@@ -3071,7 +3071,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   function showTabMenu(id) {
     const tab = find(id)
     if (!tab) return
-    const keys = Object.fromEntries(['reload', 'duplicateTab', 'muteTab', 'splitView', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
+    const keys = Object.fromEntries(['reload', 'duplicateTab', 'muteTab', 'splitView', 'leaveSplit', 'closeTab', 'closeOtherTabs', 'closeTabsToRight']
       .map((command) => [command, profile.settings[`shortcuts.${command}`]]))
     const count = inSplit(id) ? splitIds(split).length : 0
     const full = inSplit(activeId) && splitIds(split).length >= SPLIT_MOST
@@ -3600,6 +3600,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     closeOtherTabs: () => closeOtherTabs(activeId),
     closeTabsToRight: () => closeTabsToRight(activeId),
     toggleSplit,
+    removeFromSplit: () => removeFromSplit(activeId),
     resizeSplit,
     dragTab,
     dropPreview,
@@ -3880,6 +3881,8 @@ function buildMenu() {
         { label: 'Show Tab Sidebar', type: 'checkbox', checked: tabsPlace(settings) === 'side', accelerator: key('tabSidebar'), click: (_item, win) => toggleTabSidebar(controlsOf(win)?.profile ?? currentProfile) },
         // The active tab beside a new one, or back to one tab at a time.
         { label: 'Split View', accelerator: key('splitView'), click: inFocused((c) => { c.closePopup(); c.toggleSplit() }) },
+        // The active tab out of its split, the rest staying split.
+        { label: 'Remove from Split View', accelerator: key('leaveSplit'), click: inFocused((c) => { c.closePopup(); c.removeFromSplit() }) },
         { type: 'separator' },
         { label: 'Reload', accelerator: key('reload'), click: inFocused((c) => c.reload()) },
         { type: 'separator' },
