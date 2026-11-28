@@ -354,7 +354,7 @@
       touch-action: none;
       -webkit-app-region: no-drag;
     }
-    @media (max-width: 699px) { .vertical .sidebar-edge { display: none; } }
+    @media (max-width: 699px) { .vertical:not(.no-tabs) .sidebar-edge { display: none; } }
     .sidebar-edge::before {
       content: '';
       width: 2px;

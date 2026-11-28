@@ -2737,8 +2737,12 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
   // in this window (see sidebarWidth), only as wide as it can show, and
   // with `done`, on release, that is saved as the setting, for every window.
   // `x` null resets it to the default.
+  // Only while the sidebar shows, and in a window wide enough for it to be
+  // more than the rail (narrower, its edge is not there to drag).
+  const sidebarResizable = () => tabsPlace(profile.settings) === 'side' && active()?.fullScreen !== 'on' &&
+    win.getContentBounds().width >= SIDEBAR.fullFrom
   function resizeSidebar(x, done) {
-    if (tabsPlace(profile.settings) !== 'side' || active()?.fullScreen === 'on') return
+    if (!sidebarResizable()) { sidebarDragged = null; return layout() }
     const fits = sidebarShowing(SIDEBAR.most, win.getContentBounds().width)
     const width = x === null ? SIDEBAR.standard : sidebarWidth(Math.min(x, fits))
     hideLogins()
@@ -2749,7 +2753,7 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
 
   // ← or → on the sidebar's edge (`direction` -1 or 1), `big` with ⇧.
   function nudgeSidebar(direction, big) {
-    if (tabsPlace(profile.settings) !== 'side' || active()?.fullScreen === 'on') return
+    if (!sidebarResizable()) return
     const fits = sidebarShowing(SIDEBAR.most, win.getContentBounds().width)
     const from = sidebarShowing(profile.settings.sidebarWidth, win.getContentBounds().width)
     hideLogins()
