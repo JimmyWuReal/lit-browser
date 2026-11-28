@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith, sleepy } = require('../src/tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, SIDEBAR, sidebarWidth, sidebarNudged, sidebarShowing, splitPanes, splitRatio, splitWith, sleepy } = require('../src/tabs')
 
 test('closing a background tab keeps the active one', () => {
   assert.equal(afterClose([1, 2, 3], 1, 3), 1)
@@ -115,6 +115,32 @@ test('a split window bigger than the limit keeps its split only with both its ta
   const dropped = [{ tabs: [0, 1, 2, 3, 4], activeIndex: 4, split: { indexes: [0, 4], ratio: 0.5 } }]
   keepNewest(dropped, 2)
   assert.deepEqual(dropped, [{ tabs: [3, 4], activeIndex: 1 }])
+})
+
+test('sidebarWidth follows the edge within its limits, snapping to the rail past halfway to it', () => {
+  assert.equal(sidebarWidth(260.4), 260)
+  assert.equal(sidebarWidth(1000), SIDEBAR.most)
+  assert.equal(sidebarWidth(120), SIDEBAR.least)
+  assert.equal(sidebarWidth(94), SIDEBAR.least)
+  assert.equal(sidebarWidth(93), SIDEBAR.rail)
+  assert.equal(sidebarWidth(-20), SIDEBAR.rail)
+})
+
+test('sidebarNudged steps the width, jumping between the rail and the narrowest with titles', () => {
+  assert.equal(sidebarNudged(220, 1, 20), 240)
+  assert.equal(sidebarNudged(220, -1, 60), 160)
+  assert.equal(sidebarNudged(160, -1, 60), SIDEBAR.least)
+  assert.equal(sidebarNudged(SIDEBAR.least, -1, 20), SIDEBAR.rail)
+  assert.equal(sidebarNudged(SIDEBAR.rail, -1, 20), SIDEBAR.rail)
+  assert.equal(sidebarNudged(SIDEBAR.rail, 1, 20), SIDEBAR.least)
+  assert.equal(sidebarNudged(390, 1, 60), SIDEBAR.most)
+})
+
+test('sidebarShowing leaves the toolbar its room, and is the rail in a narrow window', () => {
+  assert.equal(sidebarShowing(300, 1400), 300)
+  assert.equal(sidebarShowing(400, 800), 320)
+  assert.equal(sidebarShowing(400, 699), SIDEBAR.rail)
+  assert.equal(sidebarShowing(SIDEBAR.rail, 1400), SIDEBAR.rail)
 })
 
 test('splitPanes shares the width at the ratio, gap apart', () => {

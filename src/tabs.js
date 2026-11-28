@@ -101,6 +101,34 @@ function sidebarToggle(values) {
   ]
 }
 
+// The tab sidebar's widths, in pixels: `rail`, its narrowest, a rail of the
+// tabs' icons; `least`, the narrowest it is with titles; `most`, the widest;
+// and `standard`, the default. It always leaves the toolbar's rows `room`
+// (the window's minimum width), and in a window narrower than `fullFrom` it
+// is the rail. Keep in sync with .vertical in index.html.
+const SIDEBAR = { rail: 48, least: 140, most: 400, standard: 220, room: 480, fullFrom: 700 }
+
+// The sidebar's width for its edge dragged to `x`: from `least` to `most`,
+// or the rail once dragged past halfway from `least` to it, so it is never
+// too narrow for titles yet wider than the icons.
+function sidebarWidth(x) {
+  if (x < (SIDEBAR.rail + SIDEBAR.least) / 2) return SIDEBAR.rail
+  return Math.round(Math.min(Math.max(x, SIDEBAR.least), SIDEBAR.most))
+}
+
+// The width ← (`direction` -1) or → (1) moves the sidebar's edge to from
+// `width`, `step` at a time; between the rail and `least` it goes all the way.
+function sidebarNudged(width, direction, step) {
+  if (direction > 0 && width < SIDEBAR.least) return SIDEBAR.least
+  if (direction < 0 && width <= SIDEBAR.least) return SIDEBAR.rail
+  return sidebarWidth(Math.max(width + direction * step, SIDEBAR.least))
+}
+
+// How wide the sidebar shows in a window `windowWidth` wide, for the
+// `chosen` width (the setting).
+const sidebarShowing = (chosen, windowWidth) =>
+  (windowWidth < SIDEBAR.fullFrom ? SIDEBAR.rail : Math.min(chosen, windowWidth - SIDEBAR.room))
+
 // Split view: two tabs of a window side by side, as { ids: [left, right],
 // ratio }, `ratio` being the left pane's share of the width. It shows while
 // either of its tabs is the active one.
@@ -147,4 +175,4 @@ const sleepy = (tab, now, minutes) => minutes > 0 && !tab.shown && !tab.asleep &
   !tab.loading && !tab.error && !tab.audible && !tab.fullScreen && !tab.asking && !tab.edited && !tab.inUse && !tab.keepAwake &&
   now - tab.seen >= minutes * 60_000
 
-module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, splitPanes, splitRatio, splitWith, sleepy }
+module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, SIDEBAR, sidebarWidth, sidebarNudged, sidebarShowing, splitPanes, splitRatio, splitWith, sleepy }
