@@ -1466,6 +1466,7 @@
       const available = (kind) => {
         const count = source()[kind]
         if (kind === 'history') return Boolean(count?.all) && historyOn()
+        if (kind === 'passwords') return Boolean(count?.logins || count?.never)
         return Boolean(count)
       }
       const pick = (index) => {
@@ -1547,9 +1548,13 @@
           (i) => { range = sources.ranges[i].value; draw() }, 'is-small')
         const rangeLine = el('div', 'import-range')
         rangeLine.append(ranges.element)
-        const passwordLine = kindLine('passwords', 'Passwords', (count) => count === null
-          ? 'Couldn’t read them.'
-          : count ? `${plural(count, 'password', 'passwords')}. macOS asks first whether Lit may use Chrome’s key in the Keychain. Passwords you have saved in Lit stay as they are.` : 'None.')
+        const passwordLine = kindLine('passwords', 'Passwords', (count) => {
+          if (count === null) return 'Couldn’t read them.'
+          const { logins, never } = count
+          const neverText = never ? plural(never, 'site', 'sites') + ' never to save on' : ''
+          if (!logins) return never ? `No passwords; ${neverText}.` : 'None.'
+          return `${plural(logins, 'password', 'passwords')}${never ? `, and ${neverText}` : ''}. macOS asks first whether Lit may use Chrome’s key in the Keychain. Passwords you have saved in Lit stay as they are.`
+        })
         const actions = el('div', 'import-actions')
         const cancel = el('button', 'outline-button', 'Cancel')
         cancel.type = 'button'

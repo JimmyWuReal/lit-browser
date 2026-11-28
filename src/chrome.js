@@ -4,7 +4,8 @@
 // the Keychain for Chrome's key (chromeKey) and saves what comes back.
 //
 // Chrome keeps each profile in a folder ("Default", "Profile 2") under ROOT:
-// `Bookmarks` is JSON, while `History`, `Login Data` and `Login Data For
+// `Bookmarks` and `AccountBookmarks` (those kept in the Google account) are
+// JSON, while `History`, `Login Data` and `Login Data For
 // Account` (passwords kept in the Google account) are SQLite databases that a
 // running Chrome holds locked, so they are read from a copy.
 const crypto = require('node:crypto')
@@ -40,7 +41,7 @@ const EPOCH = 11644473600000
 // Only Chrome's own profile folders, so an id sent back from Settings can't
 // name any other folder.
 const isProfileId = (id) => typeof id === 'string' && /^(Default|Profile \d+)$/.test(id)
-const hasData = (folder) => ['Bookmarks', 'History', 'Login Data'].some((file) => fs.existsSync(path.join(folder, file)))
+const hasData = (folder) => ['Bookmarks', 'AccountBookmarks', 'History', 'Login Data'].some((file) => fs.existsSync(path.join(folder, file)))
 
 // Chrome's profiles that hold anything, as [{ id, name }]: Default first, then
 // in the order Chrome made them. Names come from Chrome's Local State; a
@@ -104,20 +105,24 @@ function withCopy(file, empty, read) {
   }
 }
 
-// Bookmarks, in the shape Lit keeps them (without ids): pages { title, url }
-// and folders { title, items: [page] }. Lit's folders are one level deep, so
+// Bookmarks from both of Chrome's files, the Google account's first, in the
+// shape Lit keeps them (without ids): pages { title, url } and folders
+// { title, items: [page] }. Lit's folders are one level deep, so
 // the bookmark bar's pages stay on the bar, each of its folders becomes a
 // folder holding every page inside it, however deep, and Other bookmarks and
 // Mobile bookmarks become a folder each. Pages Lit can't keep (javascript:
 // bookmarklets, chrome:// pages) and folders left empty are dropped.
 function readBookmarks(folder) {
-  let roots
-  try {
-    roots = JSON.parse(fs.readFileSync(path.join(folder, 'Bookmarks'), 'utf8'))?.roots
-  } catch (error) {
-    if (error.code === 'ENOENT') return []
-    throw error
-  }
+  return ['AccountBookmarks', 'Bookmarks'].flatMap((file) => {
+    try {
+      return bookmarksIn(JSON.parse(fs.readFileSync(path.join(folder, file), 'utf8'))?.roots)
+    } catch (error) {
+      if (error.code === 'ENOENT') return []
+      throw error
+    }
+  })
+}
+function bookmarksIn(roots) {
   const text = (value) => (typeof value === 'string' ? value : '')
   const toPage = (node) => {
     const url = node?.type === 'url' && bookmarkStore.address(node.url)
@@ -136,7 +141,9 @@ function readBookmarks(folder) {
   ]
 }
 
-const countBookmarks = (items) => bookmarkStore.pages(items).length
+// How many importing would add to an empty list: a page in both files, or
+// twice in one folder, counts once.
+const countBookmarks = (items) => mergeBookmarks([], items).added
 
 // Adds imported bookmarks to Lit's `list`: pages to the end of the bar, and
 // each folder's pages to the folder with its name, made if there is none.
@@ -237,8 +244,10 @@ function readLogins(folder) {
   return { logins, never: [...never] }
 }
 
+// How many logins, and sites never to save on.
 function countLogins(folder) {
-  return readLogins(folder).logins.length
+  const { logins, never } = readLogins(folder)
+  return { logins: logins.length, never: never.length }
 }
 
 // Chrome on a Mac encrypts each password with AES-128-CBC under a key made

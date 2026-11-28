@@ -972,9 +972,9 @@ function makeDefaultBrowser() {
 
 // Import from Chrome (src/chrome.js), for Settings' Others section. What
 // there is: { profiles: [{ id, name, bookmarks, history: { week, month,
-// quarter, all }, passwords }], ranges, limit }, each count null when it
-// can't be read, `ranges` the history choices and `limit` how many pages Lit
-// keeps; or { error }.
+// quarter, all }, passwords: { logins, never } }], ranges, limit }, each
+// count null when it can't be read, `ranges` the history choices and `limit`
+// how many pages Lit keeps; or { error }.
 function chromeSources() {
   const found = chrome.profiles()
   if (!found.length) return { error: 'Chrome isn’t on this Mac, or has nothing to import.' }
@@ -1019,15 +1019,19 @@ async function importFromChrome(profile, choice) {
     const imported = {}
     const errors = []
     if (choice.passwords === true) {
-      let key = null
       try {
-        key = await chrome.chromeKey()
-      } catch {
-        errors.push('Passwords weren’t imported, as the Keychain didn’t give Lit Chrome’s key.')
-      }
-      try {
-        if (key && !profile.deleted) {
-          const result = chrome.mergeLogins(profile.passwords, chrome.readLogins(folder), key, encrypt)
+        const found = chrome.readLogins(folder)
+        // Only logins need the key; sites never to save on don't.
+        let key = null
+        if (found.logins.length) {
+          try {
+            key = await chrome.chromeKey()
+          } catch {
+            errors.push('Passwords weren’t imported, as the Keychain didn’t give Lit Chrome’s key.')
+          }
+        }
+        if ((key || !found.logins.length) && !profile.deleted) {
+          const result = chrome.mergeLogins(profile.passwords, found, key, encrypt)
           if (result.error) errors.push(result.error)
           else if (!setPasswords(profile, result.store)) errors.push('Couldn’t save passwords.')
           else {

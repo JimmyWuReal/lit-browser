@@ -92,6 +92,16 @@ test('readBookmarks flattens folders into Lit’s one level', () => {
   assert.equal(chrome.countBookmarks(chrome.readBookmarks(folder)), 4)
 })
 
+test('readBookmarks reads the Google account’s bookmarks first, and counts each once', () => {
+  const folder = fakeChrome()
+  const roots = (bar, other = []) => JSON.stringify({ roots: { bookmark_bar: { type: 'folder', children: bar }, other: { type: 'folder', children: other } } })
+  fs.writeFileSync(path.join(folder, 'AccountBookmarks'), roots([{ type: 'url', name: 'Account', url: 'https://account.com/' }, { type: 'url', name: 'Both', url: 'https://both.com/' }]))
+  fs.writeFileSync(path.join(folder, 'Bookmarks'), roots([{ type: 'url', name: 'Both', url: 'https://both.com/' }], [{ type: 'url', name: 'Local', url: 'https://local.com/' }]))
+  const items = chrome.readBookmarks(folder)
+  assert.deepEqual(items.map((item) => item.url || item.title), ['https://account.com/', 'https://both.com/', 'https://both.com/', 'Other bookmarks'])
+  assert.equal(chrome.countBookmarks(items), 3)
+})
+
 test('readBookmarks: none without a file, throws on a broken one', () => {
   const folder = fakeChrome()
   assert.deepEqual(chrome.readBookmarks(folder), [])
@@ -229,7 +239,7 @@ test('readLogins reads both stores, the account’s first, without duplicates', 
     ['http://b.com:8080', 'b', 'b'],
   ])
   assert.deepEqual(never, ['https://never.com'])
-  assert.equal(chrome.countLogins(folder), 3)
+  assert.deepEqual(chrome.countLogins(folder), { logins: 3, never: 1 })
   assert.deepEqual(chrome.readLogins(fakeChrome()), { logins: [], never: [] })
 })
 
