@@ -231,8 +231,9 @@ function least(node, dir, gap, min) {
 
 // The tree with the divider after pane `index` of the group at `path` (see
 // splitLayout) moved so its gap's middle is at `at` across `rect`, as far
-// as keeping both panes beside it at least `min` allows (or even, when
-// there isn't room for that). `at` null shares that group's room evenly.
+// as keeping both panes beside it at least `min` allows. Short of room for
+// that, the minimums give way, so the divider always has half the two
+// panes' room to move in. `at` null shares that group's room evenly.
 // Unchanged when there is no such divider.
 function splitResize(node, path, index, at, rect, gap, min) {
   let group = node
@@ -249,10 +250,13 @@ function splitResize(node, path, index, at, rect, gap, min) {
     const room = Math.max((across ? box.width : box.height) - gap * (group.panes.length - 1), 1)
     const before = group.sizes.slice(0, index).reduce((sum, size) => sum + size, 0)
     const pair = group.sizes[index] + group.sizes[index + 1]
-    const low = Math.min(least(group.panes[index], group.dir, gap, min) / room, pair / 2)
-    const high = pair - Math.min(least(group.panes[index + 1], group.dir, gap, min) / room, pair / 2)
-    const first = Math.min(Math.max((at - (across ? box.x : box.y) - index * gap - gap / 2) / room - before, low), high)
-    sizes = group.sizes.map((size, at) => (at === index ? first : at === index + 1 ? pair - first : size))
+    const first = least(group.panes[index], group.dir, gap, min)
+    const second = least(group.panes[index + 1], group.dir, gap, min)
+    const give = pair * room >= first + second ? 1 : (pair * room) / (2 * (first + second))
+    const low = (first * give) / room
+    const high = pair - (second * give) / room
+    const share = Math.min(Math.max((at - (across ? box.x : box.y) - index * gap - gap / 2) / room - before, low), high)
+    sizes = group.sizes.map((size, at) => (at === index ? share : at === index + 1 ? pair - share : size))
   }
   const swap = (each, depth) => (depth === path.length ? { ...each, sizes } : { ...each, panes: each.panes.map((pane, at) => (at === path[depth] ? swap(pane, depth + 1) : pane)) })
   return swap(node, 0)
@@ -287,14 +291,6 @@ function splitDropped(split, activeId, id, drop) {
   if (!ids.includes(id) && ids.length >= SPLIT_MOST) return null
   const next = splitBeside(tree, drop.id, id, drop.side)
   return JSON.stringify(next) === JSON.stringify(tree) ? null : next
-}
-
-// The rect a drop (see splitDrop) on `pane` would fill: the half on its
-// side, or the whole pane for the middle.
-function dropRect(pane, side) {
-  const { x, y, width, height } = pane
-  const half = { left: { width: width / 2 }, right: { x: x + width / 2, width: width / 2 }, top: { height: height / 2 }, bottom: { y: y + height / 2, height: height / 2 } }
-  return { x, y, width, height, ...half[side] }
 }
 
 // The split once tab `id` goes beside the active one: a new pair, the active
@@ -346,4 +342,4 @@ const sleepy = (tab, now, minutes) => minutes > 0 && !tab.shown && !tab.asleep &
   !tab.loading && !tab.error && !tab.audible && !tab.fullScreen && !tab.asking && !tab.edited && !tab.inUse && !tab.keepAwake &&
   now - tab.seen >= minutes * 60_000
 
-module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, SIDEBAR, sidebarWidth, sidebarNudged, sidebarShowing, SPLIT_MOST, splitIds, mapPanes, splitWithout, splitBeside, splitSwap, splitLayout, splitResize, splitDrop, splitDropped, dropRect, splitWith, cleanSplit, sleepy }
+module.exports = { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, SIDEBAR, sidebarWidth, sidebarNudged, sidebarShowing, SPLIT_MOST, splitIds, mapPanes, splitWithout, splitBeside, splitSwap, splitLayout, splitResize, splitDrop, splitDropped, splitWith, cleanSplit, sleepy }

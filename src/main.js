@@ -21,7 +21,7 @@ const fs = require('node:fs')
 const { quiet } = require('./quiet')
 const { toUrl, webAddress, searchUrl, engineOf, addressParts } = require('./url')
 const quickSearch = require('./quicksearch')
-const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, SIDEBAR, sidebarWidth, sidebarNudged, sidebarShowing, SPLIT_MOST, splitIds, mapPanes, splitWithout, splitSwap, splitLayout, splitResize, splitDrop, splitDropped, dropRect, splitWith, cleanSplit, sleepy } = require('./tabs')
+const { afterClose, step, byNumber, moved, nudged, remember, keepNewest, reopenIndex, onScreen, tabsPlace, sidebarToggle, SIDEBAR, sidebarWidth, sidebarNudged, sidebarShowing, SPLIT_MOST, splitIds, mapPanes, splitWithout, splitSwap, splitLayout, splitResize, splitDrop, splitDropped, splitWith, cleanSplit, sleepy } = require('./tabs')
 const settingsStore = require('./settings')
 const historyStore = require('./history')
 const bookmarkStore = require('./bookmarks')
@@ -2949,21 +2949,23 @@ function createWindow({ key = nextWindowKey++, profile = currentProfile, isPriva
     }
   }
 
-  // Where the dragged tab would land at `point` in the drop view, and the
-  // split that would make, or null.
+  // Where the dragged tab would land at `point` in the drop view: the split
+  // that would make, and the tab's place in it, or null.
   function dropAt(point) {
     const tab = find(draggedTab)
     if (!tab || !active() || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return null
     const shown = paneTabs() ? splitLayout(split, area, SPLIT_GAP).panes : [{ id: activeId, ...area }]
     const drop = splitDrop(shown, { x: point.x + below.x, y: point.y + below.y }, Boolean(paneTabs()))
     const next = drop && splitDropped(paneTabs() ? split : null, activeId, tab.id, drop)
-    return next && { next, rect: dropRect(shown.find((pane) => pane.id === drop.id), drop.side) }
+    return next && { next, rect: splitLayout(next, area, SPLIT_GAP).panes.find((pane) => pane.id === tab.id) }
   }
 
   // The rect, in the drop view, the tab would fill, or null.
   function dropPreview(point) {
     const found = dropAt(point)
-    return found && { ...found.rect, x: found.rect.x - below.x, y: found.rect.y - below.y }
+    if (!found) return null
+    const { x, y, width, height } = found.rect
+    return { x: x - below.x, y: y - below.y, width, height }
   }
 
   // Null, with no point, puts the drop view away.
